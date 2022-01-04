@@ -18,6 +18,7 @@ cargo run --release -- --out /path/to/out/ --pdb /path/to/file.pdb > file.pdb.lo
 
 ## TODO:
 
+- [ ] Construct inline unions and structures based on field offsets (ouch)
 - [ ] Propogate member method parameter names from `.cpp` files over into their corresponding class declarations in `.h/.hpp/.inl` files.
 - [ ] Differentiate public vs private module members, determine when to add a declaration to a `.h/.hpp` or when to use static in `.c/.cpp`.
 - [ ] Find the corresponding source files of toplevel user datatype symbols (`S_UDT`).
