@@ -8,7 +8,7 @@
 
 A tool to decompile MSVC PDB files to C++ source code.
 
-This tool is a work in progress and will most likely crash, have duplicate output, have invalid output, or miss output entirely.
+This tool is a work in progress and will most likely crash, have duplicate output, have invalid output, or miss output entirely. Feel free to file an issue or submit a pull request. Any assistance or valid criticism would be appreciated.
 
 ## Usage
 
