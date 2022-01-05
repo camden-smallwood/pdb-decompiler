@@ -243,7 +243,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out_path: PathBuf = options.out.ok_or("Out path not supplied".to_string())?;
     
     for entry in &modules {
-        let path = out_path.join(entry.0.replace("\\", "/"));
+        let path = PathBuf::from(format!("{}{}", out_path.to_string_lossy(), entry.0).replace("\\", "/"));
         
         if let Some(parent_path) = path.parent() {
             fs::create_dir_all(parent_path)?;
@@ -257,7 +257,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Write script lines to file
     //
 
-    let mut script_file = File::create(out_path.join("ida_script.py"))?;
+    let mut script_file = File::create(PathBuf::from(format!("{}ida_script.py", out_path.to_string_lossy()).replace("\\", "/")))?;
 
     for script_line in script_lines {
         script_file.write_fmt(format_args!("{}\n", script_line))?;
