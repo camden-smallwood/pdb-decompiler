@@ -24,10 +24,12 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 
 ## TODO:
 
-- [ ] Construct inline unions and structures based on field offsets (ouch)
-- [ ] Propogate member method parameter names from `.cpp` files over into their corresponding class declarations in `.h/.hpp/.inl` files.
-- [ ] Differentiate public vs private module members, determine when to add a declaration to a `.h/.hpp` or when to use static in `.c/.cpp`.
-- [ ] Find the corresponding source files of toplevel user datatype symbols (`S_UDT`).
-- [ ] Determine when to include constant declarations.
-- [ ] Figure out the format of float constants (?)
-- [ ] Clean up (amount lots of other things...)
+* Construct inline unions and structures based on field offsets (ouch)
+* Propogate member method parameter names from `.cpp` files over into their corresponding class declarations in `.h/.hpp/.inl` files.
+* Differentiate public vs private module members, determine when to add a declaration to a `.h/.hpp` or when to use static in `.c/.cpp`.
+* Find the corresponding source files of toplevel user datatype symbols (`S_UDT`).
+* Determine when to include constant declarations in source files.
+* Figure out the format of float constants (?)
+* Build a better C++ AST or improve the current implementation to a more workable point
+* Handle any TODOs listed in source code...
+* Clean up everything
