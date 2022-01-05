@@ -13,8 +13,14 @@ This tool is a work in progress and will most likely crash, have duplicate outpu
 ## Usage
 
 ```
-cargo run --release -- --out /path/to/out/ --pdb /path/to/file.pdb > file.pdb.log
+cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-address=0x180000000 > file.pdb.log
 ```
+
+| Short | Long | Description |
+|-|-|-|
+| `-o` | `--out` | The output directory to dump all C++ code to. |
+| `-p` | `--pdb` | The file path to the MSVC PDB file to decompile. |
+| `-b` | `--base-address` | The base address to add when resolving an RVA (optional). |
 
 ## TODO:
 
