@@ -528,12 +528,18 @@ impl Class {
                         self.members.push(ClassMember::TypeDefinition(definition));
                     }
 
+                    pdb::TypeData::Procedure(data) => println!(
+                        "warning: unhandled nested procedure at index {} in Class::add_member - {:?}",
+                        nested_type_item.index(),
+                        data
+                    ),
+
                     _ => return Err(
                         pdb::Error::IoError(
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidInput,
                                 format!(
-                                    "Unhandled nested type data for type_size at index {}: {:#?}",
+                                    "Unhandled nested type data at index {} in Class::add_member: {:#?}",
                                     nested_type_item.index(), nested_type_data
                                 ).to_string()
                             )

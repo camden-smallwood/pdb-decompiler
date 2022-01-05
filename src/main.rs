@@ -59,90 +59,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut script_lines = vec![];
 
     //
-    // Process module contributions
-    //
-
-    let mut contributions = HashMap::new();
-    let mut contributions_iter = dbi.section_contributions()?;
-
-    while let Some(contribution) = contributions_iter.next()? {
-        contributions.entry(dbi.modules()?.nth(contribution.module as _).unwrap().unwrap().module_name().to_string()).or_insert(vec![]).push((contribution.offset, contribution.size));
-    }
-
-    //
-    // Process global symbols
-    //
-
-    let global_symbols = pdb.global_symbols()?;
-    let mut global_symbol_iter = global_symbols.iter();
-    let mut module_public_symbols = HashMap::new();
-
-    while let Some(symbol) = global_symbol_iter.next()? {
-        let symbol_data = match symbol.parse() {
-            Ok(symbol_data) => symbol_data,
-            Err(error) => {
-                println!("failed to parse symbol data: {}", error);
-                continue;
-            }
-        };
-
-        match symbol_data {
-            pdb::SymbolData::Data(data_symbol) if data_symbol.global => {
-                for (module_name, offsets) in contributions.iter() {
-                    for &(offset, size) in offsets.iter() {
-                        if data_symbol.offset >= offset && data_symbol.offset < offset + size {
-                            match data_symbol.name.to_string().to_string().as_str() {
-                                x if x.contains("@") || x.contains("`") || x.contains("$") => {
-                                    println!("skipping compiler-generated data: {:?}", data_symbol);
-                                    continue;
-                                }
-            
-                                _ => module_public_symbols.entry(module_name.clone()).or_insert(vec![]).push(symbol)
-                            }
-                        }
-                    }
-                }
-            }
-
-            pdb::SymbolData::ThreadStorage(thread_storage_symbol) if thread_storage_symbol.global => {
-                for (module_name, offsets) in contributions.iter() {
-                    for &(offset, size) in offsets.iter() {
-                        if thread_storage_symbol.offset >= offset && thread_storage_symbol.offset < offset + size {
-                            match thread_storage_symbol.name.to_string().to_string().as_str() {
-                                x if x.contains("@") || x.contains("`") || x.contains("$") => {
-                                    println!("skipping compiler-generated thread storage: {:?}", thread_storage_symbol);
-                                    continue;
-                                }
-            
-                                _ => module_public_symbols.entry(module_name.clone()).or_insert(vec![]).push(symbol)
-                            }
-                        }
-                    }
-                }
-            }
-
-            pdb::SymbolData::Procedure(procedure_symbol) if procedure_symbol.global => {
-                for (module_name, offsets) in contributions.iter() {
-                    for &(offset, size) in offsets.iter() {
-                        if procedure_symbol.offset >= offset && procedure_symbol.offset < offset + size {
-                            match procedure_symbol.name.to_string().to_string().as_str() {
-                                x if x.contains("@") || x.contains("`") || x.contains("$") => {
-                                    println!("skipping compiler-generated procedure: {:?}", procedure_symbol);
-                                    continue;
-                                }
-            
-                                _ => module_public_symbols.entry(module_name.clone()).or_insert(vec![]).push(symbol)
-                            }
-                        }
-                    }
-                }
-            }
-
-            _ => ()
-        }
-    }
-
-    //
     // Process type information
     //
 
@@ -198,11 +114,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     //
+    // Process module contributions
+    //
+
+    let mut contributions = HashMap::new();
+    let mut contributions_iter = dbi.section_contributions()?;
+
+    while let Some(contribution) = contributions_iter.next()? {
+        if let Some(module) = dbi.modules()?.nth(contribution.module as _)? {
+            contributions
+                .entry(module.module_name().to_string())
+                .or_insert(vec![])
+                .push((contribution.offset, contribution.size));
+        }
+    }
+
+    //
     // Process global symbols
     //
 
     let global_symbols = pdb.global_symbols()?;
     let mut global_symbol_iter = global_symbols.iter();
+    let mut module_public_symbols = HashMap::new();
 
     while let Some(symbol) = global_symbol_iter.next()? {
         let symbol_data = match symbol.parse() {
@@ -218,6 +151,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // TODO: find source file and line for symbol
             }
 
+            pdb::SymbolData::Data(pdb::DataSymbol { global: true, name, offset, .. }) |
+            pdb::SymbolData::ThreadStorage(pdb::ThreadStorageSymbol { global: true, name, offset, .. }) |
+            pdb::SymbolData::Procedure(pdb::ProcedureSymbol { global: true, name, offset, .. }) => {
+                for (module_name, offsets) in contributions.iter() {
+                    for entry in offsets.iter() {
+                        if offset >= entry.0 && offset < entry.0 + entry.1 {
+                            match name.to_string().to_string().as_str() {
+                                x if x.contains("@") || x.contains("`") || x.contains("$") => (),
+                                _ => module_public_symbols.entry(module_name.clone()).or_insert(vec![]).push(symbol)
+                            }
+                        }
+                    }
+                }
+            }
+
             _ => ()
         }
     }
@@ -227,6 +175,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     //
 
     let mut module_iter = dbi.modules()?;
+
+    let mut object_source_files = HashMap::new();
 
     while let Some(ref module) = module_iter.next()? {
         let module_info = match pdb.module_info(module)? {
@@ -264,6 +214,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             &mut script_lines
         )?;
 
+        let paths = object_source_files.entry(PathBuf::from(module.object_file_name().to_string())).or_insert(vec![]);
+
+        if let Some(path) = path.as_ref().map(|x| x.to_string_lossy().to_string()) {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+
+        for path in headers.iter().map(|x| x.to_string_lossy().to_string()) {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+
         let source_file = match path.as_ref() {
             Some(path) => path.to_string_lossy().to_string(),
             None => {
@@ -280,6 +244,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             module.members.push(member);
         }
     }
+
+    for paths in object_source_files.values_mut() {
+        paths.sort();
+    }
+
+    println!("{:#?}", object_source_files);
 
     //
     // Write modules to file
