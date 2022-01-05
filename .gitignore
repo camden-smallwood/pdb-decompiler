@@ -1,6 +1,2 @@
 /target
-/halo3
-/halo3_dllcache_debug.log
-/halo3_dllcache_play.log
-/halo3_dllcache_profile.log
-/halo3_dllcache_release.log
+Cargo.lock

@@ -3,52 +3,32 @@ mod cpp;
 use pdb::{FallibleIterator, IdData, PDB};
 use std::{
     collections::{HashMap, HashSet},
-    env,
     error::Error,
     fs::{self, File},
     io::Write,
     path::PathBuf,
 };
+use structopt::StructOpt;
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Options {
-    pub out: Option<String>,
-    pub pdb: Option<String>,
+fn parse_base_address(src: &str) -> Result<u64, std::num::ParseIntError> {
+    u64::from_str_radix(src.trim_start_matches("0x"), 16)
 }
 
-impl TryFrom<env::Args> for Options {
-    type Error = Box<dyn Error>;
+#[derive(Debug, StructOpt)]
+#[structopt(name = "pdb-decompiler", about = "A tool to decompile MSVC PDB files to C++ source code.")]
+struct Options {
+    #[structopt(short, long, parse(from_os_str))]
+    out: Option<PathBuf>,
 
-    fn try_from(mut args: env::Args) -> Result<Self, Self::Error> {
-        if args.next().is_none() {
-            return Err("Failed to skip executable path arg".into());
-        }
+    #[structopt(short, long)]
+    pdb: Option<String>,
 
-        let mut result = Self {
-            out: None,
-            pdb: None,
-        };
-
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "-o" | "--out" => {
-                    result.out = Some(args.next().ok_or("Failed to get out path".to_string())?)
-                }
-
-                "-p" | "--pdb" => {
-                    result.pdb = Some(args.next().ok_or("Failed to get pdb path".to_string())?)
-                }
-
-                _ => return Err(format!("Unhandled arg: {}", arg).into()),
-            }
-        }
-
-        Ok(result)
-    }
+    #[structopt(short, long, parse(try_from_str = parse_base_address))]
+    base_address: Option<u64>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let options = Options::try_from(env::args())?;
+    let options = Options::from_args();
 
     let mut pdb = PDB::open(File::open(options.pdb.ok_or("PDB path not provided")?)?)?;
     let dbi = pdb.debug_information()?;
@@ -201,6 +181,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         let (path, headers, members) = parse_module(
+            options.base_address,
             module,
             &address_map,
             &string_table,
@@ -240,7 +221,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         module.headers.extend(headers);
 
         for (source_file, member) in members {
-            let module = modules.entry(source_file.to_string_lossy().to_string()).or_insert(cpp::Module::new().with_path(source_file));
+            let module = modules
+                .entry(source_file.to_string_lossy().to_string())
+                .or_insert(cpp::Module::new().with_path(source_file));
+            
+            // TODO: check if module already contains member...
             module.members.push(member);
         }
     }
@@ -255,17 +240,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Write modules to file
     //
 
-    let out_path = options.out.ok_or("Out path not supplied".to_string())?;
-
+    let out_path: PathBuf = options.out.ok_or("Out path not supplied".to_string())?;
+    
     for entry in &modules {
-        let path = PathBuf::from(format!("{}{}", out_path, entry.0).replace("\\", "/"));
+        let path = out_path.join(entry.0.replace("\\", "/"));
         
         if let Some(parent_path) = path.parent() {
             fs::create_dir_all(parent_path)?;
         }
 
         let mut file = File::create(path)?;
-
         write!(file, "{}", entry.1)?;
     }
 
@@ -273,7 +257,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Write script lines to file
     //
 
-    let mut script_file = File::create(PathBuf::from(format!("{}{}", out_path, "ida_script.py").replace("\\", "/")))?;
+    let mut script_file = File::create(out_path.join("ida_script.py"))?;
 
     for script_line in script_lines {
         script_file.write_fmt(format_args!("{}\n", script_line))?;
@@ -283,6 +267,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn parse_module(
+    // TODO: map this stuff into a struct...
+    base_address: Option<u64>,
     module: &pdb::Module,
     address_map: &pdb::AddressMap,
     string_table: &pdb::StringTable,
@@ -376,7 +362,7 @@ fn parse_module(
                         None => module_file_name_ref,
                     };
     
-                    let address = 0x180000000u64 + data_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+                    let address = base_address.unwrap_or(0) + data_symbol.offset.to_rva(address_map).unwrap().0 as u64;
     
                     members.push(
                         (
@@ -418,7 +404,7 @@ fn parse_module(
                     }
 
                     let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                    let address = 0x180000000u64 + thread_storage_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+                    let address = base_address.unwrap_or(0) + thread_storage_symbol.offset.to_rva(address_map).unwrap().0 as u64;
 
                     members.push(
                         (
@@ -480,7 +466,7 @@ fn parse_module(
                         None => module_file_name_ref,
                     };
     
-                    let address = 0x180000000u64 + procedure_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+                    let address = base_address.unwrap_or(0) + procedure_symbol.offset.to_rva(address_map).unwrap().0 as u64;
     
                     members.push(
                         (
@@ -570,7 +556,7 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
-                let address = 0x180000000u64 + data_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+                let address = base_address.unwrap_or(0) + data_symbol.offset.to_rva(address_map).unwrap().0 as u64;
 
                 members.push(
                     (
@@ -612,7 +598,7 @@ fn parse_module(
                 }
 
                 let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                let address = 0x180000000u64 + thread_storage_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+                let address = base_address.unwrap_or(0) + thread_storage_symbol.offset.to_rva(address_map).unwrap().0 as u64;
 
                 members.push(
                     (
@@ -674,7 +660,7 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
-                let address = 0x180000000u64 + procedure_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+                let address = base_address.unwrap_or(0) + procedure_symbol.offset.to_rva(address_map).unwrap().0 as u64;
 
                 members.push(
                     (
