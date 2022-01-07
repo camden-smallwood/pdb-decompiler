@@ -308,7 +308,7 @@ pub fn type_name<'p>(
             let mut parameter_names = parameter_names.clone();
 
             if let Some(parameter_names) = parameter_names.as_mut() {
-                if data.this_pointer_type.is_some() && parameter_names[0] == "this" {
+                if data.this_pointer_type.is_some() && !parameter_names.is_empty() && parameter_names[0] == "this" {
                     parameter_names.remove(0);
                 }
             }
