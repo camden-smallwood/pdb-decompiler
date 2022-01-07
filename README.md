@@ -30,6 +30,7 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 * Find the corresponding source files of toplevel user datatype symbols (`S_UDT`).
 * Determine when to include constant declarations in source files.
 * Figure out the format of float constants (?)
+* Build namespace blocks where necessary (`.h/.hpp` files)
 * Build a better C++ AST or improve the current implementation to a more workable point
-* Handle any TODOs listed in source code...
+* Handle any TODOs listed in source code
 * Clean up everything

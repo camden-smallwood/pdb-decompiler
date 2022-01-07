@@ -156,7 +156,7 @@ impl Class {
 
             Ok(other) => panic!("error: unexpected type in Class::add_members, got {} -> {:?}", type_index, other),
 
-            Err(err) => panic!("warning: unhandled error in Class::add_members: {}", err)
+            Err(err) => println!("warning: unhandled error in Class::add_members: {}", err)
         }
 
         Ok(())

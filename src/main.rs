@@ -30,13 +30,18 @@ struct Options {
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::from_args();
 
+    let out_path: PathBuf = options.out.ok_or("Out path not supplied".to_string())?;
+    
     let mut pdb = PDB::open(File::open(options.pdb.ok_or("PDB path not provided")?)?)?;
     let dbi = pdb.debug_information()?;
     let address_map = pdb.address_map()?;
     let string_table = pdb.string_table()?;
 
     let mut modules = HashMap::new();
-    let mut script_lines = vec![];
+    let mut module_public_symbols = HashMap::new();
+    
+    let mut script_file = File::create(out_path.join("/ida_script.py"))?;
+    writeln!(script_file, include_str!("../ida_script_base.py"))?;
 
     //
     // Process type information
@@ -94,28 +99,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     //
-    // Process module contributions
-    //
-
-    let mut contributions = HashMap::new();
-    let mut contributions_iter = dbi.section_contributions()?;
-
-    while let Some(contribution) = contributions_iter.next()? {
-        if let Some(module) = dbi.modules()?.nth(contribution.module as _)? {
-            contributions
-                .entry(module.module_name().to_string())
-                .or_insert(vec![])
-                .push((contribution.offset, contribution.size));
-        }
-    }
-
-    //
     // Process global symbols
     //
 
     let global_symbols = pdb.global_symbols()?;
     let mut global_symbol_iter = global_symbols.iter();
-    let mut module_public_symbols = HashMap::new();
 
     while let Some(symbol) = global_symbol_iter.next()? {
         let symbol_data = match symbol.parse() {
@@ -134,12 +122,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             pdb::SymbolData::Data(pdb::DataSymbol { global: true, name, offset, .. }) |
             pdb::SymbolData::ThreadStorage(pdb::ThreadStorageSymbol { global: true, name, offset, .. }) |
             pdb::SymbolData::Procedure(pdb::ProcedureSymbol { global: true, name, offset, .. }) => {
-                for (module_name, offsets) in contributions.iter() {
-                    for entry in offsets.iter() {
-                        if offset >= entry.0 && offset < entry.0 + entry.1 {
+                let mut contributions_iter = dbi.section_contributions()?;
+            
+                while let Some(contribution) = contributions_iter.next()? {
+                    if let Some(module) = dbi.modules()?.nth(contribution.module as _)? {
+                        if offset >= contribution.offset && offset < contribution.offset + contribution.size {
                             match name.to_string().to_string().as_str() {
                                 x if x.contains("@") || x.contains("`") || x.contains("$") => (),
-                                _ => module_public_symbols.entry(module_name.clone()).or_insert(vec![]).push(symbol)
+                                _ => module_public_symbols.entry(module.module_name().to_string()).or_insert(vec![]).push(symbol)
                             }
                         }
                     }
@@ -155,8 +145,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     //
 
     let mut module_iter = dbi.modules()?;
-
-    let mut object_source_files = HashMap::new();
 
     while let Some(ref module) = module_iter.next()? {
         let module_info = match pdb.module_info(module)? {
@@ -192,22 +180,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             &line_program,
             &mut symbols,
             &module_public_symbols,
-            &mut script_lines
+            &mut script_file
         )?;
-
-        let paths = object_source_files.entry(PathBuf::from(module.object_file_name().to_string())).or_insert(vec![]);
-
-        if let Some(path) = path.as_ref().map(|x| x.to_string_lossy().to_string()) {
-            if !paths.contains(&path) {
-                paths.push(path);
-            }
-        }
-
-        for path in headers.iter().map(|x| x.to_string_lossy().to_string()) {
-            if !paths.contains(&path) {
-                paths.push(path);
-            }
-        }
 
         let source_file = match path.as_ref() {
             Some(path) => path.to_string_lossy().to_string(),
@@ -230,18 +204,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    for paths in object_source_files.values_mut() {
-        paths.sort();
-    }
-
-    println!("{:#?}", object_source_files);
-
     //
     // Write modules to file
     //
 
-    let out_path: PathBuf = options.out.ok_or("Out path not supplied".to_string())?;
-    
     for entry in &modules {
         let path = PathBuf::from(format!("{}{}", out_path.to_string_lossy(), entry.0).replace("\\", "/"));
         
@@ -256,12 +222,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     //
     // Write script lines to file
     //
-
-    let mut script_file = File::create(PathBuf::from(format!("{}ida_script.py", out_path.to_string_lossy()).replace("\\", "/")))?;
-
-    for script_line in script_lines {
-        script_file.write_fmt(format_args!("{}\n", script_line))?;
-    }
 
     Ok(())
 }
@@ -279,7 +239,7 @@ fn parse_module(
     line_program: &pdb::LineProgram,
     module_symbols: &mut pdb::SymbolIter,
     module_public_symbols: &HashMap<String, Vec<pdb::Symbol>>,
-    script_lines: &mut Vec<String>,
+    script_file: &mut File,
 ) -> pdb::Result<(Option<PathBuf>, Vec<PathBuf>, Vec<(PathBuf, cpp::ModuleMember)>)> {
     let mut headers = vec![];
     let mut members = vec![];
@@ -384,13 +344,12 @@ fn parse_module(
                         )
                     );
     
-                    script_lines.push(
-                        format!(
-                            "decompile_data(0x{:X}, \"{}\")",
-                            address,
-                            module_file_path.to_string_lossy().replace("\\", "\\\\")
-                        )
-                    );
+                    writeln!(
+                        script_file,
+                        "decompile_to_file(0x{:X}, \"{}\")",
+                        address,
+                        module_file_path.to_string_lossy().replace("\\", "\\\\")
+                    )?;
                 }
 
                 pdb::SymbolData::ThreadStorage(thread_storage_symbol) => {
@@ -426,13 +385,12 @@ fn parse_module(
                         )
                     );
 
-                    script_lines.push(
-                        format!(
-                            "decompile_data(0x{:X}, \"{}\")",
-                            address,
-                            module_file_path.to_string_lossy().replace("\\", "\\\\")
-                        )
-                    );
+                    writeln!(
+                        script_file,
+                        "decompile_to_file(0x{:X}, \"{}\")",
+                        address,
+                        module_file_path.to_string_lossy().replace("\\", "\\\\")
+                    )?;
                 }
 
                 pdb::SymbolData::Procedure(procedure_symbol) => {
@@ -477,13 +435,12 @@ fn parse_module(
                         )
                     );
     
-                    script_lines.push(
-                        format!(
-                            "decompile_func(0x{:X}, \"{}\")",
-                            address,
-                            module_file_path.to_string_lossy().replace("\\", "\\\\")
-                        )
-                    );
+                    writeln!(
+                        script_file,
+                        "decompile_to_file(0x{:X}, \"{}\")",
+                        address,
+                        module_file_path.to_string_lossy().replace("\\", "\\\\")
+                    )?;
                 }
                 
                 _ => ()
@@ -578,13 +535,12 @@ fn parse_module(
                     )
                 );
 
-                script_lines.push(
-                    format!(
-                        "decompile_data(0x{:X}, \"{}\")",
-                        address,
-                        module_file_path.to_string_lossy().replace("\\", "\\\\")
-                    )
-                );
+                writeln!(
+                    script_file,
+                    "decompile_to_file(0x{:X}, \"{}\")",
+                    address,
+                    module_file_path.to_string_lossy().replace("\\", "\\\\")
+                )?;
             }
 
             pdb::SymbolData::ThreadStorage(thread_storage_symbol) => {
@@ -620,13 +576,12 @@ fn parse_module(
                     )
                 );
 
-                script_lines.push(
-                    format!(
-                        "decompile_data(0x{:X}, \"{}\")",
-                        address,
-                        module_file_path.to_string_lossy().replace("\\", "\\\\")
-                    )
-                );
+                writeln!(
+                    script_file,
+                    "decompile_to_file(0x{:X}, \"{}\")",
+                    address,
+                    module_file_path.to_string_lossy().replace("\\", "\\\\")
+                )?;
             }
 
             pdb::SymbolData::Procedure(procedure_symbol) => {
@@ -671,13 +626,12 @@ fn parse_module(
                     )
                 );
 
-                script_lines.push(
-                    format!(
-                        "decompile_func(0x{:X}, \"{}\")",
-                        address,
-                        module_file_path.to_string_lossy().replace("\\", "\\\\")
-                    )
-                );
+                writeln!(
+                    script_file,
+                    "decompile_to_file(0x{:X}, \"{}\")",
+                    address,
+                    module_file_path.to_string_lossy().replace("\\", "\\\\")
+                )?;
             }
 
             pdb::SymbolData::Thunk(_) => parse_thunk_symbols(module_symbols),
