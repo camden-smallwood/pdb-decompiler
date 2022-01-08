@@ -90,6 +90,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             if let Some((_, fixed_module_path)) = module_path.split_once(":/") {
                 module_path = fixed_module_path.to_string();
             }
+
+            println!("found UDT (local): {:?}", data);
             
             modules
                 .entry(module_path.clone())
@@ -98,6 +100,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    let global_symbols = pdb.global_symbols()?;
+    let mut global_symbols_iter = global_symbols.iter();
+
+    while let Some(symbol) = global_symbols_iter.next()? {
+        let symbol_data = match symbol.parse() {
+            Ok(symbol_data) => symbol_data,
+            Err(error) => {
+                println!("failed to parse symbol data: {}", error);
+                continue;
+            }
+        };
+
+        if let pdb::SymbolData::UserDefinedType(_) = symbol_data {
+            println!("found UDT (global): {:?}", symbol_data);
+        }
+    }
+    
     //
     // Process module debug information
     //
@@ -205,8 +224,6 @@ fn parse_module(
     let mut module_file_name_ref = None;
     let mut module_file_path = None;
 
-    println!("module: {} - {}", module.module_name(), module.object_file_name());
-
     let obj_path = PathBuf::from(module.module_name().replace("\\", "/")[2..].to_string());
 
     let mut lines = line_program.lines();
@@ -228,19 +245,16 @@ fn parse_module(
         match path.extension() {
             Some(extension) => match extension.to_str().unwrap_or("") {
                 "c" | "cc" | "cpp" | "cxx" | "pch" | "masm" | "asm" if path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase()) => {
-                    println!("\tsource: {}", path.to_string_lossy());
                     module_file_name_ref = Some(file.name);
                     module_file_path = Some(path);
                 }
 
                 _ => {
-                    println!("\theader: {}", path.to_string_lossy());
                     headers.push(path);
                 }
             }
 
             None => {
-                println!("\theader: {}", path.to_string_lossy());
                 headers.push(path);
             }
         }
@@ -263,10 +277,6 @@ fn parse_module(
         };
 
         match symbol_data {
-            pdb::SymbolData::UserDefinedType(_) => {
-                // TODO: find source file and line for symbol
-            }
-
             pdb::SymbolData::Data(pdb::DataSymbol { global: true, name, offset, .. }) |
             pdb::SymbolData::ThreadStorage(pdb::ThreadStorageSymbol { global: true, name, offset, .. }) |
             pdb::SymbolData::Procedure(pdb::ProcedureSymbol { global: true, name, offset, .. }) => {
@@ -630,6 +640,8 @@ fn parse_module(
             pdb::SymbolData::Export(_) => println!("found export in module: {:?}", symbol_data),
             pdb::SymbolData::Label(_) => println!("found label in module: {:?}", symbol_data),
 
+            pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(module_symbols),
+
             ref data => panic!("Unhandled module symbol: {:#?}", data)
         }
     }
@@ -667,6 +679,7 @@ fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
             pdb::SymbolData::RegisterRelative(x) => parameter_names.push(x.name.to_string().to_string()),
             pdb::SymbolData::RegisterVariable(_) => (),
             pdb::SymbolData::ThreadStorage(_) => println!("found thread storage symbol in procedure: {:?}", symbol_data),
+            pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
 
             data => panic!("Unhandled symbol data in parse_procedure_symbols - {:?}", data)
         }
@@ -702,6 +715,7 @@ fn parse_block_symbols(symbols: &mut pdb::SymbolIter) {
             
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
+            pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
 
             data => panic!("Unhandled symbol data in parse_block_symbols - {:?}", data)
         }
@@ -735,6 +749,7 @@ fn parse_inline_site_symbols(symbols: &mut pdb::SymbolIter) {
             
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
+            pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
             
             _ => panic!("Unhandled symbol data in parse_inline_site_symbols - {:?}", symbol_data)
         }
@@ -759,6 +774,28 @@ fn parse_thunk_symbols(symbols: &mut pdb::SymbolIter) {
         match symbol_data {
             pdb::SymbolData::ScopeEnd => break,
             _ => panic!("Unhandled symbol data in parse_thunk_symbols - {:?}", symbol_data)
+        }
+    }
+}
+
+fn parse_separated_code_symbols(symbols: &mut pdb::SymbolIter) {
+    loop {
+        let symbol = match symbols.next() {
+            Ok(symbol) => match symbol {
+                Some(symbol) => symbol,
+                None => break
+            }
+            _ => continue
+        };
+
+        let symbol_data = match symbol.parse() {
+            Ok(symbol_data) => symbol_data,
+            _ => continue
+        };
+
+        match symbol_data {
+            pdb::SymbolData::ScopeEnd => break,
+            _ => panic!("Unhandled symbol data in parse_separated_code_symbols - {:?}", symbol_data)
         }
     }
 }
