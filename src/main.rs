@@ -80,8 +80,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                         Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
                         Err(error) => panic!("failed to parse UDT source file id: {}", error)
                     }
+                    
                     Err(error) => panic!("failed to find UDT source file id: {}", error)
                 }
+
                 pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
                     source_line_ref.to_string_lossy(&string_table)?.to_string().replace("\\", "/")
                 }
@@ -510,7 +512,15 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
-                let address = base_address.unwrap_or(0) + data_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+                let rva = match data_symbol.offset.to_rva(address_map) {
+                    Some(rva) => rva,
+                    None => {
+                        println!("warning: no RVA found for data symbol: {:?}", data_symbol);
+                        continue;
+                    }
+                };
+                
+                let address = base_address.unwrap_or(0) + rva.0 as u64;
 
                 members.push(
                     (
