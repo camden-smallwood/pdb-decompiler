@@ -1,14 +1,7 @@
 mod cpp;
 
 use pdb::{FallibleIterator, IdData, PDB, TypeInformation, TypeFinder, IdInformation, IdFinder, StringTable, SymbolTable};
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    fs::{self, File},
-    io::Write,
-    num,
-    path::PathBuf,
-};
+use std::{collections::{HashMap, HashSet}, error::Error, fs::{self, File}, io::Write, num, path::PathBuf};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
