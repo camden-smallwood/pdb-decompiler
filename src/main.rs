@@ -24,9 +24,6 @@ fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::from_args();
 
-    let out_path: PathBuf = options.out.ok_or("Out path not supplied".to_string())?;
-    println!("out: {}", out_path.to_string_lossy());
-    
     let mut pdb = PDB::open(File::open(options.pdb.ok_or("PDB path not provided")?)?)?;
     let dbi = pdb.debug_information()?;
     let address_map = pdb.address_map()?;
@@ -42,6 +39,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut modules = HashMap::new();
 
+    let out_path: PathBuf = options.out.ok_or("Out path not supplied".to_string())?;
+    fs::create_dir_all(out_path.clone())?;
+    
     let mut script_file = File::create(out_path.join("ida_script.py"))?;
     writeln!(script_file, include_str!("../ida_script_base.py"))?;
 
