@@ -1,18 +1,15 @@
 mod cpp;
 
-use pdb::{FallibleIterator, IdData, PDB};
+use pdb::{FallibleIterator, IdData, PDB, TypeInformation, TypeFinder, IdInformation, IdFinder, StringTable, SymbolTable};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fs::{self, File},
     io::Write,
+    num,
     path::PathBuf,
 };
 use structopt::StructOpt;
-
-fn parse_base_address(src: &str) -> Result<u64, std::num::ParseIntError> {
-    u64::from_str_radix(src.trim_start_matches("0x"), 16)
-}
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "pdb-decompiler", about = "A tool to decompile MSVC PDB files to C++ source code.")]
@@ -27,6 +24,10 @@ struct Options {
     base_address: Option<u64>,
 }
 
+fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
+    u64::from_str_radix(src.trim_start_matches("0x"), 16)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::from_args();
 
@@ -38,86 +39,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     let address_map = pdb.address_map()?;
     let string_table = pdb.string_table()?;
 
+    let type_info = pdb.type_information()?;
+    let mut type_finder = type_info.finder();
+    
+    let id_info = pdb.id_information()?;
+    let mut id_finder = id_info.finder();
+
+    let global_symbols = pdb.global_symbols()?;
+
     let mut modules = HashMap::new();
 
     let mut script_file = File::create(out_path.join("ida_script.py"))?;
     writeln!(script_file, include_str!("../ida_script_base.py"))?;
 
-    //
-    // Process type information
-    //
-
-    let type_info = pdb.type_information()?;
-    let mut type_finder = type_info.finder();
-    let mut type_iter = type_info.iter();
-
-    loop {
-        type_finder.update(&type_iter);
-
-        match type_iter.next() {
-            Ok(Some(_)) => (),
-            Ok(None) => break,
-            Err(err) => panic!("Failed to get next type - {}", err)
-        }
-    }
-
-    //
-    // Process id information
-    //
-
-    let id_info = pdb.id_information()?;
-    let mut id_finder = id_info.finder();
-    let mut id_iter = id_info.iter();
-
-    while let Some(id) = id_iter.next()? {
-        id_finder.update(&id_iter);
-
-        if let IdData::UserDefinedTypeSource(data) = id.parse()? {
-            let mut module_path = match data.source_file {
-                pdb::UserDefinedTypeSourceFileRef::Local(id) => match id_finder.find(id) {
-                    Ok(item) => match item.parse() {
-                        Ok(IdData::String(source_file)) => source_file.name.to_string().to_string().replace("\\", "/"),
-                        Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
-                        Err(error) => panic!("failed to parse UDT source file id: {}", error)
-                    }
-                    
-                    Err(error) => panic!("failed to find UDT source file id: {}", error)
-                }
-
-                pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
-                    source_line_ref.to_string_lossy(&string_table)?.to_string().replace("\\", "/")
-                }
-            };
-
-            if let Some((_, fixed_module_path)) = module_path.split_once(":/") {
-                module_path = fixed_module_path.to_string();
-            }
-
-            println!("found UDT (local): {:?}", data);
-            
-            modules
-                .entry(module_path.clone())
-                .or_insert(cpp::Module::new().with_path(module_path.into()))
-                .add_type_definition(&type_info, &type_finder, data.udt, data.line)?;
-        }
-    }
-
-    let global_symbols = pdb.global_symbols()?;
-    let mut global_symbols_iter = global_symbols.iter();
-
-    while let Some(symbol) = global_symbols_iter.next()? {
-        let symbol_data = match symbol.parse() {
-            Ok(symbol_data) => symbol_data,
-            Err(error) => {
-                println!("failed to parse symbol data: {}", error);
-                continue;
-            }
-        };
-
-        if let pdb::SymbolData::UserDefinedType(_) = symbol_data {
-            println!("found UDT (global): {:?}", symbol_data);
-        }
-    }
+    process_type_information(&type_info, &mut type_finder)?;
+    process_id_information(&mut modules, &string_table, &id_info, &mut id_finder, &type_info, &mut type_finder)?;
+    process_global_symbols(&global_symbols)?;
     
     //
     // Process module debug information
@@ -198,6 +135,85 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let mut file = File::create(path)?;
         write!(file, "{}", entry.1)?;
+    }
+
+    Ok(())
+}
+
+fn process_type_information<'a>(
+    type_info: &'a TypeInformation,
+    type_finder: &mut TypeFinder<'a>
+) -> pdb::Result<()> {
+    let mut type_iter = type_info.iter();
+
+    while type_iter.next()?.is_some() {
+        type_finder.update(&type_iter);
+    }
+
+    Ok(())
+}
+
+fn process_id_information<'a>(
+    modules: &mut HashMap<String, cpp::Module>,
+    string_table: &StringTable,
+    id_info: &'a IdInformation,
+    id_finder: &mut IdFinder<'a>,
+    type_info: &'a TypeInformation,
+    type_finder: &mut TypeFinder<'a>,
+) -> pdb::Result<()> {
+    let mut id_iter = id_info.iter();
+
+    while let Some(id) = id_iter.next()? {
+        id_finder.update(&id_iter);
+
+        if let IdData::UserDefinedTypeSource(data) = id.parse()? {
+            let mut module_path = match data.source_file {
+                pdb::UserDefinedTypeSourceFileRef::Local(id) => match id_finder.find(id) {
+                    Ok(item) => match item.parse() {
+                        Ok(IdData::String(source_file)) => source_file.name.to_string().to_string().replace("\\", "/"),
+                        Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
+                        Err(error) => panic!("failed to parse UDT source file id: {}", error)
+                    }
+                    
+                    Err(error) => panic!("failed to find UDT source file id: {}", error)
+                }
+
+                pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
+                    source_line_ref.to_string_lossy(&string_table)?.to_string().replace("\\", "/")
+                }
+            };
+
+            if let Some((_, fixed_module_path)) = module_path.split_once(":/") {
+                module_path = fixed_module_path.to_string();
+            }
+
+            println!("found UDT (local): {:?}", data);
+            
+            modules
+                .entry(module_path.clone())
+                .or_insert(cpp::Module::new().with_path(module_path.into()))
+                .add_type_definition(&type_info, &type_finder, data.udt, data.line)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn process_global_symbols(global_symbols: &SymbolTable) -> pdb::Result<()> {
+    let mut global_symbols_iter = global_symbols.iter();
+
+    while let Some(symbol) = global_symbols_iter.next()? {
+        let symbol_data = match symbol.parse() {
+            Ok(symbol_data) => symbol_data,
+            Err(error) => {
+                println!("failed to parse symbol data: {}", error);
+                continue;
+            }
+        };
+
+        if let pdb::SymbolData::UserDefinedType(_) = symbol_data {
+            println!("found UDT (global): {:?}", symbol_data);
+        }
     }
 
     Ok(())
@@ -312,8 +328,16 @@ fn parse_module(
                                                 Some(file_name_ref) => file_name_ref,
                                                 None => module_file_name_ref,
                                             };
-                            
-                                            let address = base_address.unwrap_or(0) + data_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+
+                                            let rva = match data_symbol.offset.to_rva(address_map) {
+                                                Some(rva) => rva,
+                                                None => {
+                                                    println!("warning: no RVA found for data symbol: {:?}", data_symbol);
+                                                    continue;
+                                                }
+                                            };
+                                            
+                                            let address = base_address.unwrap_or(0) + rva.0 as u64;
                             
                                             members.push(
                                                 (
@@ -354,8 +378,17 @@ fn parse_module(
                                             }
                         
                                             let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                                            let address = base_address.unwrap_or(0) + thread_storage_symbol.offset.to_rva(address_map).unwrap().0 as u64;
-                        
+
+                                            let rva = match thread_storage_symbol.offset.to_rva(address_map) {
+                                                Some(rva) => rva,
+                                                None => {
+                                                    println!("warning: no RVA found for thread storage symbol: {:?}", thread_storage_symbol);
+                                                    continue;
+                                                }
+                                            };
+                                            
+                                            let address = base_address.unwrap_or(0) + rva.0 as u64;
+                            
                                             members.push(
                                                 (
                                                     PathBuf::from(file_name_ref.to_string_lossy(string_table).unwrap_or("".into()).replace("\\", "/")[2..].to_string()),
@@ -414,8 +447,16 @@ fn parse_module(
                                                 Some(file_name_ref) => file_name_ref,
                                                 None => module_file_name_ref,
                                             };
-                            
-                                            let address = base_address.unwrap_or(0) + procedure_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+
+                                            let rva = match procedure_symbol.offset.to_rva(address_map) {
+                                                Some(rva) => rva,
+                                                None => {
+                                                    println!("warning: no RVA found for procedure symbol: {:?}", procedure_symbol);
+                                                    continue;
+                                                }
+                                            };
+                                            
+                                            let address = base_address.unwrap_or(0) + rva.0 as u64;
                             
                                             members.push(
                                                 (
@@ -561,7 +602,16 @@ fn parse_module(
                 }
 
                 let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                let address = base_address.unwrap_or(0) + thread_storage_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+
+                let rva = match thread_storage_symbol.offset.to_rva(address_map) {
+                    Some(rva) => rva,
+                    None => {
+                        println!("warning: no RVA found for thread storage symbol: {:?}", thread_storage_symbol);
+                        continue;
+                    }
+                };
+                
+                let address = base_address.unwrap_or(0) + rva.0 as u64;
 
                 members.push(
                     (
@@ -622,7 +672,15 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
-                let address = base_address.unwrap_or(0) + procedure_symbol.offset.to_rva(address_map).unwrap().0 as u64;
+                let rva = match procedure_symbol.offset.to_rva(address_map) {
+                    Some(rva) => rva,
+                    None => {
+                        println!("warning: no RVA found for procedure symbol: {:?}", procedure_symbol);
+                        continue;
+                    }
+                };
+                
+                let address = base_address.unwrap_or(0) + rva.0 as u64;
 
                 members.push(
                     (
