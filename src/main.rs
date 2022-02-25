@@ -33,19 +33,27 @@ fn sanitize_path(path: String) -> String {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::from_args();
+    let pdb = pdb::PDB::open(File::open(options.pdb.clone().ok_or("PDB path not provided")?)?)?;
+    
+    if let Err(error) = decompile_pdb(options, pdb) {
+        println!("ERROR: could not decompile PDB because it {error}");
+    }
 
-    let mut pdb = pdb::PDB::open(File::open(options.pdb.ok_or("PDB path not provided")?)?)?;
-    let debug_info = pdb.debug_information()?;
-    let address_map = pdb.address_map()?;
-    let string_table = pdb.string_table()?;
+    Ok(())
+}
 
-    let type_info = pdb.type_information()?;
+fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dyn Error>> {
+    let debug_info = pdb.debug_information().map_err(|e| format!("does not contain debug information: {e}"))?;
+    let address_map = pdb.address_map().map_err(|e| format!("does not contain an address map: {e}"))?;
+    let string_table = pdb.string_table().map_err(|e| format!("does not contain a string table: {e}"))?;
+
+    let type_info = pdb.type_information().map_err(|e| format!("does not contain type information: {e}"))?;
     let mut type_finder = type_info.finder();
     
-    let id_info = pdb.id_information()?;
+    let id_info = pdb.id_information().map_err(|e| format!("does not contain id information: {e}"))?;
     let mut id_finder = id_info.finder();
 
-    let global_symbols = pdb.global_symbols()?;
+    let global_symbols = pdb.global_symbols().map_err(|e| format!("does not contain global symbol information: {e}"))?;
 
     let mut modules = HashMap::new();
 
@@ -55,19 +63,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut script_file = File::create(out_path.join("ida_script.py"))?;
     writeln!(script_file, include_str!("../ida_script_base.py"))?;
 
-    process_type_information(&type_info, &mut type_finder)?;
-    process_id_information(&mut modules, &string_table, &id_info, &mut id_finder, &type_info, &mut type_finder)?;
+    process_type_information(&type_info, &mut type_finder).map_err(|e| format!("failed to process type info: {e}"))?;
+    process_id_information(&mut modules, &string_table, &id_info, &mut id_finder, &type_info, &mut type_finder).map_err(|e| format!("failed to process id info: {e}"))?;
 
-    let section_contributions = load_section_contributions(&debug_info)?;
-    let module_global_symbols = load_module_global_symbols(&debug_info, &global_symbols, section_contributions)?;
+    let section_contributions = load_section_contributions(&debug_info).map_err(|e| format!("does not contain module section information: {e}"))?;
+    let module_global_symbols = load_module_global_symbols(&debug_info, &global_symbols, section_contributions).map_err(|e| format!("failed to load module global symbol info: {e}"))?;
     
     //
     // Process module debug information
     //
 
-    let mut module_iter = debug_info.modules()?;
+    let mut module_iter = debug_info.modules().map_err(|e| format!("does not contain debug module info: {e}"))?;
 
-    while let Some(ref module) = module_iter.next()? {
+    while let Some(ref module) = module_iter.next().map_err(|e| format!("failed to get next debug module info: {e}"))? {
         let module_info = match pdb.module_info(module)? {
             Some(module_info) => module_info,
             None => {
@@ -88,7 +96,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             &id_finder,
             &module_global_symbols,
             &mut script_file
-        )?;
+        ).map_err(|e| format!("failed to decompile module: {e}"))?;
 
         let source_file = match path.as_ref() {
             Some(path) => path.to_string_lossy().to_string(),
