@@ -176,27 +176,38 @@ fn process_id_information<'a>(
     while let Some(id) = id_iter.next()? {
         id_finder.update(&id_iter);
 
-        if let pdb::IdData::UserDefinedTypeSource(data) = id.parse()? {
-            let module_path = match data.source_file {
-                pdb::UserDefinedTypeSourceFileRef::Local(id) => match id_finder.find(id) {
-                    Ok(item) => match item.parse() {
-                        Ok(pdb::IdData::String(source_file)) => sanitize_path(source_file.name.to_string().to_string()),
-                        Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
-                        Err(error) => panic!("failed to parse UDT source file id: {}", error)
+        match id.parse() {
+            Ok(pdb::IdData::UserDefinedTypeSource(data)) => {
+                let module_path = match data.source_file {
+                    pdb::UserDefinedTypeSourceFileRef::Local(id) => match id_finder.find(id) {
+                        Ok(item) => match item.parse() {
+                            Ok(pdb::IdData::String(source_file)) => sanitize_path(source_file.name.to_string().to_string()),
+                            Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
+                            Err(error) => panic!("failed to parse UDT source file id: {}", error)
+                        }
+                        
+                        Err(error) => panic!("failed to find UDT source file id: {}", error)
                     }
-                    
-                    Err(error) => panic!("failed to find UDT source file id: {}", error)
-                }
+    
+                    pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
+                        sanitize_path(source_line_ref.to_string_lossy(&string_table)?.to_string())
+                    }
+                };
+                
+                println!("attempting to add type definition {data:#?}");
+                
+                modules
+                    .entry(module_path.clone())
+                    .or_insert(cpp::Module::new().with_path(module_path.into()))
+                    .add_type_definition(&type_info, &type_finder, data.udt, data.line)?;
+            }
 
-                pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
-                    sanitize_path(source_line_ref.to_string_lossy(&string_table)?.to_string())
-                }
-            };
-            
-            modules
-                .entry(module_path.clone())
-                .or_insert(cpp::Module::new().with_path(module_path.into()))
-                .add_type_definition(&type_info, &type_finder, data.udt, data.line)?;
+            Ok(_) => (),
+
+            Err(e) => {
+                eprintln!("WARNING: failed to parse id: {e}");
+                continue;
+            }
         }
     }
 

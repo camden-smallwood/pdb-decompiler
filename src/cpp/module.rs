@@ -55,7 +55,15 @@ impl Module {
             return Ok(())
         }
 
-        match type_finder.find(type_index)?.parse() {
+        let type_item = match type_finder.find(type_index) {
+            Ok(type_item) => type_item,
+            Err(e) => {
+                eprintln!("WARNING: failed to find type: {e}");
+                return Ok(())
+            }
+        };
+
+        match type_item.parse() {
             Ok(pdb::TypeData::Class(data)) => {
                 let mut definition = Class {
                     kind: Some(data.kind),
@@ -72,13 +80,17 @@ impl Module {
                 };
 
                 if let Some(derived_from) = data.derived_from {
-                    definition.add_derived_from(type_finder, derived_from)?;
+                    if let Err(e) = definition.add_derived_from(type_finder, derived_from) {
+                        eprintln!("WARNING: failed to add class derived from: {e}");
+                    }
                 }
 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
                 } else if let Some(fields) = data.fields {
-                    definition.add_members(type_info, type_finder, fields)?;
+                    if let Err(e) = definition.add_members(type_info, type_finder, fields) {
+                        eprintln!("WARNING: failed to add class members: {e}");
+                    }
                 }
 
                 let mut exists = false;
@@ -102,12 +114,20 @@ impl Module {
             }
 
             Ok(pdb::TypeData::Enumeration(data)) => {
+                let underlying_type_name = match type_name(type_info, type_finder, data.underlying_type, None, None, true) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        eprintln!("WARNING: failed to get enum type name: {e}");
+                        return Ok(())
+                    }
+                };
+                
                 let mut definition = Enum {
                     name: data.name.to_string().to_string(),
                     index: type_index,
                     depth: 0,
                     line,
-                    underlying_type_name: type_name(type_info, type_finder, data.underlying_type, None, None, true)?,
+                    underlying_type_name,
                     is_declaration: false,
                     values: vec![],
                     field_attributes: None,
@@ -116,7 +136,9 @@ impl Module {
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
                 } else {
-                    definition.add_members(type_finder, data.fields)?;
+                    if let Err(e) = definition.add_members(type_finder, data.fields) {
+                        eprintln!("WARNING: failed to add enum members: {e}");
+                    }
                 }
 
                 let mut exists = false;
@@ -154,7 +176,9 @@ impl Module {
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
                 } else {
-                    definition.add_members(type_info, type_finder, data.fields)?;
+                    if let Err(e) = definition.add_members(type_info, type_finder, data.fields) {
+                        eprintln!("WARNING: failed to add union members: {e}");
+                    }
                 }
 
                 let mut exists = false;
