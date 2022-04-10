@@ -21,8 +21,8 @@ fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
     u64::from_str_radix(src.trim_start_matches("0x"), 16)
 }
 
-fn sanitize_path(path: String) -> String {
-    let mut result = path.replace("\\", "/");
+fn sanitize_path<S: AsRef<str>>(path: S) -> String {
+    let mut result = path.as_ref().to_string().replace("\\", "/");
 
     if let Some((_, rest)) = result.split_once(":") {
         result = rest.to_string();
@@ -79,12 +79,12 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
         let module_info = match pdb.module_info(module)? {
             Some(module_info) => module_info,
             None => {
-                println!("module has no info: {} - {}", module.module_name(), module.object_file_name());
+                // println!("module has no info: {} - {}", module.module_name(), module.object_file_name());
                 continue;
             },
         };
 
-        let (path, headers, members) = parse_module(
+        let (path, headers, members) = match parse_module(
             options.base_address,
             module,
             &module_info,
@@ -96,12 +96,24 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             &id_finder,
             &module_global_symbols,
             &mut script_file
-        ).map_err(|e| format!("failed to decompile module: {e}"))?;
+        ) {
+            Ok(x) => x,
+            Err(e) => {
+                println!("ERROR: failed to decompile module: {e} - {module:#?}");
+                continue;
+            }
+        };
 
         let source_file = match path.as_ref() {
             Some(path) => path.to_string_lossy().to_string(),
             None => {
-                println!("module has no source file: {:#?}", module);
+                match module.module_name().to_string().as_str() {
+                    "* CIL *" | "* Linker *" => (),
+                    x if x.ends_with(".dll") => (),
+                    _ => {
+                        println!("module has no source file: {module:#?}");
+                    }
+                }
                 continue;
             }
         };
@@ -194,8 +206,6 @@ fn process_id_information<'a>(
                     }
                 };
                 
-                println!("attempting to add type definition {data:#?}");
-                
                 modules
                     .entry(module_path.clone())
                     .or_insert(cpp::Module::new().with_path(module_path.into()))
@@ -234,7 +244,7 @@ fn load_module_global_symbols<'a>(
         };
 
         if let pdb::SymbolData::UserDefinedType(_) = &symbol_data {
-            println!("found UDT (global): {:?}", symbol_data);
+            // println!("found UDT (global): {:?}", symbol_data);
         }
 
         match symbol_data {
@@ -287,7 +297,34 @@ fn parse_module(
 
     let line_program = module_info.line_program()?;
     
-    let obj_path = PathBuf::from(sanitize_path(module.module_name().to_string()));
+    let mut obj_path = PathBuf::from(sanitize_path(module.module_name()));
+
+    if let Some(file_name) = obj_path.file_name() {
+        let file_name = file_name.to_string_lossy();
+
+        if file_name.ends_with(".o") || file_name.ends_with(".obj") {
+            let mut parts = file_name.split('.').collect::<Vec<_>>();
+            let mut index = None;
+
+            for ext in ["c", "cc", "cpp", "cxx", "pch", "masm", "asm", "res", "exp"] {
+                if file_name.contains(format!(".{ext}.").as_str()) {
+                    for (i, &part) in parts.iter().enumerate() {
+                        if part == ext {
+                            index = Some(i);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(index) = index {
+                parts.resize(index, "");
+                parts.push("obj");
+            }
+
+            obj_path = parts.join(".").into();
+        }
+    }
 
     let mut lines = line_program.lines();
 
@@ -307,7 +344,7 @@ fn parse_module(
         
         match path.extension() {
             Some(extension) => match extension.to_str().unwrap_or("") {
-                "c" | "cc" | "cpp" | "cxx" | "pch" | "masm" | "asm" if path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase()) => {
+                "c" | "cc" | "cpp" | "cxx" | "pch" | "asm" | "fasm" | "masm" | "res" | "exp" if path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase()) => {
                     module_file_name_ref = Some(file.name);
                     module_file_path = Some(path);
                 }
@@ -328,7 +365,7 @@ fn parse_module(
     }
 
     let module_file_name_ref = module_file_name_ref.unwrap();
-    let module_file_path = module_file_path.unwrap();
+    let module_file_path = module_file_path.unwrap().to_string_lossy().replace("\\", "\\\\");
 
     let mut process_symbol_data = |symbol_data: &pdb::SymbolData, module_symbols: &mut pdb::SymbolIter| -> pdb::Result<()> {
         match symbol_data {
@@ -417,7 +454,7 @@ fn parse_module(
                     script_file,
                     "decompile_to_file(0x{:X}, \"{}\")",
                     address,
-                    module_file_path.to_string_lossy().replace("\\", "\\\\")
+                    module_file_path
                 )?;
             }
 
@@ -467,7 +504,7 @@ fn parse_module(
                     script_file,
                     "decompile_to_file(0x{:X}, \"{}\")",
                     address,
-                    module_file_path.to_string_lossy().replace("\\", "\\\\")
+                    module_file_path
                 )?;
             }
 
@@ -524,18 +561,35 @@ fn parse_module(
                     script_file,
                     "decompile_to_file(0x{:X}, \"{}\")",
                     address,
-                    module_file_path.to_string_lossy().replace("\\", "\\\\")
+                    module_file_path
                 )?;
             }
 
             pdb::SymbolData::Thunk(_) => parse_thunk_symbols(module_symbols),
 
-            pdb::SymbolData::ObjName(_) => println!("found obj name in module: {:?}", symbol_data),
-            pdb::SymbolData::BuildInfo(build_info) => println!("found build info in module: {:?}", id_finder.find(build_info.id)?.parse()?),
-            pdb::SymbolData::CompileFlags(_) => println!("found compile flags in module: {:?}", symbol_data),
-            pdb::SymbolData::UserDefinedType(_) => println!("found user defined type in module: {:?}", symbol_data),
-            pdb::SymbolData::Export(_) => println!("found export in module: {:?}", symbol_data),
-            pdb::SymbolData::Label(_) => println!("found label in module: {:?}", symbol_data),
+            pdb::SymbolData::ObjName(_) => {
+                // println!("found obj name in module: {:?}", symbol_data);
+            }
+
+            pdb::SymbolData::BuildInfo(build_info) => {
+                // println!("found build info in module: {:?}", id_finder.find(build_info.id)?.parse()?);
+            }
+
+            pdb::SymbolData::CompileFlags(_) => {
+                // println!("found compile flags in module: {:?}", symbol_data);
+            }
+
+            pdb::SymbolData::UserDefinedType(_) => {
+                // println!("found user defined type in module: {:?}", symbol_data);
+            }
+
+            pdb::SymbolData::Export(_) => {
+                // println!("found export in module: {:?}", symbol_data);
+            }
+
+            pdb::SymbolData::Label(_) => {
+                // println!("found label in module: {:?}", symbol_data);
+            }
 
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(module_symbols),
 
@@ -565,7 +619,7 @@ fn parse_module(
         process_symbol_data(&symbol_data, &mut module_symbols)?;
     }
 
-    Ok((Some(module_file_path), headers, members))
+    Ok((Some(PathBuf::from(module_file_path)), headers, members))
 }
 
 fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
@@ -588,16 +642,24 @@ fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
         match symbol_data {
             pdb::SymbolData::ScopeEnd => break,
 
-            pdb::SymbolData::Constant(_) => println!("found constant symbol in procedure: {:?}", symbol_data),
-            pdb::SymbolData::Data(_) => println!("found data symbol in procedure: {:?}", symbol_data),
+            pdb::SymbolData::Constant(_) => {
+                // println!("found constant symbol in procedure: {:?}", symbol_data);
+            }
+            pdb::SymbolData::Data(_) => {
+                // println!("found data symbol in procedure: {:?}", symbol_data);
+            }
             pdb::SymbolData::Local(_) => (),
             pdb::SymbolData::Label(_) => (),
-            pdb::SymbolData::UserDefinedType(_) => println!("found UDT symbol in procedure: {:?}", symbol_data),
+            pdb::SymbolData::UserDefinedType(_) => {
+                // println!("found UDT symbol in procedure: {:?}", symbol_data);
+            }
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
             pdb::SymbolData::RegisterRelative(x) => parameter_names.push(x.name.to_string().to_string()),
             pdb::SymbolData::RegisterVariable(_) => (),
-            pdb::SymbolData::ThreadStorage(_) => println!("found thread storage symbol in procedure: {:?}", symbol_data),
+            pdb::SymbolData::ThreadStorage(_) => {
+                // println!("found thread storage symbol in procedure: {:?}", symbol_data);
+            }
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
 
             data => panic!("Unhandled symbol data in parse_procedure_symbols - {:?}", data)
@@ -625,12 +687,18 @@ fn parse_block_symbols(symbols: &mut pdb::SymbolIter) {
         match symbol_data {
             pdb::SymbolData::ScopeEnd => break,
 
-            pdb::SymbolData::Constant(_) => println!("found constant symbol in block: {:?}", symbol_data),
-            pdb::SymbolData::Data(_) => println!("found data symbol in block: {:?}", symbol_data),
+            pdb::SymbolData::Constant(_) => {
+                // println!("found constant symbol in block: {:?}", symbol_data);
+            }
+            pdb::SymbolData::Data(_) => {
+                // println!("found data symbol in block: {:?}", symbol_data);
+            }
             pdb::SymbolData::Local(_) => (),
             pdb::SymbolData::RegisterRelative(_) => (),
             pdb::SymbolData::Label(_) => (),
-            pdb::SymbolData::UserDefinedType(_) => println!("found UDT symbol in block: {:?}", symbol_data),
+            pdb::SymbolData::UserDefinedType(_) => {
+                // println!("found UDT symbol in block: {:?}", symbol_data);
+            }
             
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
@@ -659,12 +727,18 @@ fn parse_inline_site_symbols(symbols: &mut pdb::SymbolIter) {
         match symbol_data {
             pdb::SymbolData::InlineSiteEnd => break,
 
-            pdb::SymbolData::Constant(_) => println!("found constant symbol in inline site: {:?}", symbol_data),
-            pdb::SymbolData::Data(_) => println!("found data symbol in inline site: {:?}", symbol_data),
+            pdb::SymbolData::Constant(_) => {
+                // println!("found constant symbol in inline site: {:?}", symbol_data);
+            }
+            pdb::SymbolData::Data(_) => {
+                // println!("found data symbol in inline site: {:?}", symbol_data);
+            }
             pdb::SymbolData::Local(_) => (),
             pdb::SymbolData::RegisterRelative(_) => (),
             pdb::SymbolData::Label(_) => (),
-            pdb::SymbolData::UserDefinedType(_) => println!("found UDT symbol in inline site: {:?}", symbol_data),
+            pdb::SymbolData::UserDefinedType(_) => {
+                // println!("found UDT symbol in inline site: {:?}", symbol_data);
+            }
             
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
