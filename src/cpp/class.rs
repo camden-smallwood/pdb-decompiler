@@ -154,9 +154,9 @@ impl Class {
                 self.is_declaration = true;
             }
 
-            Ok(other) => panic!("error: unexpected type in Class::add_members, got {} -> {:?}", type_index, other),
+            Ok(other) => panic!("Unexpected type in Class::add_members, got {} -> {:?}", type_index, other),
 
-            Err(err) => println!("warning: unhandled error in Class::add_members: {}", err)
+            Err(err) => println!("WARNING: failed to find type in Class::add_members, skipping: {err}")
         }
 
         Ok(())
@@ -529,7 +529,7 @@ impl Class {
                     }
 
                     pdb::TypeData::Procedure(data) => println!(
-                        "warning: unhandled nested procedure at index {} in Class::add_member - {:?}",
+                        "WARNING: unhandled nested procedure at index {} in Class::add_member - {:?}",
                         nested_type_item.index(),
                         data
                     ),

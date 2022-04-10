@@ -61,7 +61,7 @@ pub fn primitive_name(kind: PrimitiveKind) -> String {
 
         pdb::PrimitiveKind::HRESULT => "HRESULT".to_string(),
 
-        _ => panic!("error: unhandled primitive kind: {:#?}", kind),
+        _ => panic!("Unhandled primitive kind: {kind:#?}"),
     }
 }
 
