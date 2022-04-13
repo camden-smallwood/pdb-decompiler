@@ -397,14 +397,25 @@ fn parse_module(
 
     let mut process_symbol_data = |symbol_data: &pdb::SymbolData, module_symbols: &mut pdb::SymbolIter| -> pdb::Result<()> {
         match symbol_data {
-            pdb::SymbolData::UsingNamespace(symbol) => members.push(
-                (
-                    PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string())),
-                    cpp::ModuleMember::Declaration(
-                        format!("using namespace {};", symbol.name.to_string().to_string())
-                    )
-                )
-            ),
+            pdb::SymbolData::UsingNamespace(symbol) => {
+                let path = PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string()));
+
+                let namespace = symbol.name.to_string().to_string();
+                let mut namespace_found = false;
+
+                for member in members.iter() {
+                    if let (p, cpp::ModuleMember::UsingNamespace(n)) = member {
+                        if p == &path && n == &namespace {
+                            namespace_found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !namespace_found {
+                    members.push((path, cpp::ModuleMember::UsingNamespace(namespace)));
+                }
+            }
 
             pdb::SymbolData::Constant(symbol) => {
                 let type_name = cpp::type_name(type_info, type_finder, symbol.type_index, Some(symbol.name.to_string().to_string()), None, false)?;
@@ -413,26 +424,36 @@ fn parse_module(
                     return Ok(())
                 }
 
-                members.push(
-                    (
-                        PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string())),
-                        cpp::ModuleMember::Declaration(
-                            format!(
-                                "const {type_name} = {};",
-                                match symbol.value {
-                                    pdb::Variant::U8(x) => format!("0x{:X}", x),
-                                    pdb::Variant::U16(x) => format!("0x{:X}", x),
-                                    pdb::Variant::U32(x) => format!("0x{:X}", x),
-                                    pdb::Variant::U64(x) => format!("0x{:X}", x),
-                                    pdb::Variant::I8(x) => format!("0x{:X}", x),
-                                    pdb::Variant::I16(x) => format!("0x{:X}", x),
-                                    pdb::Variant::I32(x) => format!("0x{:X}", x),
-                                    pdb::Variant::I64(x) => format!("0x{:X}", x),
-                                }
-                            )
-                        )
-                    )
+                let path = PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string()));
+
+                let declaration = format!(
+                    "const {type_name} = {};",
+                    match symbol.value {
+                        pdb::Variant::U8(x) => format!("0x{:X}", x),
+                        pdb::Variant::U16(x) => format!("0x{:X}", x),
+                        pdb::Variant::U32(x) => format!("0x{:X}", x),
+                        pdb::Variant::U64(x) => format!("0x{:X}", x),
+                        pdb::Variant::I8(x) => format!("0x{:X}", x),
+                        pdb::Variant::I16(x) => format!("0x{:X}", x),
+                        pdb::Variant::I32(x) => format!("0x{:X}", x),
+                        pdb::Variant::I64(x) => format!("0x{:X}", x),
+                    }
                 );
+
+                let mut declaration_found = false;
+
+                for member in members.iter() {
+                    if let (p, cpp::ModuleMember::Declaration(d, _)) = member {
+                        if p == &path && d == &declaration {
+                            declaration_found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !declaration_found {
+                    members.push((path, cpp::ModuleMember::Declaration(declaration, None)));
+                }
             }
 
             pdb::SymbolData::Data(data_symbol) => {
@@ -455,6 +476,8 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
+                let path = PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string()));
+
                 let rva = match data_symbol.offset.to_rva(address_map) {
                     Some(rva) => rva,
                     None => {
@@ -464,30 +487,43 @@ fn parse_module(
                 };
                 
                 let address = base_address.unwrap_or(0) + rva.0 as u64;
+                let mut address_found = false;
 
-                members.push(
-                    (
-                        PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string())),
-                        cpp::ModuleMember::Declaration(
-                            format!(
-                                "{}; // 0x{address:X}",
-                                cpp::type_name(
-                                    type_info,
-                                    type_finder,
-                                    data_symbol.type_index,
-                                    Some(data_symbol.name.to_string().to_string()),
-                                    None,
-                                    false
-                                )?,
+                for member in members.iter() {
+                    if let (p, cpp::ModuleMember::Declaration(_, Some(a))) = member {
+                        if p == &path && a == &address {
+                            address_found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !address_found {
+                    members.push(
+                        (
+                            path,
+                            cpp::ModuleMember::Declaration(
+                                format!(
+                                    "{}; // 0x{address:X}",
+                                    cpp::type_name(
+                                        type_info,
+                                        type_finder,
+                                        data_symbol.type_index,
+                                        Some(data_symbol.name.to_string().to_string()),
+                                        None,
+                                        false
+                                    )?,
+                                ),
+                                Some(address)
                             )
                         )
-                    )
-                );
+                    );
 
-                writeln!(
-                    script_file,
-                    "decompile_to_file(0x{address:X}, \"{module_file_path}\")",
-                )?;
+                    writeln!(
+                        script_file,
+                        "decompile_to_file(0x{address:X}, \"{module_file_path}\")",
+                    )?;
+                }
             }
 
             pdb::SymbolData::ThreadStorage(thread_storage_symbol) => {
@@ -501,6 +537,7 @@ fn parse_module(
                 }
 
                 let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
+                let path = PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string()));
 
                 let rva = match thread_storage_symbol.offset.to_rva(address_map) {
                     Some(rva) => rva,
@@ -511,30 +548,43 @@ fn parse_module(
                 };
                 
                 let address = base_address.unwrap_or(0) + rva.0 as u64;
+                let mut address_found = false;
 
-                members.push(
-                    (
-                        PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string())),
-                        cpp::ModuleMember::Declaration(
-                            format!(
-                                "thread_local {}; // 0x{address:X}",
-                                cpp::type_name(
-                                    type_info,
-                                    type_finder,
-                                    thread_storage_symbol.type_index,
-                                    Some(thread_storage_symbol.name.to_string().to_string()),
-                                    None,
-                                    false
-                                )?
+                for member in members.iter() {
+                    if let (p, cpp::ModuleMember::Declaration(_, Some(a))) = member {
+                        if p == &path && a == &address {
+                            address_found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !address_found {
+                    members.push(
+                        (
+                            path,
+                            cpp::ModuleMember::Declaration(
+                                format!(
+                                    "thread_local {}; // 0x{address:X}",
+                                    cpp::type_name(
+                                        type_info,
+                                        type_finder,
+                                        thread_storage_symbol.type_index,
+                                        Some(thread_storage_symbol.name.to_string().to_string()),
+                                        None,
+                                        false
+                                    )?
+                                ),
+                                Some(address)
                             )
                         )
-                    )
-                );
+                    );
 
-                writeln!(
-                    script_file,
-                    "decompile_to_file(0x{address:X}, \"{module_file_path}\")"
-                )?;
+                    writeln!(
+                        script_file,
+                        "decompile_to_file(0x{address:X}, \"{module_file_path}\")"
+                    )?;
+                }
             }
 
             pdb::SymbolData::Procedure(procedure_symbol) => {
@@ -567,6 +617,8 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
+                let path = PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string()));
+
                 let rva = match procedure_symbol.offset.to_rva(address_map) {
                     Some(rva) => rva,
                     None => {
@@ -576,20 +628,33 @@ fn parse_module(
                 };
                 
                 let address = base_address.unwrap_or(0) + rva.0 as u64;
+                let mut address_found = false;
 
-                members.push(
-                    (
-                        PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string())),
-                        cpp::ModuleMember::Declaration(
-                            format!("{procedure}; // 0x{address:X}")
+                for member in members.iter() {
+                    if let (p, cpp::ModuleMember::Declaration(_, Some(a))) = member {
+                        if p == &path && a == &address {
+                            address_found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !address_found {
+                    members.push(
+                        (
+                            path,
+                            cpp::ModuleMember::Declaration(
+                                format!("{procedure}; // 0x{address:X}"),
+                                Some(address)
+                            )
                         )
-                    )
-                );
+                    );
 
-                writeln!(
-                    script_file,
-                    "decompile_to_file(0x{address:X}, \"{module_file_path}\")",
-                )?;
+                    writeln!(
+                        script_file,
+                        "decompile_to_file(0x{address:X}, \"{module_file_path}\")",
+                    )?;
+                }
             }
 
             pdb::SymbolData::Thunk(_) => parse_thunk_symbols(module_symbols),
@@ -615,21 +680,31 @@ fn parse_module(
             }
 
             pdb::SymbolData::UserDefinedType(udt_symbol) => {
-                members.push(
-                    (
-                        PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string())),
-                        cpp::ModuleMember::Declaration(
-                            format!("typedef {};", cpp::type_name(
-                                type_info,
-                                type_finder,
-                                udt_symbol.type_index,
-                                Some(udt_symbol.name.to_string().to_string()),
-                                None,
-                                false
-                            )?)
-                        )
-                    )
-                );
+                let path = PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string()));
+
+                let typedef = format!("typedef {};", cpp::type_name(
+                    type_info,
+                    type_finder,
+                    udt_symbol.type_index,
+                    Some(udt_symbol.name.to_string().to_string()),
+                    None,
+                    false
+                )?);
+
+                let mut typedef_found = false;
+
+                for member in members.iter() {
+                    if let (p, cpp::ModuleMember::Declaration(d, _)) = member {
+                        if p == &path && d == &typedef {
+                            typedef_found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !typedef_found {
+                    members.push((path, cpp::ModuleMember::Declaration(typedef, None)));
+                }
             }
 
             pdb::SymbolData::Export(_) => {

@@ -5,7 +5,8 @@ use super::{Class, Enum, type_name};
 pub enum ModuleMember {
     Class(Class),
     Enum(Enum),
-    Declaration(String)
+    UsingNamespace(String),
+    Declaration(String, Option<u64>)
 }
 
 impl fmt::Display for ModuleMember {
@@ -14,7 +15,8 @@ impl fmt::Display for ModuleMember {
         match self {
             Self::Class(c) => c.fmt(f),
             Self::Enum(e) => e.fmt(f),
-            Self::Declaration(d) => d.fmt(f)
+            Self::UsingNamespace(n) => f.write_fmt(format_args!("using namespace {n};")),
+            Self::Declaration(d, _) => d.fmt(f)
         }
     }
 }
@@ -247,7 +249,12 @@ impl fmt::Display for Module {
                     prev_line = x.line;
                 }
 
-                ModuleMember::Declaration(_) => {
+                ModuleMember::UsingNamespace(_) => {
+                    prev_line += 1;
+                    storage.push((prev_line, u.clone()));
+                }
+
+                ModuleMember::Declaration(_, _) => {
                     prev_line += 1;
                     storage.push((prev_line, u.clone()));
                 }
