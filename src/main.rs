@@ -260,7 +260,7 @@ fn load_module_global_symbols<'a>(
                     .push(symbol_data.clone());
             }
 
-            pdb::SymbolData::ProcedureReference(pdb::ProcedureReferenceSymbol { module, .. }) => {
+            pdb::SymbolData::ProcedureReference(pdb::ProcedureReferenceSymbol { module: Some(module), .. }) => {
                 let referenced_module = modules.iter().nth(module as _).unwrap();
                 let module_name = referenced_module.module_name().to_string();
                 prev_module_name = Some(module_name.clone());

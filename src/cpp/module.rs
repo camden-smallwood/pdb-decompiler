@@ -75,7 +75,7 @@ impl Module {
                     index: type_index,
                     depth: 0,
                     line,
-                    size: data.size as u32,
+                    size: data.size,
                     base_classes: vec![],
                     members: vec![],
                     field_attributes: None,

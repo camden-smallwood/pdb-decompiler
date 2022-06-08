@@ -33,7 +33,7 @@ impl fmt::Display for ClassMember {
 pub struct Field {
     pub type_name: String,
     pub name: String,
-    pub offset: u16,
+    pub offset: u64,
     pub attributes: pdb::FieldAttributes
 }
 
@@ -116,7 +116,7 @@ pub struct Class {
     pub index: pdb::TypeIndex,
     pub depth: u32,
     pub line: u32,
-    pub size: u32,
+    pub size: u64,
     pub base_classes: Vec<BaseClass>,
     pub members: Vec<ClassMember>,
     pub field_attributes: Option<pdb::FieldAttributes>,
@@ -286,7 +286,7 @@ impl Class {
                             index: nested_data.nested_type,
                             depth: self.depth + 1,
                             line: 0,
-                            size: data.size as u32,
+                            size: data.size,
                             base_classes: vec![],
                             members: vec![],
                             field_attributes: Some(nested_data.attributes),
