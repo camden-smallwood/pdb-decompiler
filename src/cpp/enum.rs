@@ -61,7 +61,7 @@ impl fmt::Display for Enum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "enum")?;
 
-        let name = self.name.to_string().to_string();
+        let name = self.name.to_string();
 
         if name != "<unnamed-tag>" {
             write!(f, " {}", name)?;
@@ -92,7 +92,7 @@ impl fmt::Display for Enum {
             writeln!(
                 f,
                 "\t{} = {},",
-                value.name.to_string(),
+                value.name,
                 match value.value {
                     pdb::Variant::U8(v) => format!("{}", v),
                     pdb::Variant::U16(v) => format!("{}", v),
