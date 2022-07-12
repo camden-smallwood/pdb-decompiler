@@ -137,10 +137,8 @@ impl Module {
 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
-                } else {
-                    if let Err(e) = definition.add_members(type_finder, data.fields) {
-                        eprintln!("WARNING: failed to add enum members: {e}");
-                    }
+                } else if let Err(e) = definition.add_members(type_finder, data.fields) {
+                    eprintln!("WARNING: failed to add enum members: {e}");
                 }
 
                 let mut exists = false;
@@ -177,10 +175,8 @@ impl Module {
                 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
-                } else {
-                    if let Err(e) = definition.add_members(type_info, type_finder, data.fields) {
-                        eprintln!("WARNING: failed to add union members: {e}");
-                    }
+                } else if let Err(e) = definition.add_members(type_info, type_finder, data.fields) {
+                    eprintln!("WARNING: failed to add union members: {e}");
                 }
 
                 let mut exists = false;
