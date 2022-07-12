@@ -22,9 +22,9 @@ fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
 }
 
 fn sanitize_path<S: AsRef<str>>(path: S) -> String {
-    let mut result = path.as_ref().to_string().replace("\\", "/");
+    let mut result = path.as_ref().to_string().replace('\\', "/");
 
-    if let Some((_, rest)) = result.split_once(":") {
+    if let Some((_, rest)) = result.split_once(':') {
         result = rest.to_string();
     }
 
@@ -197,7 +197,7 @@ fn process_id_information<'a>(
                 let module_path = match data.source_file {
                     pdb::UserDefinedTypeSourceFileRef::Local(id) => match id_finder.find(id) {
                         Ok(item) => match item.parse() {
-                            Ok(pdb::IdData::String(source_file)) => sanitize_path(source_file.name.to_string().to_string()),
+                            Ok(pdb::IdData::String(source_file)) => sanitize_path(&source_file.name.to_string()),
                             Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
                             Err(error) => panic!("failed to parse UDT source file id: {error}")
                         }
@@ -206,14 +206,14 @@ fn process_id_information<'a>(
                     }
     
                     pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
-                        sanitize_path(source_line_ref.to_string_lossy(&string_table)?.to_string())
+                        sanitize_path(&source_line_ref.to_string_lossy(string_table)?)
                     }
                 };
                 
                 modules
                     .entry(module_path.clone())
                     .or_insert(cpp::Module::new().with_path(module_path.into()))
-                    .add_type_definition(&type_info, &type_finder, data.udt, data.line)?;
+                    .add_type_definition(type_info, type_finder, data.udt, data.line)?;
             }
 
             Ok(_) => (),
@@ -368,7 +368,7 @@ fn parse_module(
     let mut files = line_program.files();
 
     while let Some(file) = files.next()? {
-        let path = PathBuf::from(sanitize_path(file.name.to_string_lossy(string_table)?.to_string()));
+        let path = PathBuf::from(sanitize_path(&file.name.to_string_lossy(string_table)?));
         
         match path.extension() {
             Some(extension) => match extension.to_str().unwrap_or("") {
@@ -393,12 +393,12 @@ fn parse_module(
     }
 
     let module_file_name_ref = module_file_name_ref.unwrap();
-    let module_file_path = module_file_path.unwrap().to_string_lossy().replace("\\", "\\\\");
+    let module_file_path = module_file_path.unwrap().to_string_lossy().replace('\\', "\\\\");
 
     let mut process_symbol_data = |symbol_data: &pdb::SymbolData, module_symbols: &mut pdb::SymbolIter| -> pdb::Result<()> {
         match symbol_data {
             pdb::SymbolData::UsingNamespace(symbol) => {
-                let path = PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string()));
+                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
 
                 let namespace = symbol.name.to_string().to_string();
                 let mut namespace_found = false;
@@ -424,7 +424,7 @@ fn parse_module(
                     return Ok(())
                 }
 
-                let path = PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string()));
+                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
 
                 let declaration = format!(
                     "const {type_name} = {};",
@@ -458,7 +458,7 @@ fn parse_module(
 
             pdb::SymbolData::Data(data_symbol) => {
                 match data_symbol.name.to_string().to_string().as_str() {
-                    x if x.contains("`") || x.contains("$") => return Ok(()),
+                    x if x.contains('`') || x.contains('$') => return Ok(()),
                     _ => ()
                 }
 
@@ -466,7 +466,7 @@ fn parse_module(
 
                 for (name_ref, offsets) in line_offsets.iter() {
                     if offsets.contains(&data_symbol.offset) {
-                        file_name_ref = Some(name_ref.clone());
+                        file_name_ref = Some(*name_ref);
                         break;
                     }
                 }
@@ -476,7 +476,7 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
-                let path = PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string()));
+                let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
 
                 let rva = match data_symbol.offset.to_rva(address_map) {
                     Some(rva) => rva,
@@ -531,13 +531,13 @@ fn parse_module(
 
                 for (name_ref, offsets) in line_offsets.iter() {
                     if offsets.contains(&thread_storage_symbol.offset) {
-                        file_name_ref = Some(name_ref.clone());
+                        file_name_ref = Some(*name_ref);
                         break;
                     }
                 }
 
                 let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                let path = PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string()));
+                let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
 
                 let rva = match thread_storage_symbol.offset.to_rva(address_map) {
                     Some(rva) => rva,
@@ -595,11 +595,11 @@ fn parse_module(
                     type_finder,
                     procedure_symbol.type_index,
                     Some(procedure_symbol.name.to_string().to_string()),
-                    Some(parameters.clone()),
+                    Some(parameters),
                     false
                 )?;
                 
-                if procedure.starts_with("...") || procedure.contains("$") || procedure.contains("`") {
+                if procedure.starts_with("...") || procedure.contains('$') || procedure.contains('`') {
                     return Ok(());
                 }
 
@@ -607,7 +607,7 @@ fn parse_module(
 
                 for (name_ref, offsets) in line_offsets.iter() {
                     if offsets.contains(&procedure_symbol.offset) {
-                        file_name_ref = Some(name_ref.clone());
+                        file_name_ref = Some(*name_ref);
                         break;
                     }
                 }
@@ -617,7 +617,7 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
-                let path = PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table)?.to_string()));
+                let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
 
                 let rva = match procedure_symbol.offset.to_rva(address_map) {
                     Some(rva) => rva,
@@ -680,7 +680,7 @@ fn parse_module(
             }
 
             pdb::SymbolData::UserDefinedType(udt_symbol) => {
-                let path = PathBuf::from(sanitize_path(module_file_name_ref.to_string_lossy(string_table)?.to_string()));
+                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
 
                 let typedef = format!("typedef {};", cpp::type_name(
                     type_info,
