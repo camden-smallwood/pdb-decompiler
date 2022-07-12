@@ -84,13 +84,13 @@ impl fmt::Display for Method {
                 None => ""
             },
 
-            if !(self.function_attributes.is_constructor() || self.name.contains("~")) {
-                format!("{} ", self.return_type_name).to_string()
+            if !(self.function_attributes.is_constructor() || self.name.contains('~')) {
+                format!("{} ", self.return_type_name)
             } else {
                 "".to_string()
             },
 
-            self.name.to_string(),
+            self.name,
 
             self.arguments.join(", "),
 
@@ -439,7 +439,7 @@ impl Class {
                                 if data.indirection.is_some() {
                                     name.push_str(" *");
                                 } else {
-                                    name.push_str(" ");
+                                    name.push(' ');
                                 }
                                 name.push_str(nested_data.name.to_string().to_string().as_str());
                                 name
@@ -541,7 +541,7 @@ impl Class {
                                 format!(
                                     "Unhandled nested type data at index {} in Class::add_member: {:#?}",
                                     nested_type_item.index(), nested_type_data
-                                ).to_string()
+                                )
                             )
                         )
                     )
@@ -578,7 +578,7 @@ impl fmt::Display for Class {
                     "union"
                 }
             },
-            self.name.to_string()
+            self.name
         )?;
 
         if !self.base_classes.is_empty() {
