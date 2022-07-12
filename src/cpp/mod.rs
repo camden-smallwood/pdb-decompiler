@@ -86,7 +86,7 @@ pub fn type_name<'p>(
 
             if name != "..." {
                 if let Some(field_name) = declaration_name {
-                    name.push_str(" ");
+                    name.push(' ');
                     name.push_str(field_name.as_str());
                 }
             }
@@ -98,7 +98,7 @@ pub fn type_name<'p>(
             let mut name = data.name.to_string().to_string();
 
             if let Some(field_name) = declaration_name {
-                name.push_str(" ");
+                name.push(' ');
                 name.push_str(field_name.as_str());
             }
 
@@ -109,7 +109,7 @@ pub fn type_name<'p>(
             let mut name = data.name.to_string().to_string();
 
             if let Some(field_name) = declaration_name {
-                name.push_str(" ");
+                name.push(' ');
                 name.push_str(field_name.as_str());
             }
 
@@ -120,7 +120,7 @@ pub fn type_name<'p>(
             let mut name = data.name.to_string().to_string();
 
             if let Some(field_name) = declaration_name {
-                name.push_str(" ");
+                name.push(' ');
                 name.push_str(field_name.as_str());
             }
 
@@ -144,7 +144,7 @@ pub fn type_name<'p>(
                 );
 
                 if let Some(field_name) = declaration_name {
-                    name.push_str(" ");
+                    name.push(' ');
                     name.push_str(field_name.as_str());
                 }
 
@@ -239,7 +239,7 @@ pub fn type_name<'p>(
         }
 
         pdb::TypeData::Procedure(data) => {
-            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains("~")).unwrap_or(false) {
+            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
                 if let Some(field_name) = declaration_name.as_ref() {
                     field_name.clone()
                 } else {
@@ -254,7 +254,7 @@ pub fn type_name<'p>(
                 if is_pointer {
                     name.push_str("(*");
                 } else if data.return_type.is_some() {
-                    name.push_str(" ");
+                    name.push(' ');
                 }
 
                 if let Some(field_name) = declaration_name {
@@ -262,7 +262,7 @@ pub fn type_name<'p>(
                 }
 
                 if is_pointer {
-                    name.push_str(")");
+                    name.push(')');
                 }
 
                 name
@@ -279,7 +279,7 @@ pub fn type_name<'p>(
         }
 
         pdb::TypeData::MemberFunction(data) => {
-            let name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains("~")).unwrap_or(false) {
+            let name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
                 if let Some(field_name) = declaration_name.as_ref() {
                     field_name.clone()
                 } else {
@@ -291,7 +291,7 @@ pub fn type_name<'p>(
                 if is_pointer {
                     name.push_str("(*");
                 } else {
-                    name.push_str(" ");
+                    name.push(' ');
                 }
 
                 if let Some(field_name) = declaration_name {
@@ -299,13 +299,13 @@ pub fn type_name<'p>(
                 }
 
                 if is_pointer {
-                    name.push_str(")");
+                    name.push(')');
                 }
 
                 name
             };
 
-            let mut parameter_names = parameter_names.clone();
+            let mut parameter_names = parameter_names;
 
             if let Some(parameter_names) = parameter_names.as_mut() {
                 if data.this_pointer_type.is_some() && !parameter_names.is_empty() && parameter_names[0] == "this" {
@@ -499,7 +499,7 @@ pub fn type_size<'p>(
         pdb::TypeData::Pointer(_) | pdb::TypeData::Procedure(_) => Ok(8), // TODO: machine/platform pointer size
         pdb::TypeData::Modifier(data) => type_size(type_info, type_finder, data.underlying_type),
         pdb::TypeData::Bitfield(data) => type_size(type_info, type_finder, data.underlying_type),
-        pdb::TypeData::Array(data) => Ok(data.dimensions.last().unwrap().clone() as usize),
+        pdb::TypeData::Array(data) => Ok(*data.dimensions.last().unwrap() as usize),
 
         _ => panic!(
             "Unhandled type data for type_size at index {}: {:#?}",
