@@ -192,36 +192,35 @@ fn process_id_information<'a>(
     while let Some(id) = id_iter.next()? {
         id_finder.update(&id_iter);
 
-        match id.parse() {
-            Ok(pdb::IdData::UserDefinedTypeSource(data)) => {
-                let module_path = match data.source_file {
-                    pdb::UserDefinedTypeSourceFileRef::Local(id) => match id_finder.find(id) {
-                        Ok(item) => match item.parse() {
-                            Ok(pdb::IdData::String(source_file)) => sanitize_path(&source_file.name.to_string()),
-                            Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
-                            Err(error) => panic!("failed to parse UDT source file id: {error}")
-                        }
-                        
-                        Err(error) => panic!("failed to find UDT source file id: {error}")
-                    }
-    
-                    pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
-                        sanitize_path(&source_line_ref.to_string_lossy(string_table)?)
-                    }
-                };
-                
-                modules
-                    .entry(module_path.clone())
-                    .or_insert(cpp::Module::new().with_path(module_path.into()))
-                    .add_type_definition(type_info, type_finder, data.udt, data.line)?;
-            }
-
-            Ok(_) => (),
-
+        let id_data = match id.parse() {
+            Ok(id_data) => id_data,
             Err(e) => {
                 eprintln!("WARNING: failed to parse id: {e}");
                 continue;
             }
+        };
+
+        if let pdb::IdData::UserDefinedTypeSource(data) = id_data {
+            let module_path = match data.source_file {
+                pdb::UserDefinedTypeSourceFileRef::Local(id) => match id_finder.find(id) {
+                    Ok(item) => match item.parse() {
+                        Ok(pdb::IdData::String(source_file)) => sanitize_path(&source_file.name.to_string()),
+                        Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
+                        Err(error) => panic!("failed to parse UDT source file id: {error}")
+                    }
+                    
+                    Err(error) => panic!("failed to find UDT source file id: {error}")
+                }
+
+                pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
+                    sanitize_path(&source_line_ref.to_string_lossy(string_table)?)
+                }
+            };
+            
+            modules
+                .entry(module_path.clone())
+                .or_insert(cpp::Module::new().with_path(module_path.into()))
+                .add_type_definition(type_info, type_finder, data.udt, data.line)?;
         }
     }
 
@@ -443,7 +442,7 @@ fn parse_module(
                 let mut declaration_found = false;
 
                 for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Declaration(d, _)) = member {
+                    if let (p, cpp::ModuleMember::Constant(d)) = member {
                         if p == &path && d == &declaration {
                             declaration_found = true;
                             break;
@@ -452,7 +451,7 @@ fn parse_module(
                 }
 
                 if !declaration_found {
-                    members.push((path, cpp::ModuleMember::Declaration(declaration, None)));
+                    members.push((path, cpp::ModuleMember::Constant(declaration)));
                 }
             }
 
@@ -490,7 +489,7 @@ fn parse_module(
                 let mut address_found = false;
 
                 for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Declaration(_, Some(a))) = member {
+                    if let (p, cpp::ModuleMember::Data(_, a)) = member {
                         if p == &path && a == &address {
                             address_found = true;
                             break;
@@ -502,7 +501,7 @@ fn parse_module(
                     members.push(
                         (
                             path,
-                            cpp::ModuleMember::Declaration(
+                            cpp::ModuleMember::Data(
                                 format!(
                                     "{}; // 0x{address:X}",
                                     cpp::type_name(
@@ -514,7 +513,7 @@ fn parse_module(
                                         false
                                     )?,
                                 ),
-                                Some(address)
+                                address
                             )
                         )
                     );
@@ -551,7 +550,7 @@ fn parse_module(
                 let mut address_found = false;
 
                 for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Declaration(_, Some(a))) = member {
+                    if let (p, cpp::ModuleMember::ThreadStorage(_, a)) = member {
                         if p == &path && a == &address {
                             address_found = true;
                             break;
@@ -563,7 +562,7 @@ fn parse_module(
                     members.push(
                         (
                             path,
-                            cpp::ModuleMember::Declaration(
+                            cpp::ModuleMember::ThreadStorage(
                                 format!(
                                     "thread_local {}; // 0x{address:X}",
                                     cpp::type_name(
@@ -575,7 +574,7 @@ fn parse_module(
                                         false
                                     )?
                                 ),
-                                Some(address)
+                                address
                             )
                         )
                     );
@@ -631,7 +630,7 @@ fn parse_module(
                 let mut address_found = false;
 
                 for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Declaration(_, Some(a))) = member {
+                    if let (p, cpp::ModuleMember::Procedure(_, a)) = member {
                         if p == &path && a == &address {
                             address_found = true;
                             break;
@@ -643,9 +642,9 @@ fn parse_module(
                     members.push(
                         (
                             path,
-                            cpp::ModuleMember::Declaration(
+                            cpp::ModuleMember::Procedure(
                                 format!("{procedure}; // 0x{address:X}"),
-                                Some(address)
+                                address
                             )
                         )
                     );
@@ -694,7 +693,7 @@ fn parse_module(
                 let mut typedef_found = false;
 
                 for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Declaration(d, _)) = member {
+                    if let (p, cpp::ModuleMember::UserDefinedType(d)) = member {
                         if p == &path && d == &typedef {
                             typedef_found = true;
                             break;
@@ -703,7 +702,7 @@ fn parse_module(
                 }
 
                 if !typedef_found {
-                    members.push((path, cpp::ModuleMember::Declaration(typedef, None)));
+                    members.push((path, cpp::ModuleMember::UserDefinedType(typedef)));
                 }
             }
 

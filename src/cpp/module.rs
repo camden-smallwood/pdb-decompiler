@@ -5,8 +5,12 @@ use super::{Class, Enum, type_name};
 pub enum ModuleMember {
     Class(Class),
     Enum(Enum),
+    UserDefinedType(String),
     UsingNamespace(String),
-    Declaration(String, Option<u64>)
+    Constant(String),
+    Data(String, u64),
+    ThreadStorage(String, u64),
+    Procedure(String, u64),
 }
 
 impl fmt::Display for ModuleMember {
@@ -15,8 +19,12 @@ impl fmt::Display for ModuleMember {
         match self {
             Self::Class(c) => c.fmt(f),
             Self::Enum(e) => e.fmt(f),
+            Self::UserDefinedType(u) => u.fmt(f),
             Self::UsingNamespace(n) => f.write_fmt(format_args!("using namespace {n};")),
-            Self::Declaration(d, _) => d.fmt(f)
+            Self::Constant(c) => c.fmt(f),
+            Self::Data(d, _) => d.fmt(f),
+            Self::ThreadStorage(t, _) => t.fmt(f),
+            Self::Procedure(p, _) => p.fmt(f),
         }
     }
 }
@@ -115,6 +123,47 @@ impl Module {
                 }
             }
 
+            Ok(pdb::TypeData::Union(data)) => {
+                let mut definition = Class {
+                    kind: None,
+                    is_union: true,
+                    is_declaration: false,
+                    name: data.name.to_string().to_string(),
+                    index: type_index,
+                    depth: 0,
+                    line,
+                    size: data.size,
+                    base_classes: vec![],
+                    members: vec![],
+                    field_attributes: None,
+                };
+                
+                if data.properties.forward_reference() {
+                    definition.is_declaration = true;
+                } else if let Err(e) = definition.add_members(type_info, type_finder, data.fields) {
+                    eprintln!("WARNING: failed to add union members: {e}");
+                }
+
+                let mut exists = false;
+
+                for member in self.members.iter() {
+                    if let ModuleMember::Class(other_definition) = member {
+                        if definition.kind == other_definition.kind
+                        && definition.name == other_definition.name
+                        && definition.size == other_definition.size
+                        && definition.base_classes.eq(&other_definition.base_classes)
+                        && definition.members.eq(&other_definition.members) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !exists {
+                    self.members.push(ModuleMember::Class(definition));
+                }
+            }
+
             Ok(pdb::TypeData::Enumeration(data)) => {
                 let underlying_type_name = match type_name(type_info, type_finder, data.underlying_type, None, None, true) {
                     Ok(name) => name,
@@ -158,47 +207,6 @@ impl Module {
                 }
             }
 
-            Ok(pdb::TypeData::Union(data)) => {
-                let mut definition = Class {
-                    kind: None,
-                    is_union: true,
-                    is_declaration: false,
-                    name: data.name.to_string().to_string(),
-                    index: type_index,
-                    depth: 0,
-                    line,
-                    size: data.size,
-                    base_classes: vec![],
-                    members: vec![],
-                    field_attributes: None,
-                };
-                
-                if data.properties.forward_reference() {
-                    definition.is_declaration = true;
-                } else if let Err(e) = definition.add_members(type_info, type_finder, data.fields) {
-                    eprintln!("WARNING: failed to add union members: {e}");
-                }
-
-                let mut exists = false;
-
-                for member in self.members.iter() {
-                    if let ModuleMember::Class(other_definition) = member {
-                        if definition.kind == other_definition.kind
-                        && definition.name == other_definition.name
-                        && definition.size == other_definition.size
-                        && definition.base_classes.eq(&other_definition.base_classes)
-                        && definition.members.eq(&other_definition.members) {
-                            exists = true;
-                            break;
-                        }
-                    }
-                }
-
-                if !exists {
-                    self.members.push(ModuleMember::Class(definition));
-                }
-            }
-
             Ok(other) => panic!("Unhandled type data in SourceData::add_type_definition - {:?}", other),
 
             Err(err) => panic!("Unhandled error in SourceData::add_type_definition - {}", err)
@@ -217,7 +225,7 @@ impl fmt::Display for Module {
             let mut is_header = false;
 
             match path.extension().and_then(std::ffi::OsStr::to_str) {
-                Some("c" | "cc" | "cpp" | "cxx" | "pch" | "masm" | "asm") => (),
+                Some("c" | "cc" | "cpp" | "cxx" | "pch" | "asm" | "fasm" | "masm" | "res" | "exp") => (),
                 _ => is_header = true,
             }
 
@@ -238,19 +246,11 @@ impl fmt::Display for Module {
                 }
 
                 ModuleMember::Enum(x) => {
-                    if x.name.contains("::<unnamed-tag>") {
-                        continue;
-                    }
                     storage.push((x.line, u.clone()));
                     prev_line = x.line;
                 }
 
-                ModuleMember::UsingNamespace(_) => {
-                    prev_line += 1;
-                    storage.push((prev_line, u.clone()));
-                }
-
-                ModuleMember::Declaration(_, _) => {
+                _ => {
                     prev_line += 1;
                     storage.push((prev_line, u.clone()));
                 }
