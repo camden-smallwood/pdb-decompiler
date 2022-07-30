@@ -1,7 +1,7 @@
 mod cpp;
 
 use pdb::FallibleIterator;
-use std::{collections::{HashMap, HashSet}, error::Error, fs::{self, File}, io::Write, num, path::PathBuf};
+use std::{collections::HashMap, error::Error, fs::{self, File}, io::Write, num, path::PathBuf};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -34,7 +34,7 @@ fn sanitize_path<S: AsRef<str>>(path: S) -> String {
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::from_args();
     let pdb = pdb::PDB::open(File::open(options.pdb.clone().ok_or("PDB path not provided")?)?)?;
-    
+
     if let Err(error) = decompile_pdb(options, pdb) {
         println!("ERROR: could not decompile PDB because it {error}");
     }
@@ -49,7 +49,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
 
     let type_info = pdb.type_information().map_err(|e| format!("does not contain type information: {e}"))?;
     let mut type_finder = type_info.finder();
-    
+
     let id_info = pdb.id_information().map_err(|e| format!("does not contain id information: {e}"))?;
     let mut id_finder = id_info.finder();
 
@@ -59,16 +59,28 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
 
     let out_path: PathBuf = options.out.ok_or("Out path not supplied".to_string())?;
     fs::create_dir_all(out_path.clone())?;
-    
+
     let mut script_file = File::create(out_path.join("ida_script.py"))?;
     writeln!(script_file, include_str!("../ida_script_base.py"))?;
 
     process_type_information(&type_info, &mut type_finder).map_err(|e| format!("failed to process type info: {e}"))?;
-    process_id_information(&mut modules, &string_table, &id_info, &mut id_finder, &type_info, &mut type_finder).map_err(|e| format!("failed to process id info: {e}"))?;
-
-    let section_contributions = load_section_contributions(&debug_info).map_err(|e| format!("does not contain module section information: {e}"))?;
-    let module_global_symbols = load_module_global_symbols(&debug_info, &global_symbols, section_contributions).map_err(|e| format!("failed to load module global symbol info: {e}"))?;
     
+    process_id_information(
+        &mut modules,
+        &string_table,
+        &id_info,
+        &mut id_finder,
+        &type_info,
+        &mut type_finder,
+    )
+    .map_err(|e| format!("failed to process id info: {e}"))?;
+
+    let section_contributions = load_section_contributions(&debug_info)
+        .map_err(|e| format!("does not contain module section information: {e}"))?;
+
+    let module_global_symbols = load_module_global_symbols(&debug_info, &global_symbols, section_contributions)
+        .map_err(|e| format!("failed to load module global symbol info: {e}"))?;
+
     //
     // Process module debug information
     //
@@ -81,7 +93,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             None => {
                 // println!("module has no info: {} - {}", module.module_name(), module.object_file_name());
                 continue;
-            },
+            }
         };
 
         let (path, headers, members) = match parse_module(
@@ -95,7 +107,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             &id_info,
             &id_finder,
             &module_global_symbols,
-            &mut script_file
+            &mut script_file,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -108,28 +120,24 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             Some(path) => path.to_string_lossy().to_string(),
             None => {
                 match module.module_name().to_string().as_str() {
-                    "* CIL *" |
-                    "* Linker *" |
-                    "* Linker Generated Manifest RES *" => (),
+                    "* CIL *" | "* Linker *" | "* Linker Generated Manifest RES *" => (),
                     
                     x if x.to_lowercase().ends_with(".dll") => (),
-
-                    _ => {
-                        println!("WARNING: module has no source file, skipping: {module:#?}");
-                    }
+                    
+                    _ => println!("WARNING: module has no source file, skipping: {module:#?}")
                 }
+
                 continue;
             }
         };
 
         let module = modules.entry(source_file.clone()).or_insert(cpp::Module::new().with_path(path.unwrap()));
+
         module.headers.extend(headers);
 
         for (source_file, member) in members {
-            let module = modules
-                .entry(source_file.to_string_lossy().to_string())
-                .or_insert(cpp::Module::new().with_path(source_file));
-            
+            let module = modules.entry(source_file.to_string_lossy().to_string()).or_insert(cpp::Module::new().with_path(source_file));
+
             // TODO: check if module already contains member...
             module.members.push(member);
         }
@@ -141,12 +149,17 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
 
     for entry in &modules {
         let path = PathBuf::from(sanitize_path(format!("{}{}", out_path.to_string_lossy(), entry.0).to_string()));
-        
+
         if let Some(parent_path) = path.parent() {
             fs::create_dir_all(parent_path)?;
         }
 
-        let mut file = if path.exists() { File::open(path)? } else { File::create(path)? };
+        let mut file = if path.exists() {
+            File::open(path)?
+        } else {
+            File::create(path)?
+        };
+
         write!(file, "{}", entry.1)?;
     }
 
@@ -158,7 +171,7 @@ fn load_section_contributions(
 ) -> pdb::Result<Vec<pdb::DBISectionContribution>> {
     let mut result = vec![];
     let mut section_contributions = debug_info.section_contributions()?;
-    
+
     while let Some(section_contribution) = section_contributions.next()? {
         result.push(section_contribution);
     }
@@ -168,7 +181,7 @@ fn load_section_contributions(
 
 fn process_type_information<'a>(
     type_info: &'a pdb::TypeInformation,
-    type_finder: &mut pdb::TypeFinder<'a>
+    type_finder: &mut pdb::TypeFinder<'a>,
 ) -> pdb::Result<()> {
     let mut type_iter = type_info.iter();
 
@@ -206,17 +219,17 @@ fn process_id_information<'a>(
                     Ok(item) => match item.parse() {
                         Ok(pdb::IdData::String(source_file)) => sanitize_path(&source_file.name.to_string()),
                         Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
-                        Err(error) => panic!("failed to parse UDT source file id: {error}")
-                    }
-                    
-                    Err(error) => panic!("failed to find UDT source file id: {error}")
-                }
+                        Err(error) => panic!("failed to parse UDT source file id: {error}"),
+                    },
+
+                    Err(error) => panic!("failed to find UDT source file id: {error}"),
+                },
 
                 pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
                     sanitize_path(&source_line_ref.to_string_lossy(string_table)?)
                 }
             };
-            
+
             modules
                 .entry(module_path.clone())
                 .or_insert(cpp::Module::new().with_path(module_path.into()))
@@ -253,10 +266,7 @@ fn load_module_global_symbols<'a>(
                 let module_name = prev_module_name.clone().unwrap();
                 // println!("Inserting global UDT into previous module \"{module_name}\": {symbol_data:#?}");
 
-                result
-                    .entry(module_name)
-                    .or_insert(vec![])
-                    .push(symbol_data.clone());
+                result.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
             }
 
             pdb::SymbolData::ProcedureReference(pdb::ProcedureReferenceSymbol { module: Some(module), .. }) => {
@@ -266,16 +276,13 @@ fn load_module_global_symbols<'a>(
 
                 // println!("Found referenced module \"{module_name}\" in global symbol {symbol_data:#?}");
 
-                result
-                    .entry(module_name)
-                    .or_insert(vec![])
-                    .push(symbol_data.clone());
+                result.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
             }
 
-            pdb::SymbolData::Public(pdb::PublicSymbol { offset, .. }) |
-            pdb::SymbolData::Data(pdb::DataSymbol { offset, .. }) |
-            pdb::SymbolData::ThreadStorage(pdb::ThreadStorageSymbol { offset, .. }) |
-            pdb::SymbolData::Procedure(pdb::ProcedureSymbol { offset, .. }) => {
+            pdb::SymbolData::Public(pdb::PublicSymbol { offset, .. })
+            | pdb::SymbolData::Data(pdb::DataSymbol { offset, .. })
+            | pdb::SymbolData::ThreadStorage(pdb::ThreadStorageSymbol { offset, .. })
+            | pdb::SymbolData::Procedure(pdb::ProcedureSymbol { offset, .. }) => {
                 for contribution in section_contributions.iter() {
                     let contributing_module = modules.iter().nth(contribution.module as _).unwrap();
 
@@ -285,10 +292,7 @@ fn load_module_global_symbols<'a>(
 
                         // println!("Found contributing module \"{module_name}\" in global symbol {symbol_data:#?}");
 
-                        result
-                            .entry(module_name)
-                            .or_insert(vec![])
-                            .push(symbol_data.clone());
+                        result.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
                         break;
                     }
                 }
@@ -315,7 +319,11 @@ fn parse_module(
     _id_finder: &pdb::IdFinder,
     module_global_symbols: &HashMap<String, Vec<pdb::SymbolData>>,
     script_file: &mut File,
-) -> pdb::Result<(Option<PathBuf>, Vec<PathBuf>, Vec<(PathBuf, cpp::ModuleMember)>)> {
+) -> pdb::Result<(
+    Option<PathBuf>,
+    Vec<PathBuf>,
+    Vec<(PathBuf, cpp::ModuleMember)>,
+)> {
     let mut headers = vec![];
     let mut members = vec![];
     let mut line_offsets = HashMap::new();
@@ -323,7 +331,7 @@ fn parse_module(
     let mut module_file_path = None;
 
     let line_program = module_info.line_program()?;
-    
+
     let mut obj_path = PathBuf::from(sanitize_path(module.module_name()));
 
     if let Some(file_name) = obj_path.file_name() {
@@ -333,7 +341,7 @@ fn parse_module(
             let mut parts = file_name.split('.').collect::<Vec<_>>();
             let mut index = None;
 
-            for ext in ["c", "cc", "cpp", "cxx", "pch", "masm", "asm", "res", "exp"] {
+            for &ext in cpp::SOURCE_FILE_EXTS {
                 if file_name.contains(format!(".{ext}.").as_str()) {
                     for (i, &part) in parts.iter().skip(1).enumerate() {
                         if part == ext {
@@ -357,10 +365,10 @@ fn parse_module(
 
     while let Some(line) = lines.next()? {
         let file = line_program.get_file_info(line.file_index)?;
-        let offsets = line_offsets.entry(file.name).or_insert(HashSet::new());
+        let offsets = line_offsets.entry(file.name).or_insert(HashMap::new());
 
-        if !offsets.contains(&line.offset) {
-            offsets.insert(line.offset);
+        if !offsets.contains_key(&line.offset) {
+            offsets.insert(line.offset, line);
         }
     }
 
@@ -368,22 +376,16 @@ fn parse_module(
 
     while let Some(file) = files.next()? {
         let path = PathBuf::from(sanitize_path(&file.name.to_string_lossy(string_table)?));
-        
+
         match path.extension() {
-            Some(extension) => match extension.to_str().unwrap_or("") {
-                "c" | "cc" | "cpp" | "cxx" | "pch" | "asm" | "fasm" | "masm" | "res" | "exp" if path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase()) => {
-                    module_file_name_ref = Some(file.name);
-                    module_file_path = Some(path);
-                }
-
-                _ => {
-                    headers.push(path);
-                }
+            Some(extension) if cpp::SOURCE_FILE_EXTS.contains(&extension.to_str().unwrap_or(""))
+                && path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase()) =>
+            {
+                module_file_name_ref = Some(file.name);
+                module_file_path = Some(path);
             }
 
-            None => {
-                headers.push(path);
-            }
+            _ => headers.push(path)
         }
     }
 
@@ -397,7 +399,9 @@ fn parse_module(
     let mut process_symbol_data = |symbol_data: &pdb::SymbolData, module_symbols: &mut pdb::SymbolIter| -> pdb::Result<()> {
         match symbol_data {
             pdb::SymbolData::UsingNamespace(symbol) => {
-                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
+                let path = PathBuf::from(sanitize_path(
+                    &module_file_name_ref.to_string_lossy(string_table)?,
+                ));
 
                 let namespace = symbol.name.to_string().to_string();
                 let mut namespace_found = false;
@@ -416,18 +420,27 @@ fn parse_module(
                 }
             }
 
-            pdb::SymbolData::Constant(symbol) => {
-                let type_name = cpp::type_name(type_info, type_finder, symbol.type_index, Some(symbol.name.to_string().to_string()), None, false)?;
-                
+            pdb::SymbolData::Constant(constant_symbol) => {
+                let type_name = cpp::type_name(
+                    type_info,
+                    type_finder,
+                    constant_symbol.type_index,
+                    Some(constant_symbol.name.to_string().to_string()),
+                    None,
+                    false,
+                )?;
+
                 if type_name.starts_with("const ") {
-                    return Ok(())
+                    return Ok(());
                 }
 
-                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
+                let path = PathBuf::from(sanitize_path(
+                    &module_file_name_ref.to_string_lossy(string_table)?,
+                ));
 
                 let declaration = format!(
                     "const {type_name} = {};",
-                    match symbol.value {
+                    match constant_symbol.value {
                         pdb::Variant::U8(x) => format!("0x{:X}", x),
                         pdb::Variant::U16(x) => format!("0x{:X}", x),
                         pdb::Variant::U32(x) => format!("0x{:X}", x),
@@ -458,14 +471,16 @@ fn parse_module(
             pdb::SymbolData::Data(data_symbol) => {
                 match data_symbol.name.to_string().to_string().as_str() {
                     x if x.contains('`') || x.contains('$') => return Ok(()),
-                    _ => ()
+                    _ => (),
                 }
 
                 let mut file_name_ref = None;
+                let mut line_info = None;
 
                 for (name_ref, offsets) in line_offsets.iter() {
-                    if offsets.contains(&data_symbol.offset) {
+                    if let Some(line) = offsets.get(&data_symbol.offset) {
                         file_name_ref = Some(*name_ref);
+                        line_info = Some(line.clone());
                         break;
                     }
                 }
@@ -484,12 +499,12 @@ fn parse_module(
                         return Ok(());
                     }
                 };
-                
+
                 let address = base_address.unwrap_or(0) + rva.0 as u64;
                 let mut address_found = false;
 
                 for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Data(_, a)) = member {
+                    if let (p, cpp::ModuleMember::Data(_, a, _)) = member {
                         if p == &path && a == &address {
                             address_found = true;
                             break;
@@ -498,25 +513,24 @@ fn parse_module(
                 }
 
                 if !address_found {
-                    members.push(
-                        (
-                            path,
-                            cpp::ModuleMember::Data(
-                                format!(
-                                    "{}; // 0x{address:X}",
-                                    cpp::type_name(
-                                        type_info,
-                                        type_finder,
-                                        data_symbol.type_index,
-                                        Some(data_symbol.name.to_string().to_string()),
-                                        None,
-                                        false
-                                    )?,
-                                ),
-                                address
-                            )
-                        )
-                    );
+                    members.push((
+                        path,
+                        cpp::ModuleMember::Data(
+                            format!(
+                                "{}; // 0x{address:X}",
+                                cpp::type_name(
+                                    type_info,
+                                    type_finder,
+                                    data_symbol.type_index,
+                                    Some(data_symbol.name.to_string().to_string()),
+                                    None,
+                                    false
+                                )?,
+                            ),
+                            address,
+                            line_info.map(|x| x.line_start),
+                        ),
+                    ));
 
                     writeln!(
                         script_file,
@@ -527,16 +541,19 @@ fn parse_module(
 
             pdb::SymbolData::ThreadStorage(thread_storage_symbol) => {
                 let mut file_name_ref = None;
+                let mut line_info = None;
 
                 for (name_ref, offsets) in line_offsets.iter() {
-                    if offsets.contains(&thread_storage_symbol.offset) {
+                    if let Some(line) = offsets.get(&thread_storage_symbol.offset) {
                         file_name_ref = Some(*name_ref);
+                        line_info = Some(line.clone());
                         break;
                     }
                 }
 
                 let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
+                let path =
+                    PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
 
                 let rva = match thread_storage_symbol.offset.to_rva(address_map) {
                     Some(rva) => rva,
@@ -545,12 +562,12 @@ fn parse_module(
                         return Ok(());
                     }
                 };
-                
+
                 let address = base_address.unwrap_or(0) + rva.0 as u64;
                 let mut address_found = false;
 
                 for member in members.iter() {
-                    if let (p, cpp::ModuleMember::ThreadStorage(_, a)) = member {
+                    if let (p, cpp::ModuleMember::ThreadStorage(_, a, _)) = member {
                         if p == &path && a == &address {
                             address_found = true;
                             break;
@@ -559,25 +576,24 @@ fn parse_module(
                 }
 
                 if !address_found {
-                    members.push(
-                        (
-                            path,
-                            cpp::ModuleMember::ThreadStorage(
-                                format!(
-                                    "thread_local {}; // 0x{address:X}",
-                                    cpp::type_name(
-                                        type_info,
-                                        type_finder,
-                                        thread_storage_symbol.type_index,
-                                        Some(thread_storage_symbol.name.to_string().to_string()),
-                                        None,
-                                        false
-                                    )?
-                                ),
-                                address
-                            )
-                        )
-                    );
+                    members.push((
+                        path,
+                        cpp::ModuleMember::ThreadStorage(
+                            format!(
+                                "thread_local {}; // 0x{address:X}",
+                                cpp::type_name(
+                                    type_info,
+                                    type_finder,
+                                    thread_storage_symbol.type_index,
+                                    Some(thread_storage_symbol.name.to_string().to_string()),
+                                    None,
+                                    false
+                                )?
+                            ),
+                            address,
+                            line_info.map(|x| x.line_start),
+                        ),
+                    ));
 
                     writeln!(
                         script_file,
@@ -595,18 +611,23 @@ fn parse_module(
                     procedure_symbol.type_index,
                     Some(procedure_symbol.name.to_string().to_string()),
                     Some(parameters),
-                    false
+                    false,
                 )?;
-                
-                if procedure.starts_with("...") || procedure.contains('$') || procedure.contains('`') {
+
+                if procedure.starts_with("...")
+                    || procedure.contains('$')
+                    || procedure.contains('`')
+                {
                     return Ok(());
                 }
 
                 let mut file_name_ref = None;
+                let mut line_info = None;
 
                 for (name_ref, offsets) in line_offsets.iter() {
-                    if offsets.contains(&procedure_symbol.offset) {
+                    if let Some(line) = offsets.get(&procedure_symbol.offset) {
                         file_name_ref = Some(*name_ref);
+                        line_info = Some(line.clone());
                         break;
                     }
                 }
@@ -616,21 +637,24 @@ fn parse_module(
                     None => module_file_name_ref,
                 };
 
-                let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
+                let path =
+                    PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
 
                 let rva = match procedure_symbol.offset.to_rva(address_map) {
                     Some(rva) => rva,
                     None => {
-                        println!("WARNING: no RVA found for procedure symbol: {procedure_symbol:?}");
+                        println!(
+                            "WARNING: no RVA found for procedure symbol: {procedure_symbol:?}"
+                        );
                         return Ok(());
                     }
                 };
-                
+
                 let address = base_address.unwrap_or(0) + rva.0 as u64;
                 let mut address_found = false;
 
                 for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Procedure(_, a)) = member {
+                    if let (p, cpp::ModuleMember::Procedure(_, a, _)) = member {
                         if p == &path && a == &address {
                             address_found = true;
                             break;
@@ -639,15 +663,14 @@ fn parse_module(
                 }
 
                 if !address_found {
-                    members.push(
-                        (
-                            path,
-                            cpp::ModuleMember::Procedure(
-                                format!("{procedure}; // 0x{address:X}"),
-                                address
-                            )
-                        )
-                    );
+                    members.push((
+                        path,
+                        cpp::ModuleMember::Procedure(
+                            format!("{procedure}; // 0x{address:X}"),
+                            address,
+                            line_info.map(|x| x.line_start),
+                        ),
+                    ));
 
                     writeln!(
                         script_file,
@@ -679,16 +702,21 @@ fn parse_module(
             }
 
             pdb::SymbolData::UserDefinedType(udt_symbol) => {
-                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
+                let path = PathBuf::from(sanitize_path(
+                    &module_file_name_ref.to_string_lossy(string_table)?,
+                ));
 
-                let typedef = format!("typedef {};", cpp::type_name(
-                    type_info,
-                    type_finder,
-                    udt_symbol.type_index,
-                    Some(udt_symbol.name.to_string().to_string()),
-                    None,
-                    false
-                )?);
+                let typedef = format!(
+                    "typedef {};",
+                    cpp::type_name(
+                        type_info,
+                        type_finder,
+                        udt_symbol.type_index,
+                        Some(udt_symbol.name.to_string().to_string()),
+                        None,
+                        false
+                    )?
+                );
 
                 let mut typedef_found = false;
 
@@ -716,9 +744,9 @@ fn parse_module(
 
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(module_symbols),
 
-            ref data => panic!("Unhandled module symbol: {:#?}", data)
+            ref data => panic!("Unhandled module symbol: {:#?}", data),
         }
-    
+
         Ok(())
     };
 
@@ -752,14 +780,14 @@ fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
         let symbol = match symbols.next() {
             Ok(symbol) => match symbol {
                 Some(symbol) => symbol,
-                None => break
-            }
-            _ => continue
+                None => break,
+            },
+            _ => continue,
         };
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            _ => continue
+            _ => continue,
         };
 
         match symbol_data {
@@ -782,7 +810,9 @@ fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
 
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
-            pdb::SymbolData::RegisterRelative(x) => parameter_names.push(x.name.to_string().to_string()),
+            pdb::SymbolData::RegisterRelative(x) => {
+                parameter_names.push(x.name.to_string().to_string())
+            }
             pdb::SymbolData::RegisterVariable(_) => (),
 
             pdb::SymbolData::ThreadStorage(_) => {
@@ -791,7 +821,7 @@ fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
 
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
 
-            data => panic!("Unhandled symbol data in parse_procedure_symbols - {data:?}")
+            data => panic!("Unhandled symbol data in parse_procedure_symbols - {data:?}"),
         }
     }
 
@@ -803,14 +833,14 @@ fn parse_block_symbols(symbols: &mut pdb::SymbolIter) {
         let symbol = match symbols.next() {
             Ok(symbol) => match symbol {
                 Some(symbol) => symbol,
-                None => break
-            }
-            _ => continue
+                None => break,
+            },
+            _ => continue,
         };
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            _ => continue
+            _ => continue,
         };
 
         match symbol_data {
@@ -831,12 +861,12 @@ fn parse_block_symbols(symbols: &mut pdb::SymbolIter) {
             pdb::SymbolData::UserDefinedType(_) => {
                 // println!("found UDT symbol in block: {symbol_data:?}");
             }
-            
+
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
 
-            data => panic!("Unhandled symbol data in parse_block_symbols - {data:?}")
+            data => panic!("Unhandled symbol data in parse_block_symbols - {data:?}"),
         }
     }
 }
@@ -846,14 +876,14 @@ fn parse_inline_site_symbols(symbols: &mut pdb::SymbolIter) {
         let symbol = match symbols.next() {
             Ok(symbol) => match symbol {
                 Some(symbol) => symbol,
-                None => break
-            }
-            _ => continue
+                None => break,
+            },
+            _ => continue,
         };
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            _ => continue
+            _ => continue,
         };
 
         match symbol_data {
@@ -874,12 +904,12 @@ fn parse_inline_site_symbols(symbols: &mut pdb::SymbolIter) {
             pdb::SymbolData::UserDefinedType(_) => {
                 // println!("found UDT symbol in inline site: {symbol_data:?}");
             }
-            
+
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
-            
-            _ => panic!("Unhandled symbol data in parse_inline_site_symbols - {symbol_data:?}")
+
+            _ => panic!("Unhandled symbol data in parse_inline_site_symbols - {symbol_data:?}"),
         }
     }
 }
@@ -889,19 +919,19 @@ fn parse_thunk_symbols(symbols: &mut pdb::SymbolIter) {
         let symbol = match symbols.next() {
             Ok(symbol) => match symbol {
                 Some(symbol) => symbol,
-                None => break
-            }
-            _ => continue
+                None => break,
+            },
+            _ => continue,
         };
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            _ => continue
+            _ => continue,
         };
 
         match symbol_data {
             pdb::SymbolData::ScopeEnd => break,
-            _ => panic!("Unhandled symbol data in parse_thunk_symbols - {symbol_data:?}")
+            _ => panic!("Unhandled symbol data in parse_thunk_symbols - {symbol_data:?}"),
         }
     }
 }
@@ -911,19 +941,19 @@ fn parse_separated_code_symbols(symbols: &mut pdb::SymbolIter) {
         let symbol = match symbols.next() {
             Ok(symbol) => match symbol {
                 Some(symbol) => symbol,
-                None => break
-            }
-            _ => continue
+                None => break,
+            },
+            _ => continue,
         };
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            _ => continue
+            _ => continue,
         };
 
         match symbol_data {
             pdb::SymbolData::ScopeEnd => break,
-            _ => panic!("Unhandled symbol data in parse_separated_code_symbols - {symbol_data:?}")
+            _ => panic!("Unhandled symbol data in parse_separated_code_symbols - {symbol_data:?}"),
         }
     }
 }
