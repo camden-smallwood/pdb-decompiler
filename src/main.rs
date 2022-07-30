@@ -636,36 +636,15 @@ fn parse_module(
             }
 
             pdb::SymbolData::Thunk(_) => parse_thunk_symbols(module_symbols),
-
-            pdb::SymbolData::Public(_) => {
-                // println!("found public symbol in \"{module_file_path}\": {symbol_data:?}");
-            }
-
-            pdb::SymbolData::ProcedureReference(_) => {
-                // println!("found procedure reference in \"{module_file_path}\": {symbol_data:?}");
-            }
-
-            pdb::SymbolData::ObjName(_) => {
-                // println!("found obj name in \"{module_file_path}\": {symbol_data:?}");
-            }
-
-            pdb::SymbolData::BuildInfo(_) => {
-                // println!("found build info in \"{module_file_path}\": {:?}", id_finder.find(build_info.id)?.parse()?);
-            }
-
-            pdb::SymbolData::CompileFlags(_) => {
-                // println!("found compile flags in \"{module_file_path}\": {symbol_data:?}");
-            }
-
-            pdb::SymbolData::Export(_) => {
-                // println!("found export in module: {symbol_data:?}");
-            }
-
-            pdb::SymbolData::Label(_) => {
-                // println!("found label in module: {symbol_data:?}");
-            }
-
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(module_symbols),
+
+            pdb::SymbolData::Public(_)
+            | pdb::SymbolData::ProcedureReference(_)
+            | pdb::SymbolData::ObjName(_)
+            | pdb::SymbolData::BuildInfo(_)
+            | pdb::SymbolData::CompileFlags(_)
+            | pdb::SymbolData::Export(_)
+            | pdb::SymbolData::Label(_) => {}
 
             ref data => panic!("Unhandled module symbol: {:#?}", data),
         }
@@ -716,33 +695,19 @@ fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
         match symbol_data {
             pdb::SymbolData::ScopeEnd => break,
 
-            pdb::SymbolData::Constant(_) => {
-                // println!("found constant symbol in procedure: {symbol_data:?}");
-            }
-
-            pdb::SymbolData::Data(_) => {
-                // println!("found data symbol in procedure: {symbol_data:?}");
-            }
-
-            pdb::SymbolData::Local(_) => (),
-            pdb::SymbolData::Label(_) => (),
-
-            pdb::SymbolData::UserDefinedType(_) => {
-                // println!("found UDT symbol in procedure: {symbol_data:?}");
-            }
+            pdb::SymbolData::RegisterRelative(x) => parameter_names.push(x.name.to_string().to_string()),
 
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
-            pdb::SymbolData::RegisterRelative(x) => {
-                parameter_names.push(x.name.to_string().to_string())
-            }
-            pdb::SymbolData::RegisterVariable(_) => (),
-
-            pdb::SymbolData::ThreadStorage(_) => {
-                // println!("found thread storage symbol in procedure: {symbol_data:?}");
-            }
-
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
+
+            pdb::SymbolData::Constant(_)
+            | pdb::SymbolData::Data(_)
+            | pdb::SymbolData::Local(_)
+            | pdb::SymbolData::Label(_)
+            | pdb::SymbolData::UserDefinedType(_)
+            | pdb::SymbolData::RegisterVariable(_)
+            | pdb::SymbolData::ThreadStorage(_) => {}
 
             data => panic!("Unhandled symbol data in parse_procedure_symbols - {data:?}"),
         }
@@ -769,25 +734,16 @@ fn parse_block_symbols(symbols: &mut pdb::SymbolIter) {
         match symbol_data {
             pdb::SymbolData::ScopeEnd => break,
 
-            pdb::SymbolData::Constant(_) => {
-                // println!("found constant symbol in block: {symbol_data:?}");
-            }
-
-            pdb::SymbolData::Data(_) => {
-                // println!("found data symbol in block: {symbol_data:?}");
-            }
-
-            pdb::SymbolData::Local(_) => (),
-            pdb::SymbolData::RegisterRelative(_) => (),
-            pdb::SymbolData::Label(_) => (),
-
-            pdb::SymbolData::UserDefinedType(_) => {
-                // println!("found UDT symbol in block: {symbol_data:?}");
-            }
-
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
+
+            pdb::SymbolData::Constant(_)
+            | pdb::SymbolData::Data(_)
+            | pdb::SymbolData::Local(_) 
+            | pdb::SymbolData::RegisterRelative(_) 
+            | pdb::SymbolData::Label(_) 
+            | pdb::SymbolData::UserDefinedType(_) => {}
 
             data => panic!("Unhandled symbol data in parse_block_symbols - {data:?}"),
         }
@@ -812,25 +768,16 @@ fn parse_inline_site_symbols(symbols: &mut pdb::SymbolIter) {
         match symbol_data {
             pdb::SymbolData::InlineSiteEnd => break,
 
-            pdb::SymbolData::Constant(_) => {
-                // println!("found constant symbol in inline site: {symbol_data:?}");
-            }
-
-            pdb::SymbolData::Data(_) => {
-                // println!("found data symbol in inline site: {symbol_data:?}");
-            }
-
-            pdb::SymbolData::Local(_) => (),
-            pdb::SymbolData::RegisterRelative(_) => (),
-            pdb::SymbolData::Label(_) => (),
-
-            pdb::SymbolData::UserDefinedType(_) => {
-                // println!("found UDT symbol in inline site: {symbol_data:?}");
-            }
-
             pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
             pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
             pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
+
+            pdb::SymbolData::Constant(_)
+            | pdb::SymbolData::Data(_)
+            | pdb::SymbolData::Local(_) 
+            | pdb::SymbolData::RegisterRelative(_) 
+            | pdb::SymbolData::Label(_) 
+            | pdb::SymbolData::UserDefinedType(_) => {}
 
             _ => panic!("Unhandled symbol data in parse_inline_site_symbols - {symbol_data:?}"),
         }
