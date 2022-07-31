@@ -1,7 +1,7 @@
 mod cpp;
 
 use pdb::FallibleIterator;
-use std::{collections::HashMap, error::Error, fs::{self, File}, io::Write, num, path::PathBuf};
+use std::{collections::HashMap, error::Error, fs::{self, File, OpenOptions}, io::Write, num, path::PathBuf};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -155,9 +155,9 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
         }
 
         let mut file = if path.exists() {
-            File::open(path)?
+            OpenOptions::new().write(true).append(true).open(path.clone())?
         } else {
-            File::create(path)?
+            File::create(path.clone())?
         };
 
         write!(file, "{}", entry.1)?;
@@ -398,7 +398,7 @@ fn parse_module(
     let module_file_name_ref = module_file_name_ref.unwrap();
     let module_file_path = module_file_path.unwrap().to_string_lossy().replace('\\', "\\\\");
 
-    let mut process_symbol_data = |symbol_data: &pdb::SymbolData, module_symbols: &mut pdb::SymbolIter| -> pdb::Result<()> {
+    let mut process_symbol_data = |symbol_data: &pdb::SymbolData, module_symbols: Option<&mut pdb::SymbolIter>| -> pdb::Result<()> {
         match symbol_data {
             pdb::SymbolData::UsingNamespace(symbol) => {
                 let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
@@ -573,6 +573,14 @@ fn parse_module(
             }
 
             pdb::SymbolData::Procedure(procedure_symbol) => {
+                let module_symbols = match module_symbols {
+                    Some(x) => x,
+                    None => {
+                        println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                        return Ok(());
+                    }
+                };
+                
                 let parameters = parse_procedure_symbols(module_symbols);
 
                 let mut file_name_ref = None;
@@ -635,8 +643,29 @@ fn parse_module(
                 )?;
             }
 
-            pdb::SymbolData::Thunk(_) => parse_thunk_symbols(module_symbols),
-            pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(module_symbols),
+            pdb::SymbolData::Thunk(_) => {
+                let module_symbols = match module_symbols {
+                    Some(x) => x,
+                    None => {
+                        println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                        return Ok(());
+                    }
+                };
+                                
+                parse_thunk_symbols(module_symbols)
+            }
+
+            pdb::SymbolData::SeparatedCode(_) => {
+                let module_symbols = match module_symbols {
+                    Some(x) => x,
+                    None => {
+                        println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                        return Ok(());
+                    }
+                };
+                
+                parse_separated_code_symbols(module_symbols)
+            }
 
             pdb::SymbolData::Public(_)
             | pdb::SymbolData::ProcedureReference(_)
@@ -652,13 +681,13 @@ fn parse_module(
         Ok(())
     };
 
-    let mut module_symbols = module_info.symbols()?;
-
     if let Some(global_symbols) = module_global_symbols.get(&module.module_name().to_string()) {
         for symbol_data in global_symbols {
-            process_symbol_data(symbol_data, &mut module_symbols)?;
+            process_symbol_data(symbol_data, None)?;
         }
     }
+
+    let mut module_symbols = module_info.symbols()?;
 
     while let Some(symbol) = module_symbols.next()? {
         let symbol_data = match symbol.parse() {
@@ -669,7 +698,7 @@ fn parse_module(
             }
         };
 
-        process_symbol_data(&symbol_data, &mut module_symbols)?;
+        process_symbol_data(&symbol_data, Some(&mut module_symbols))?;
     }
 
     Ok((Some(PathBuf::from(module_file_path)), headers, members))
