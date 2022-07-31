@@ -2,20 +2,20 @@ import ida_auto
 import ida_loader
 import ida_hexrays
 import ida_kernwin
+import os
 
 def decompile_to_file(ea, path):
+    dir = os.path.dirname(path)
+    if not os.path.exists(dir):
+        os.makedirs(dir)
     with open(path, "a") as outfile:
-        ida_kernwin.msg("Decompiling at: %X..." % ea)
         try:
             cf = ida_hexrays.decompile(ea)
             if cf:
-                ida_kernwin.msg("OK\n")
                 outfile.write(str(cf) + "\n")
             else:
-                ida_kernwin.msg("failed!\n")
                 outfile.write("//decompilation failure at %X!\n" % ea)
         except:
-            ida_kernwin.msg("failed!\n")
             outfile.write("//decompilation failure at %X!\n" % ea)
 
 print("Waiting for autoanalysis...")
