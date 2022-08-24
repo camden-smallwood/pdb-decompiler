@@ -56,21 +56,17 @@ impl Module {
 
     pub fn add_type_definition(
         &mut self,
+        machine_type: pdb::MachineType,
         type_info: &pdb::TypeInformation,
         type_finder: &pdb::TypeFinder,
         type_index: pdb::TypeIndex,
         line: u32,
     ) -> pdb::Result<()> {
-        if self
-            .members
-            .iter()
-            .position(|x| match x {
-                ModuleMember::Class(c) => c.index == type_index,
-                ModuleMember::Enum(e) => e.index == type_index,
-                _ => false,
-            })
-            .is_some()
-        {
+        if self.members.iter().position(|x| match x {
+            ModuleMember::Class(c) => c.index == type_index,
+            ModuleMember::Enum(e) => e.index == type_index,
+            _ => false,
+        }).is_some() {
             return Ok(());
         }
 
@@ -107,7 +103,7 @@ impl Module {
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
                 } else if let Some(fields) = data.fields {
-                    if let Err(e) = definition.add_members(type_info, type_finder, fields) {
+                    if let Err(e) = definition.add_members(machine_type, type_info, type_finder, fields) {
                         eprintln!("WARNING: failed to add class members: {e}");
                     }
                 }
@@ -150,7 +146,7 @@ impl Module {
 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
-                } else if let Err(e) = definition.add_members(type_info, type_finder, data.fields) {
+                } else if let Err(e) = definition.add_members(machine_type, type_info, type_finder, data.fields) {
                     eprintln!("WARNING: failed to add union members: {e}");
                 }
 
@@ -177,6 +173,7 @@ impl Module {
 
             Ok(pdb::TypeData::Enumeration(data)) => {
                 let underlying_type_name = match type_name(
+                    machine_type,
                     type_info,
                     type_finder,
                     data.underlying_type,

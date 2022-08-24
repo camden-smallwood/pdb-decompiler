@@ -63,15 +63,18 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     let mut script_file = File::create(out_path.join("ida_script.py"))?;
     writeln!(script_file, include_str!("../ida_script_base.py"))?;
 
+    let machine_type = debug_info.machine_type().unwrap_or(pdb::MachineType::Unknown);
+
     process_type_information(&type_info, &mut type_finder).map_err(|e| format!("failed to process type info: {e}"))?;
     
     process_id_information(
-        &mut modules,
+        machine_type,
         &string_table,
         &id_info,
         &mut id_finder,
         &type_info,
         &mut type_finder,
+        &mut modules,
     )
     .map_err(|e| format!("failed to process id info: {e}"))?;
 
@@ -97,6 +100,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
         };
 
         let (path, headers, members) = match parse_module(
+            machine_type,
             options.base_address,
             module,
             &module_info,
@@ -130,6 +134,18 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
                 continue;
             }
         };
+
+        for header in headers.iter() {
+            let path = header.to_string_lossy().to_string();
+
+            if !modules.contains_key(&path) {
+                modules.insert(path, cpp::Module {
+                    path: Some(header.clone()),
+                    headers: vec![],
+                    members: vec![],
+                });
+            }
+        }
 
         let module = modules.entry(source_file.clone()).or_insert(cpp::Module::new().with_path(path.unwrap()));
 
@@ -193,12 +209,13 @@ fn process_type_information<'a>(
 }
 
 fn process_id_information<'a>(
-    modules: &mut HashMap<String, cpp::Module>,
+    machine_type: pdb::MachineType,
     string_table: &pdb::StringTable,
     id_info: &'a pdb::IdInformation,
     id_finder: &mut pdb::IdFinder<'a>,
     type_info: &'a pdb::TypeInformation,
     type_finder: &mut pdb::TypeFinder<'a>,
+    modules: &mut HashMap<String, cpp::Module>,
 ) -> pdb::Result<()> {
     let mut id_iter = id_info.iter();
 
@@ -233,7 +250,7 @@ fn process_id_information<'a>(
             modules
                 .entry(module_path.clone())
                 .or_insert(cpp::Module::new().with_path(module_path.into()))
-                .add_type_definition(type_info, type_finder, data.udt, data.line)?;
+                .add_type_definition(machine_type, type_info, type_finder, data.udt, data.line)?;
         }
     }
 
@@ -310,6 +327,7 @@ fn load_module_global_symbols<'a>(
 }
 
 fn parse_module(
+    machine_type: pdb::MachineType,
     base_address: Option<u64>,
     module: &pdb::Module,
     module_info: &pdb::ModuleInfo,
@@ -415,6 +433,7 @@ fn parse_module(
                 let user_defined_type = (path, cpp::ModuleMember::UserDefinedType(format!(
                     "typedef {};",
                     cpp::type_name(
+                        machine_type,
                         type_info,
                         type_finder,
                         udt_symbol.type_index,
@@ -433,6 +452,7 @@ fn parse_module(
                 let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
 
                 let type_name = cpp::type_name(
+                    machine_type,
                     type_info,
                     type_finder,
                     constant_symbol.type_index,
@@ -502,6 +522,7 @@ fn parse_module(
                     format!(
                         "{}; // 0x{address:X}",
                         cpp::type_name(
+                            machine_type,
                             type_info,
                             type_finder,
                             data_symbol.type_index,
@@ -554,6 +575,7 @@ fn parse_module(
                     format!(
                         "thread_local {}; // 0x{address:X}",
                         cpp::type_name(
+                            machine_type,
                             type_info,
                             type_finder,
                             thread_storage_symbol.type_index,
@@ -616,6 +638,7 @@ fn parse_module(
                 }
 
                 let procedure = cpp::type_name(
+                    machine_type,
                     type_info,
                     type_finder,
                     procedure_symbol.type_index,

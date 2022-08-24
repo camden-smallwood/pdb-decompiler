@@ -10,6 +10,7 @@ pub use self::{
 use pdb::{FallibleIterator, PrimitiveKind};
 
 pub fn argument_list<'p>(
+    machine_type: pdb::MachineType,
     type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder<'p>,
     type_index: pdb::TypeIndex,
@@ -25,7 +26,7 @@ pub fn argument_list<'p>(
                     _ => None
                 };
 
-                args.push(type_name(type_info, type_finder, arg_type, arg_name, None, true)?);
+                args.push(type_name(machine_type, type_info, type_finder, arg_type, arg_name, None, true)?);
             }
 
             Ok(args)
@@ -35,37 +36,42 @@ pub fn argument_list<'p>(
     }
 }
 
-pub fn primitive_name(kind: PrimitiveKind) -> String {
+pub fn primitive_name(kind: PrimitiveKind) -> &'static str {
     match kind {
-        pdb::PrimitiveKind::NoType => "...".to_string(),
+        pdb::PrimitiveKind::NoType => "...",
 
-        pdb::PrimitiveKind::Void => "void".to_string(),
+        pdb::PrimitiveKind::Void => "void",
 
-        pdb::PrimitiveKind::I8 | pdb::PrimitiveKind::Char | pdb::PrimitiveKind::RChar => "char".to_string(),
-        pdb::PrimitiveKind::WChar => "wchar_t".to_string(),
-        pdb::PrimitiveKind::RChar16 => "char16_t".to_string(),
-        pdb::PrimitiveKind::RChar32 => "char32_t".to_string(),
-        pdb::PrimitiveKind::U8 | pdb::PrimitiveKind::UChar => "unsigned char".to_string(),
-        pdb::PrimitiveKind::I16 | pdb::PrimitiveKind::Short => "short".to_string(),
-        pdb::PrimitiveKind::U16 | pdb::PrimitiveKind::UShort => "unsigned short".to_string(),
-        pdb::PrimitiveKind::I32 | pdb::PrimitiveKind::Long => "long".to_string(),
-        pdb::PrimitiveKind::U32 | pdb::PrimitiveKind::ULong => "unsigned long".to_string(),
-        pdb::PrimitiveKind::I64 | pdb::PrimitiveKind::Quad => "long long".to_string(),
-        pdb::PrimitiveKind::U64 | pdb::PrimitiveKind::UQuad => "unsigned long long".to_string(),
+        pdb::PrimitiveKind::I8 | pdb::PrimitiveKind::Char | pdb::PrimitiveKind::RChar => "char",
+        pdb::PrimitiveKind::U8 | pdb::PrimitiveKind::UChar => "unsigned char",
+        
+        pdb::PrimitiveKind::WChar => "wchar_t",
+        pdb::PrimitiveKind::RChar16 => "char16_t",
+        pdb::PrimitiveKind::RChar32 => "char32_t",
+        
+        pdb::PrimitiveKind::I16 | pdb::PrimitiveKind::Short => "short",
+        pdb::PrimitiveKind::U16 | pdb::PrimitiveKind::UShort => "unsigned short",
+        
+        pdb::PrimitiveKind::I32 | pdb::PrimitiveKind::Long => "long",
+        pdb::PrimitiveKind::U32 | pdb::PrimitiveKind::ULong => "unsigned long",
 
-        pdb::PrimitiveKind::F32 => "float".to_string(),
-        pdb::PrimitiveKind::F64 => "double".to_string(),
-        pdb::PrimitiveKind::F80 => "long double".to_string(),
+        pdb::PrimitiveKind::I64 | pdb::PrimitiveKind::Quad => "long long",
+        pdb::PrimitiveKind::U64 | pdb::PrimitiveKind::UQuad => "unsigned long long",
 
-        pdb::PrimitiveKind::Bool8 => "bool".to_string(),
+        pdb::PrimitiveKind::F32 => "float",
+        pdb::PrimitiveKind::F64 => "double",
+        pdb::PrimitiveKind::F80 => "long double",
 
-        pdb::PrimitiveKind::HRESULT => "HRESULT".to_string(),
+        pdb::PrimitiveKind::Bool8 => "bool",
+
+        pdb::PrimitiveKind::HRESULT => "HRESULT",
 
         _ => panic!("Unhandled primitive kind: {kind:#?}"),
     }
 }
 
 pub fn type_name<'p>(
+    machine_type: pdb::MachineType,
     type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder<'p>,
     type_index: pdb::TypeIndex,
@@ -78,7 +84,7 @@ pub fn type_name<'p>(
 
     let mut name = match &type_data {
         pdb::TypeData::Primitive(data) => {
-            let mut name = primitive_name(data.kind);
+            let mut name = primitive_name(data.kind).to_string();
 
             if data.indirection.is_some() {
                 name.push_str(" *");
@@ -129,13 +135,13 @@ pub fn type_name<'p>(
 
         pdb::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
             Ok(pdb::TypeData::Procedure(_)) | Ok(pdb::TypeData::MemberFunction(_)) => {
-                type_name(type_info, type_finder, data.underlying_type, declaration_name, None, true)?
+                type_name(machine_type, type_info, type_finder, data.underlying_type, declaration_name, None, true)?
             }
 
             _ => {
                 let mut name = format!(
                     "{} {}",
-                    type_name(type_info, type_finder, data.underlying_type, None, None, true)?,
+                    type_name(machine_type, type_info, type_finder, data.underlying_type, None, None, true)?,
                     if data.attributes.is_reference() {
                         "&"
                     } else {
@@ -156,21 +162,21 @@ pub fn type_name<'p>(
             if data.constant {
                 format!(
                     "const {}",
-                    type_name(type_info, type_finder, data.underlying_type, declaration_name, None, true)?
+                    type_name(machine_type, type_info, type_finder, data.underlying_type, declaration_name, None, true)?
                 )
             } else if data.volatile {
                 format!(
                     "volatile {}",
-                    type_name(type_info, type_finder, data.underlying_type, declaration_name, None, true)?
+                    type_name(machine_type, type_info, type_finder, data.underlying_type, declaration_name, None, true)?
                 )
             } else {
-                type_name(type_info, type_finder, data.underlying_type, declaration_name, None, true)?
+                type_name(machine_type, type_info, type_finder, data.underlying_type, declaration_name, None, true)?
             }
         }
 
         pdb::TypeData::Array(data) => {
-            let mut name = type_name(type_info, type_finder, data.element_type, declaration_name, None, true)?;
-            let mut element_size = type_size(type_info, type_finder, data.element_type)?;
+            let mut name = type_name(machine_type, type_info, type_finder, data.element_type, declaration_name, None, true)?;
+            let mut element_size = type_size(machine_type, type_info, type_finder, data.element_type)?;
 
             if element_size == 0 {
                 let element_type_data = type_finder.find(data.element_type)?.parse()?;
@@ -215,7 +221,7 @@ pub fn type_name<'p>(
                     }
                     
                     if current_type_data.name() == element_type_data.name() {
-                        if let Ok(current_type_size) = type_size(type_info, type_finder, current_type_item.index()) {
+                        if let Ok(current_type_size) = type_size(machine_type, type_info, type_finder, current_type_item.index()) {
                             if current_type_size != 0 {
                                 element_size = current_type_size;
                                 break;
@@ -234,7 +240,7 @@ pub fn type_name<'p>(
         }
 
         pdb::TypeData::Bitfield(data) => {
-            let name = type_name(type_info, type_finder, data.underlying_type, declaration_name, None, true)?;
+            let name = type_name(machine_type, type_info, type_finder, data.underlying_type, declaration_name, None, true)?;
             format!("{} : {}", name, data.length)
         }
 
@@ -247,7 +253,7 @@ pub fn type_name<'p>(
                 }
             } else {
                 let mut name = match data.return_type {
-                    Some(index) => type_name(type_info, type_finder, index, None, None, true)?,
+                    Some(index) => type_name(machine_type, type_info, type_finder, index, None, None, true)?,
                     None => String::new(),
                 };
 
@@ -271,7 +277,7 @@ pub fn type_name<'p>(
             name.push_str(
                 format!(
                     "({})",
-                    argument_list(type_info, type_finder, data.argument_list, parameter_names)?.join(", ")
+                    argument_list(machine_type, type_info, type_finder, data.argument_list, parameter_names)?.join(", ")
                 ).as_str()
             );
 
@@ -286,7 +292,7 @@ pub fn type_name<'p>(
                     String::new()
                 }
             } else {
-                let mut name = type_name(type_info, type_finder, data.return_type, None, None, true)?;
+                let mut name = type_name(machine_type, type_info, type_finder, data.return_type, None, None, true)?;
 
                 if is_pointer {
                     name.push_str("(*");
@@ -313,7 +319,7 @@ pub fn type_name<'p>(
                 }
             }
 
-            format!("{}({})", name, argument_list(type_info, type_finder, data.argument_list, parameter_names)?.join(", "))
+            format!("{}({})", name, argument_list(machine_type, type_info, type_finder, data.argument_list, parameter_names)?.join(", "))
         }
 
         _ => panic!(
@@ -331,6 +337,7 @@ pub fn type_name<'p>(
 }
 
 pub fn type_size<'p>(
+    machine_type: pdb::MachineType,
     type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder<'p>,
     type_index: pdb::TypeIndex,
@@ -342,7 +349,13 @@ pub fn type_size<'p>(
         pdb::TypeData::Primitive(pdb::PrimitiveType {
             indirection: Some(_),
             ..
-        }) => Ok(8), // TODO: machine/platform pointer size
+        })
+        | pdb::TypeData::Pointer(_)
+        | pdb::TypeData::Procedure(_) => match machine_type {
+            pdb::MachineType::X86 => Ok(4),
+            pdb::MachineType::Amd64 => Ok(8),
+            _ => panic!("Unhandled machine type: {machine_type}")
+        }
 
         pdb::TypeData::Primitive(pdb::PrimitiveType {
             kind: pdb::PrimitiveKind::NoType,
@@ -494,11 +507,10 @@ pub fn type_size<'p>(
         }
 
         pdb::TypeData::Class(data) => Ok(data.size as usize),
-        pdb::TypeData::Enumeration(data) => type_size(type_info, type_finder, data.underlying_type),
+        pdb::TypeData::Enumeration(data) => type_size(machine_type, type_info, type_finder, data.underlying_type),
         pdb::TypeData::Union(data) => Ok(data.size as usize),
-        pdb::TypeData::Pointer(_) | pdb::TypeData::Procedure(_) => Ok(8), // TODO: machine/platform pointer size
-        pdb::TypeData::Modifier(data) => type_size(type_info, type_finder, data.underlying_type),
-        pdb::TypeData::Bitfield(data) => type_size(type_info, type_finder, data.underlying_type),
+        pdb::TypeData::Modifier(data) => type_size(machine_type, type_info, type_finder, data.underlying_type),
+        pdb::TypeData::Bitfield(data) => type_size(machine_type, type_info, type_finder, data.underlying_type),
         pdb::TypeData::Array(data) => Ok(*data.dimensions.last().unwrap() as usize),
 
         _ => panic!(
