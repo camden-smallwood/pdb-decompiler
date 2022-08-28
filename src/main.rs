@@ -142,18 +142,17 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             if !modules.contains_key(&path) {
                 modules.insert(path, cpp::Module {
                     path: Some(header.clone()),
-                    headers: vec![],
-                    members: vec![],
+                    ..Default::default()
                 });
             }
         }
 
-        let module = modules.entry(source_file.clone()).or_insert(cpp::Module::new().with_path(path.unwrap()));
+        let module = modules.entry(source_file.clone()).or_insert(cpp::Module::default().with_path(path.unwrap()));
 
         module.headers.extend(headers);
 
         for (source_file, member) in members {
-            let module = modules.entry(source_file.to_string_lossy().to_string()).or_insert(cpp::Module::new().with_path(source_file));
+            let module = modules.entry(source_file.to_string_lossy().to_string()).or_insert(cpp::Module::default().with_path(source_file));
 
             // TODO: check if module already contains member...
             module.members.push(member);
@@ -233,117 +232,10 @@ fn process_id_information<'a>(
         };
 
         match id_data {
-            pdb::IdData::BuildInfo(data) => {
-                let mut args = vec![];
-
-                for id_index in data.arguments {
-                    let id_item = match id_finder.find(id_index) {
-                        Ok(id_item) => id_item,
-                        Err(e) => {
-                            eprintln!("WARNING: failed to find id {id_index}: {e}");
-                            continue;
-                        }
-                    };
-
-                    let id_data = match id_item.parse() {
-                        Ok(pdb::IdData::String(id_data)) => id_data,
-                        Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
-                        Err(e) => {
-                            eprintln!("WARNING: failed to parse id {id_index}: {e}");
-                            continue;
-                        }
-                    };
-
-                    let mut arg = String::new();
-
-                    if let Some(id_index) = id_data.substrings {
-                        let id_item = match id_finder.find(id_index) {
-                            Ok(id_item) => id_item,
-                            Err(e) => {
-                                eprintln!("WARNING: failed to find id {id_index}: {e}");
-                                continue;
-                            }
-                        };
-
-                        let id_data = match id_item.parse() {
-                            Ok(pdb::IdData::StringList(id_data)) => id_data,
-
-                            Ok(id_data) => panic!("Failed to parse id {id_index}: Expected StringList, got {id_data:?}"),
-
-                            Err(e) => {
-                                eprintln!("WARNING: failed to parse id {id_index}: {e}");
-                                continue;
-                            }
-                        };
-
-                        for type_index in id_data.substrings {
-                            // TODO: remove this hack when pdb crate fixes type
-                            let id_index = pdb::IdIndex(type_index.0);
-
-                            let id_item = match id_finder.find(id_index) {
-                                Ok(id_item) => id_item,
-                                Err(e) => {
-                                    eprintln!("WARNING: failed to find id {id_index}: {e}");
-                                    continue;
-                                }
-                            };
-
-                            match id_item.parse() {
-                                Ok(pdb::IdData::String(id_data)) => {
-                                    arg = format!("{}{}", arg, id_data.name.to_string());
-                                }
-
-                                Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
-                                
-                                Err(e) => {
-                                    eprintln!("WARNING: failed to parse id {id_index}: {e}");
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    
-                    arg = format!("{}{}", arg, id_data.name.to_string());
-
-                    args.push(arg);
-                }
-
-                let mut args_iter = args.iter();
-
-                let root_path = args_iter.next().unwrap();
-                let compiler_path = args_iter.next().unwrap();
-                let module_path = args_iter.next().unwrap();
-                let pdb_path = args_iter.next().unwrap();
-                let args_string = args_iter.next().unwrap();
-
-                let absolute_path = PathBuf::from(format!(
-                    "{}/{}",
-                    out_path.to_string_lossy(),
-                    if module_path.contains(":") {
-                        sanitize_path(module_path)
-                    } else {
-                        format!("{}/{}", sanitize_path(root_path), sanitize_path(module_path))
-                    },
-                ));
-
-                if !absolute_path.exists() {
-                    if let Some(parent_path) = absolute_path.parent() {
-                        if let Err(e) = fs::create_dir_all(parent_path) {
-                            panic!("Failed to create parent directories for file \"{}\" (\"{}\"): {e}", absolute_path.to_string_lossy(), out_path.to_string_lossy());
-                        }
-                    }
-
-                    if let Err(e) = File::create(absolute_path.clone()) {
-                        panic!("Failed to create file \"{}\": {e}", absolute_path.to_string_lossy());
-                    }
-                }
-
-                let absolute_path = match absolute_path.canonicalize() {
-                    Ok(x) => x,
-                    Err(e) => panic!("Failed to canonicalize path \"{}\": {e}", absolute_path.to_string_lossy())
-                };
-
-                println!("{}", absolute_path.to_string_lossy());
+            pdb::IdData::BuildInfo(build_info) => {
+                let mut module = cpp::Module::default();
+                module.add_build_info(out_path, id_finder, build_info)?;
+                println!("{module:#?}");
             }
             
             pdb::IdData::UserDefinedTypeSource(data) => {
@@ -365,7 +257,7 @@ fn process_id_information<'a>(
 
                 modules
                     .entry(module_path.clone())
-                    .or_insert(cpp::Module::new().with_path(module_path.into()))
+                    .or_insert(cpp::Module::default().with_path(module_path.into()))
                     .add_type_definition(machine_type, type_info, type_finder, data.udt, data.line)?;
             }
 
