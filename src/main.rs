@@ -140,10 +140,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             let path = header.to_string_lossy().to_string();
 
             if !modules.contains_key(&path) {
-                modules.insert(path, cpp::Module {
-                    path: Some(header.clone()),
-                    ..Default::default()
-                });
+                modules.insert(path, cpp::Module::default().with_path(header.clone()));
             }
         }
 
@@ -163,8 +160,8 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     // Write modules to file
     //
 
-    for entry in &modules {
-        let path = PathBuf::from(sanitize_path(format!("{}{}", out_path.to_string_lossy(), entry.0).to_string()));
+    for (module_path, module) in &modules {
+        let path = PathBuf::from(sanitize_path(format!("{}{}", out_path.to_string_lossy(), module_path).to_string()));
 
         if let Some(parent_path) = path.parent() {
             fs::create_dir_all(parent_path)?;
@@ -176,7 +173,8 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             File::create(path.clone())?
         };
 
-        write!(file, "{}", entry.1)?;
+        println!("{module_path}: {module:#?}");
+        write!(file, "{module}")?;
     }
 
     Ok(())
@@ -235,7 +233,14 @@ fn process_id_information<'a>(
             pdb::IdData::BuildInfo(build_info) => {
                 let mut module = cpp::Module::default();
                 module.add_build_info(out_path, id_finder, build_info)?;
-                println!("{module:#?}");
+
+                let module_path = module.path.to_string_lossy().to_string().to_lowercase();
+                
+                if let Some(old_module) = modules.insert(module_path.clone(), module) {
+                    let module = modules.get_mut(&module_path).unwrap();
+                    module.headers = old_module.headers;
+                    module.members = old_module.members;
+                }
             }
             
             pdb::IdData::UserDefinedTypeSource(data) => {
