@@ -39,11 +39,11 @@ pub struct Module {
     pub compiler_path: PathBuf,
     pub pdb_path: PathBuf,
 
-    pub headers: Vec<PathBuf>,
+    pub headers: Vec<(PathBuf, bool)>,
     pub members: Vec<ModuleMember>,
 
     pub pack_structure_members: Option<String>,
-    pub pch_file_name: Option<String>,
+    pub pch_file_name: Option<PathBuf>,
     pub precompiled_header_file_name: Option<String>,
     pub output_warning_level: Option<usize>,
     pub minimum_cpu_architecture: Option<String>,
@@ -53,9 +53,9 @@ pub struct Module {
     pub error_report: Option<String>,
     pub inline_function_expansion: Option<usize>,
 
-    pub additional_include_dirs: Vec<String>,
-    pub using_directive_dirs: Vec<String>,
-    pub forced_using_directives: Vec<String>,
+    pub additional_include_dirs: Vec<PathBuf>,
+    pub using_directive_dirs: Vec<PathBuf>,
+    pub forced_using_directives: Vec<PathBuf>,
     pub preprocessor_definitions: Vec<(String, Option<String>)>,
     pub preprocess_include_files: Vec<String>,
     pub disabled_warnings: Vec<String>,
@@ -385,39 +385,7 @@ impl Module {
         let pdb_path = args_iter.next().unwrap();
         let args_string = args_iter.next().unwrap();
 
-        let absolute_path = PathBuf::from(format!(
-            "{}/{}",
-            out_path.to_string_lossy(),
-            if module_path.contains(":") {
-                crate::sanitize_path(module_path)
-            } else {
-                format!("{}/{}", crate::sanitize_path(root_path), crate::sanitize_path(module_path))
-            },
-        ));
-
-        if !absolute_path.exists() {
-            if let Some(parent_path) = absolute_path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent_path) {
-                    panic!("Failed to create parent directories for file \"{}\" (\"{}\"): {e}", absolute_path.to_string_lossy(), out_path.to_string_lossy());
-                }
-            }
-
-            if let Err(e) = std::fs::File::create(absolute_path.clone()) {
-                panic!("Failed to create file \"{}\": {e}", absolute_path.to_string_lossy());
-            }
-        }
-
-        let out_path = match out_path.canonicalize() {
-            Ok(x) => x,
-            Err(e) => panic!("Failed to canonicalize path \"{}\": {e}", absolute_path.to_string_lossy())
-        };
-
-        let absolute_path = match absolute_path.canonicalize() {
-            Ok(x) => x,
-            Err(e) => panic!("Failed to canonicalize path \"{}\": {e}", absolute_path.to_string_lossy())
-        };
-
-        self.path = absolute_path.to_string_lossy().replace(out_path.to_string_lossy().to_string().as_str(), "").into();
+        self.path = crate::canonicalize_file_path(out_path.to_str().unwrap_or(""), root_path.as_str(), module_path.as_str());
         self.compiler_path = compiler_path.into();
         self.pdb_path = pdb_path.into();
 
@@ -495,7 +463,7 @@ impl Module {
 
                 Some('A') => match chars_iter.next() {
                     Some('I') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) => self.using_directive_dirs.push(s),
+                        Some(s) => self.using_directive_dirs.push(crate::canonicalize_dir_path(out_path.to_str().unwrap_or(""), root_path.as_str(), s.as_str())),
                         None => panic!("Missing directory for using directive"),
                     }
 
@@ -643,12 +611,12 @@ impl Module {
                     }
 
                     Some('p') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) => self.pch_file_name = Some(s),
-                        None => self.pch_file_name = Some(String::new()),
+                        Some(s) => self.pch_file_name = Some(crate::canonicalize_file_path(out_path.to_str().unwrap_or(""), root_path.as_str(), s.as_str())),
+                        None => self.pch_file_name = Some(PathBuf::new()),
                     }
 
                     Some('U') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) => self.forced_using_directives.push(s),
+                        Some(s) => self.forced_using_directives.push(crate::canonicalize_file_path(out_path.to_str().unwrap_or(""), root_path.as_str(), s.as_str())),
                         None => panic!("Unexpected characters in build info arg: 'FU'"),
                     }
 
@@ -727,7 +695,7 @@ impl Module {
                 }
 
                 Some('I') => match parse_arg_string(&mut chars_iter) {
-                    Some(x) => self.additional_include_dirs.push(x),
+                    Some(x) => self.additional_include_dirs.push(crate::canonicalize_dir_path(out_path.to_str().unwrap_or(""), root_path.as_str(), x.as_str())),
                     None => panic!("Missing string from additional include directory arg"),
                 }
 
@@ -954,8 +922,8 @@ impl Module {
 
                 Some('Y') => match chars_iter.next() {
                     Some('c') => match parse_arg_string(&mut chars_iter) {
-                        None => self.pch_file_name = Some(String::new()),
-                        Some(s) => self.pch_file_name = Some(s),
+                        Some(s) => self.pch_file_name = Some(crate::canonicalize_file_path(out_path.to_str().unwrap_or(""), root_path.as_str(), s.as_str())),
+                        None => self.pch_file_name = Some(PathBuf::new()),
                     }
 
                     Some('l') => match parse_arg_string(&mut chars_iter) {
@@ -1025,6 +993,10 @@ impl Module {
             }
         }
 
+        // Sort additional include directories from longest to shortest
+        self.additional_include_dirs.sort_by(|a, b| a.to_string_lossy().len().cmp(&b.to_string_lossy().len()));
+        self.additional_include_dirs.reverse();
+
         Ok(())
     }
 }
@@ -1045,8 +1017,12 @@ impl fmt::Display for Module {
             writeln!(f, "#pragma once")?;
         }
 
-        for header in self.headers.iter() {
-            writeln!(f, "#include \"{}\"", header.to_string_lossy())?;
+        for (header, is_global) in self.headers.iter() {
+            if *is_global {
+                writeln!(f, "#include <{}>", header.to_string_lossy().trim_start_matches("/"))?;
+            } else {
+                writeln!(f, "#include \"{}\"", header.to_string_lossy().trim_start_matches("/"))?;
+            }
         }
 
         for u in &self.members {

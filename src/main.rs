@@ -17,11 +17,11 @@ struct Options {
     base_address: Option<u64>,
 }
 
-fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
+pub fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
     u64::from_str_radix(src.trim_start_matches("0x"), 16)
 }
 
-fn sanitize_path<S: AsRef<str>>(path: S) -> String {
+pub fn sanitize_path<S: AsRef<str>>(path: S) -> String {
     let mut result = path.as_ref().to_string().replace('\\', "/");
 
     if let Some((_, rest)) = result.split_once(':') {
@@ -29,6 +29,58 @@ fn sanitize_path<S: AsRef<str>>(path: S) -> String {
     }
 
     result
+}
+
+pub fn canonicalize_file_path(out_path: &str, root_path: &str, path: &str) -> PathBuf {
+    let path = PathBuf::from(format!(
+        "{}/{}",
+        out_path,
+        if path.contains(":") {
+            crate::sanitize_path(path)
+        } else {
+            format!("{}/{}", sanitize_path(root_path), sanitize_path(path))
+        },
+    ));
+
+    if !path.exists() {
+        if let Some(parent_path) = path.parent() {
+            if let Err(e) = fs::create_dir_all(parent_path) {
+                panic!("Failed to create parent directories for file \"{}\": {e}", path.to_string_lossy());
+            }
+        }
+
+        if let Err(e) = File::create(path.clone()) {
+            panic!("Failed to create file \"{}\": {e}", path.to_string_lossy());
+        }
+    }
+
+    match path.canonicalize() {
+        Ok(x) => x.to_string_lossy().replace(out_path, "").into(),
+        Err(e) => panic!("Failed to canonicalize path \"{}\": {e}", path.to_string_lossy())
+    }
+}
+
+pub fn canonicalize_dir_path(out_path: &str, root_path: &str, path: &str) -> PathBuf {
+    let path = PathBuf::from(format!(
+        "{}/{}/",
+        out_path,
+        if path.contains(":") {
+            crate::sanitize_path(path)
+        } else {
+            format!("{}/{}", sanitize_path(root_path), sanitize_path(path))
+        },
+    ));
+
+    if !path.exists() {
+        if let Err(e) = fs::create_dir_all(path.clone()) {
+            panic!("Failed to create directory \"{}\": {e}", path.to_string_lossy());
+        }
+    }
+
+    match path.canonicalize() {
+        Ok(x) => x.to_string_lossy().replace(out_path, "").into(),
+        Err(e) => panic!("Failed to canonicalize path \"{}\": {e}", path.to_string_lossy())
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -100,7 +152,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             }
         };
 
-        let (path, headers, members) = match parse_module(
+        let (path, header_paths, members) = match parse_module(
             machine_type,
             options.base_address,
             module,
@@ -122,7 +174,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
         };
 
         let source_file = match path.as_ref() {
-            Some(path) => path.to_string_lossy().to_string(),
+            Some(path) => path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string(),
             None => {
                 match module.module_name().to_string().as_str() {
                     "* CIL *" | "* Linker *" | "* Linker Generated Manifest RES *" => (),
@@ -136,20 +188,25 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             }
         };
 
-        for header in headers.iter() {
-            let path = header.to_string_lossy().to_string();
+        let mut headers = vec![];
+
+        for header_path in header_paths.iter() {
+            let path = header_path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
 
             if !modules.contains_key(&path) {
-                modules.insert(path, cpp::Module::default().with_path(header.clone()));
+                modules.insert(path.clone(), cpp::Module::default().with_path(header_path.clone()));
             }
+
+            headers.push((header_path.clone(), false));
         }
 
-        let module = modules.entry(source_file.clone()).or_insert(cpp::Module::default().with_path(path.unwrap()));
-
+        let module = modules.entry(source_file).or_insert(cpp::Module::default().with_path(path.unwrap()));
         module.headers.extend(headers);
 
         for (source_file, member) in members {
-            let module = modules.entry(source_file.to_string_lossy().to_string()).or_insert(cpp::Module::default().with_path(source_file));
+            let module = modules
+                .entry(source_file.to_string_lossy().trim_start_matches("/").to_lowercase().to_string())
+                .or_insert(cpp::Module::default().with_path(source_file));
 
             // TODO: check if module already contains member...
             module.members.push(member);
@@ -157,10 +214,62 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     }
 
     //
+    // Finalize module debug information, clean up include paths
+    //
+
+    let module_paths = modules.keys().cloned().collect::<Vec<_>>();
+    let mut new_modules = HashMap::new();
+
+    for (_, module) in modules.iter_mut() {
+        let mut headers = vec![];
+
+        for (header_path, is_global) in module.headers.iter() {
+            let path = header_path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
+
+            if !module_paths.contains(&path) && !new_modules.contains_key(&path) {
+                new_modules.insert(path.clone(), cpp::Module::default().with_path(header_path.clone()));
+            }
+
+            if let Some(pch_file_name) = module.pch_file_name.as_ref() {
+                let pch_file_name = pch_file_name.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
+                if path == pch_file_name {
+                    continue;
+                }
+            }
+
+            let mut modified_path = None;
+
+            for dir_path in module.additional_include_dirs.iter() {
+                let dir_path = dir_path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
+                let dir_path_len = dir_path.len();
+
+                if dir_path_len < path.len() && path.starts_with(dir_path.as_str()) {
+                    modified_path = Some((path[dir_path_len..].to_string().into(), true));
+                    break;
+                }
+            }
+
+            headers.push(match modified_path {
+                Some(x) => x,
+                None => (header_path.clone(), is_global.clone()),
+            });
+        }
+
+        module.headers.clear();
+        module.headers.extend(headers);
+    }
+
+    for (k, v) in new_modules {
+        if !modules.contains_key(&k) {
+            modules.insert(k, v);
+        }
+    }
+
+    //
     // Write modules to file
     //
 
-    for (module_path, module) in &modules {
+    for (module_path, module) in modules {
         let path = PathBuf::from(sanitize_path(format!("{}{}", out_path.to_string_lossy(), module_path).to_string()));
 
         if let Some(parent_path) = path.parent() {
@@ -173,7 +282,6 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             File::create(path.clone())?
         };
 
-        println!("{module_path}: {module:#?}");
         write!(file, "{module}")?;
     }
 
@@ -234,7 +342,7 @@ fn process_id_information<'a>(
                 let mut module = cpp::Module::default();
                 module.add_build_info(out_path, id_finder, build_info)?;
 
-                let module_path = module.path.to_string_lossy().to_string().to_lowercase();
+                let module_path = module.path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
                 
                 if let Some(old_module) = modules.insert(module_path.clone(), module) {
                     let module = modules.get_mut(&module_path).unwrap();
@@ -261,7 +369,7 @@ fn process_id_information<'a>(
                 };
 
                 modules
-                    .entry(module_path.clone())
+                    .entry(module_path.trim_start_matches("/").to_lowercase())
                     .or_insert(cpp::Module::default().with_path(module_path.into()))
                     .add_type_definition(machine_type, type_info, type_finder, data.udt, data.line)?;
             }
@@ -304,7 +412,7 @@ fn load_module_global_symbols<'a>(
 
             pdb::SymbolData::ProcedureReference(pdb::ProcedureReferenceSymbol { module: Some(module), .. }) => {
                 let referenced_module = modules.iter().nth(module as _).unwrap();
-                let module_name = referenced_module.module_name().to_string();
+                let module_name = referenced_module.module_name().to_string().trim_start_matches("/").to_lowercase();
                 prev_module_name = Some(module_name.clone());
 
                 // println!("Found referenced module \"{module_name}\" in global symbol {symbol_data:#?}");
@@ -320,7 +428,7 @@ fn load_module_global_symbols<'a>(
                     let contributing_module = modules.iter().nth(contribution.module as _).unwrap();
 
                     if offset >= contribution.offset && offset < contribution.offset + contribution.size {
-                        let module_name = contributing_module.module_name().to_string();
+                        let module_name = contributing_module.module_name().to_string().trim_start_matches("/").to_lowercase();
                         prev_module_name = Some(module_name.clone());
 
                         // println!("Found contributing module \"{module_name}\" in global symbol {symbol_data:#?}");
