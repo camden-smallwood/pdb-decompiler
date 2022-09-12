@@ -412,7 +412,7 @@ fn load_module_global_symbols<'a>(
 
             pdb::SymbolData::ProcedureReference(pdb::ProcedureReferenceSymbol { module: Some(module), .. }) => {
                 let referenced_module = modules.iter().nth(module as _).unwrap();
-                let module_name = referenced_module.module_name().to_string().trim_start_matches("/").to_lowercase();
+                let module_name = referenced_module.module_name().to_string();
                 prev_module_name = Some(module_name.clone());
 
                 // println!("Found referenced module \"{module_name}\" in global symbol {symbol_data:#?}");
@@ -428,7 +428,7 @@ fn load_module_global_symbols<'a>(
                     let contributing_module = modules.iter().nth(contribution.module as _).unwrap();
 
                     if offset >= contribution.offset && offset < contribution.offset + contribution.size {
-                        let module_name = contributing_module.module_name().to_string().trim_start_matches("/").to_lowercase();
+                        let module_name = contributing_module.module_name().to_string();
                         prev_module_name = Some(module_name.clone());
 
                         // println!("Found contributing module \"{module_name}\" in global symbol {symbol_data:#?}");
