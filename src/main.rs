@@ -134,7 +134,13 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     let section_contributions = load_section_contributions(&debug_info)
         .map_err(|e| format!("does not contain module section information: {e}"))?;
 
-    let module_global_symbols = load_module_global_symbols(&debug_info, &global_symbols, section_contributions)
+    //
+    // Load module global symbols
+    //
+
+    let mut module_global_symbols = HashMap::new();
+
+    load_module_global_symbols(&debug_info, &global_symbols, &section_contributions, &mut module_global_symbols)
         .map_err(|e| format!("failed to load module global symbol info: {e}"))?;
 
     //
@@ -152,7 +158,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             }
         };
 
-        let (path, header_paths, members) = match parse_module(
+        if let Err(e) = parse_module(
             machine_type,
             options.base_address,
             module,
@@ -161,60 +167,18 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
             &string_table,
             &type_info,
             &type_finder,
-            &id_info,
-            &id_finder,
             &module_global_symbols,
+            &mut modules,
             &mut script_file,
         ) {
-            Ok(x) => x,
-            Err(e) => {
-                println!("WARNING: failed to decompile module, skipping: {e} - {module:#?}");
-                continue;
-            }
-        };
-
-        let source_file = match path.as_ref() {
-            Some(path) => path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string(),
-            None => {
-                match module.module_name().to_string().as_str() {
-                    "* CIL *" | "* Linker *" | "* Linker Generated Manifest RES *" => (),
-                    
-                    x if x.to_lowercase().ends_with(".dll") => (),
-                    
-                    _ => println!("WARNING: module has no source file, skipping: {module:#?}")
-                }
-
-                continue;
-            }
-        };
-
-        let mut headers = vec![];
-
-        for header_path in header_paths.iter() {
-            let path = header_path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
-
-            if !modules.contains_key(&path) {
-                modules.insert(path.clone(), cpp::Module::default().with_path(header_path.clone()));
-            }
-
-            headers.push((header_path.clone(), false));
-        }
-
-        let module = modules.entry(source_file).or_insert(cpp::Module::default().with_path(path.unwrap()));
-        module.headers.extend(headers);
-
-        for (source_file, member) in members {
-            let module = modules
-                .entry(source_file.to_string_lossy().trim_start_matches("/").to_lowercase().to_string())
-                .or_insert(cpp::Module::default().with_path(source_file));
-
-            // TODO: check if module already contains member...
-            module.members.push(member);
+            println!("WARNING: failed to decompile module, skipping: {e} - {module:#?}");
+            continue;
         }
     }
 
     //
     // Finalize module debug information, clean up include paths
+    // TODO: should this move to `parse_module`?
     //
 
     let module_paths = modules.keys().cloned().collect::<Vec<_>>();
@@ -384,10 +348,9 @@ fn process_id_information<'a>(
 fn load_module_global_symbols<'a>(
     debug_info: &pdb::DebugInformation,
     global_symbols: &'a pdb::SymbolTable,
-    section_contributions: Vec<pdb::DBISectionContribution>,
-) -> pdb::Result<HashMap<String, Vec<pdb::SymbolData<'a>>>> {
-    let mut result = HashMap::new();
-
+    section_contributions: &Vec<pdb::DBISectionContribution>,
+    module_global_symbols: &mut HashMap<String, Vec<pdb::SymbolData<'a>>>,
+) -> pdb::Result<()> {
     let modules = debug_info.modules()?.collect::<Vec<_>>()?;
     let mut prev_module_name = None;
 
@@ -405,19 +368,21 @@ fn load_module_global_symbols<'a>(
         match symbol_data {
             pdb::SymbolData::UserDefinedType(_) if prev_module_name.is_some() => {
                 let module_name = prev_module_name.clone().unwrap();
+
                 // println!("Inserting global UDT into previous module \"{module_name}\": {symbol_data:#?}");
 
-                result.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
+                module_global_symbols.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
             }
 
             pdb::SymbolData::ProcedureReference(pdb::ProcedureReferenceSymbol { module: Some(module), .. }) => {
                 let referenced_module = modules.iter().nth(module as _).unwrap();
+
                 let module_name = referenced_module.module_name().to_string();
                 prev_module_name = Some(module_name.clone());
 
                 // println!("Found referenced module \"{module_name}\" in global symbol {symbol_data:#?}");
 
-                result.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
+                module_global_symbols.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
             }
 
             pdb::SymbolData::Public(pdb::PublicSymbol { offset, .. })
@@ -433,7 +398,7 @@ fn load_module_global_symbols<'a>(
 
                         // println!("Found contributing module \"{module_name}\" in global symbol {symbol_data:#?}");
 
-                        result.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
+                        module_global_symbols.entry(module_name).or_insert(vec![]).push(symbol_data.clone());
                         break;
                     }
                 }
@@ -447,7 +412,7 @@ fn load_module_global_symbols<'a>(
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 fn parse_module(
@@ -459,15 +424,10 @@ fn parse_module(
     string_table: &pdb::StringTable,
     type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder,
-    _id_info: &pdb::IdInformation,
-    _id_finder: &pdb::IdFinder,
     module_global_symbols: &HashMap<String, Vec<pdb::SymbolData>>,
+    modules: &mut HashMap<String, cpp::Module>,
     script_file: &mut File,
-) -> pdb::Result<(
-    Option<PathBuf>,
-    Vec<PathBuf>,
-    Vec<(PathBuf, cpp::ModuleMember)>,
-)> {
+) -> pdb::Result<()> {
     let mut headers = vec![];
     let mut members = vec![];
     let mut line_offsets = HashMap::new();
@@ -534,7 +494,15 @@ fn parse_module(
     }
 
     if module_file_path.is_none() {
-        return Ok((module_file_path, headers, members));
+        match module.module_name().to_string().as_str() {
+            "* CIL *" | "* Linker *" | "* Linker Generated Manifest RES *" => (),
+            
+            x if x.to_lowercase().ends_with(".dll") => (),
+            
+            _ => println!("WARNING: module has no source file, skipping: {module:#?}")
+        }
+
+        return Ok(());
     }
 
     let module_file_name_ref = module_file_name_ref.unwrap();
@@ -848,7 +816,39 @@ fn parse_module(
         process_symbol_data(&symbol_data, Some(&mut module_symbols))?;
     }
 
-    Ok((Some(PathBuf::from(module_file_path)), headers, members))
+    let path = PathBuf::from(module_file_path);
+    let source_file = path.to_string_lossy().trim_start_matches("/").to_lowercase();
+
+    let mut module_headers = vec![];
+
+    for path in headers.iter() {
+        let source_file = path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
+
+        if !modules.contains_key(&source_file) {
+            modules.insert(source_file.clone(), cpp::Module::default().with_path(path.clone()));
+        }
+
+        module_headers.push((path.clone(), false));
+    }
+
+    let module = modules.entry(source_file).or_insert(cpp::Module::default().with_path(path));
+    
+    for header in module_headers {
+        if !module.headers.contains(&header) {
+            module.headers.push(header);
+        }
+    }
+
+    for (path, member) in members {
+        let module = modules
+            .entry(path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string())
+            .or_insert(cpp::Module::default().with_path(path));
+
+        // TODO: check if module already contains member...
+        module.members.push(member);
+    }
+
+    Ok(())
 }
 
 fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
