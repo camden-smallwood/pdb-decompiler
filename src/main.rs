@@ -134,120 +134,25 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     let section_contributions = load_section_contributions(&debug_info)
         .map_err(|e| format!("does not contain module section information: {e}"))?;
 
-    //
-    // Load module global symbols
-    //
-
     let mut module_global_symbols = HashMap::new();
 
     load_module_global_symbols(&debug_info, &global_symbols, &section_contributions, &mut module_global_symbols)
         .map_err(|e| format!("failed to load module global symbol info: {e}"))?;
 
-    //
-    // Process module debug information
-    //
-
-    let mut module_iter = debug_info.modules().map_err(|e| format!("does not contain debug module info: {e}"))?;
-
-    while let Some(ref module) = module_iter.next().map_err(|e| format!("failed to get next debug module info: {e}"))? {
-        let module_info = match pdb.module_info(module)? {
-            Some(module_info) => module_info,
-            None => {
-                // println!("module has no info: {} - {}", module.module_name(), module.object_file_name());
-                continue;
-            }
-        };
-
-        if let Err(e) = parse_module(
-            machine_type,
-            options.base_address,
-            module,
-            &module_info,
-            &address_map,
-            &string_table,
-            &type_info,
-            &type_finder,
-            &module_global_symbols,
-            &mut modules,
-            &mut script_file,
-        ) {
-            println!("WARNING: failed to decompile module, skipping: {e} - {module:#?}");
-            continue;
-        }
-    }
-
-    //
-    // Finalize module debug information, clean up include paths
-    // TODO: should this move to `parse_module`?
-    //
-
-    let module_paths = modules.keys().cloned().collect::<Vec<_>>();
-    let mut new_modules = HashMap::new();
-
-    for (_, module) in modules.iter_mut() {
-        let mut headers = vec![];
-
-        for (header_path, is_global) in module.headers.iter() {
-            let path = header_path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
-
-            if !module_paths.contains(&path) && !new_modules.contains_key(&path) {
-                new_modules.insert(path.clone(), cpp::Module::default().with_path(header_path.clone()));
-            }
-
-            if let Some(pch_file_name) = module.pch_file_name.as_ref() {
-                let pch_file_name = pch_file_name.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
-                if path == pch_file_name {
-                    continue;
-                }
-            }
-
-            let mut modified_path = None;
-
-            for dir_path in module.additional_include_dirs.iter() {
-                let dir_path = dir_path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
-                let dir_path_len = dir_path.len();
-
-                if dir_path_len < path.len() && path.starts_with(dir_path.as_str()) {
-                    modified_path = Some((path[dir_path_len..].to_string().into(), true));
-                    break;
-                }
-            }
-
-            headers.push(match modified_path {
-                Some(x) => x,
-                None => (header_path.clone(), is_global.clone()),
-            });
-        }
-
-        module.headers.clear();
-        module.headers.extend(headers);
-    }
-
-    for (k, v) in new_modules {
-        if !modules.contains_key(&k) {
-            modules.insert(k, v);
-        }
-    }
-
-    //
-    // Write modules to file
-    //
-
-    for (module_path, module) in modules {
-        let path = PathBuf::from(sanitize_path(format!("{}{}", out_path.to_string_lossy(), module_path).to_string()));
-
-        if let Some(parent_path) = path.parent() {
-            fs::create_dir_all(parent_path)?;
-        }
-
-        let mut file = if path.exists() {
-            OpenOptions::new().write(true).append(true).open(path.clone())?
-        } else {
-            File::create(path.clone())?
-        };
-
-        write!(file, "{module}")?;
-    }
+    process_modules(
+        &out_path,
+        machine_type,
+        options.base_address,
+        &mut pdb,
+        &address_map,
+        &string_table,
+        &debug_info,
+        &type_info,
+        &type_finder,
+        &module_global_symbols,
+        &mut modules,
+        &mut script_file
+    )?;
 
     Ok(())
 }
@@ -415,11 +320,127 @@ fn load_module_global_symbols<'a>(
     Ok(())
 }
 
-fn parse_module(
+fn process_modules(
+    out_path: &PathBuf,
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
-    module: &pdb::Module,
-    module_info: &pdb::ModuleInfo,
+    pdb: &mut pdb::PDB<File>,
+    address_map: &pdb::AddressMap,
+    string_table: &pdb::StringTable,
+    debug_info: &pdb::DebugInformation,
+    type_info: &pdb::TypeInformation,
+    type_finder: &pdb::TypeFinder,
+    module_global_symbols: &HashMap<String, Vec<pdb::SymbolData>>,
+    modules: &mut HashMap<String, cpp::Module>,
+    script_file: &mut File,
+) -> Result<(), Box<dyn Error>> {
+    let mut module_iter = debug_info.modules().map_err(|e| format!("does not contain debug module info: {e}"))?;
+
+    while let Some(ref module) = module_iter.next().map_err(|e| format!("failed to get next debug module info: {e}"))? {
+        let module_info = match pdb.module_info(module)? {
+            Some(module_info) => module_info,
+            None => {
+                // println!("module has no info: {} - {}", module.module_name(), module.object_file_name());
+                continue;
+            }
+        };
+
+        if let Err(e) = process_module(
+            machine_type,
+            base_address,
+            address_map,
+            string_table,
+            type_info,
+            type_finder,
+            module_global_symbols,
+            modules,
+            script_file,
+            module,
+            &module_info,
+        ) {
+            println!("WARNING: failed to parse module, skipping: {e} - {module:#?}");
+            continue;
+        }
+    }
+
+    //
+    // Finalize module debug information, clean up include paths
+    //
+
+    let module_paths = modules.keys().cloned().collect::<Vec<_>>();
+    let mut new_modules = HashMap::new();
+
+    for (_, module) in modules.iter_mut() {
+        let mut headers = vec![];
+
+        for (header_path, is_global) in module.headers.iter() {
+            let path = header_path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
+
+            if !module_paths.contains(&path) && !new_modules.contains_key(&path) {
+                new_modules.insert(path.clone(), cpp::Module::default().with_path(header_path.clone()));
+            }
+
+            if let Some(pch_file_name) = module.pch_file_name.as_ref() {
+                let pch_file_name = pch_file_name.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
+                if path == pch_file_name {
+                    continue;
+                }
+            }
+
+            let mut modified_path = None;
+
+            for dir_path in module.additional_include_dirs.iter() {
+                let dir_path = dir_path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
+                let dir_path_len = dir_path.len();
+
+                if dir_path_len < path.len() && path.starts_with(dir_path.as_str()) {
+                    modified_path = Some((path[dir_path_len..].to_string().into(), true));
+                    break;
+                }
+            }
+
+            headers.push(match modified_path {
+                Some(x) => x,
+                None => (header_path.clone(), is_global.clone()),
+            });
+        }
+
+        module.headers.clear();
+        module.headers.extend(headers);
+    }
+
+    for (k, v) in new_modules {
+        if !modules.contains_key(&k) {
+            modules.insert(k, v);
+        }
+    }
+
+    //
+    // Write modules to file
+    //
+
+    for (module_path, module) in modules {
+        let path = PathBuf::from(sanitize_path(format!("{}{}", out_path.to_string_lossy(), module_path).to_string()));
+
+        if let Some(parent_path) = path.parent() {
+            fs::create_dir_all(parent_path)?;
+        }
+
+        let mut file = if path.exists() {
+            OpenOptions::new().write(true).append(true).open(path)?
+        } else {
+            File::create(path)?
+        };
+
+        write!(file, "{module}")?;
+    }
+
+    Ok(())
+}
+
+fn process_module(
+    machine_type: pdb::MachineType,
+    base_address: Option<u64>,
     address_map: &pdb::AddressMap,
     string_table: &pdb::StringTable,
     type_info: &pdb::TypeInformation,
@@ -427,6 +448,8 @@ fn parse_module(
     module_global_symbols: &HashMap<String, Vec<pdb::SymbolData>>,
     modules: &mut HashMap<String, cpp::Module>,
     script_file: &mut File,
+    module: &pdb::Module,
+    module_info: &pdb::ModuleInfo,
 ) -> pdb::Result<()> {
     let mut headers = vec![];
     let mut members = vec![];
@@ -508,297 +531,23 @@ fn parse_module(
     let module_file_name_ref = module_file_name_ref.unwrap();
     let module_file_path = module_file_path.unwrap().to_string_lossy().replace('\\', "\\\\");
 
-    let mut process_symbol_data = |symbol_data: &pdb::SymbolData, module_symbols: Option<&mut pdb::SymbolIter>| -> pdb::Result<()> {
-        match symbol_data {
-            pdb::SymbolData::UsingNamespace(symbol) => {
-                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
-                let using_namespace = (path, cpp::ModuleMember::UsingNamespace(symbol.name.to_string().to_string()));
-
-                if !members.contains(&using_namespace) {
-                    members.push(using_namespace);
-                }
-            }
-
-            pdb::SymbolData::UserDefinedType(udt_symbol) => {
-                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
-
-                let user_defined_type = (path, cpp::ModuleMember::UserDefinedType(format!(
-                    "typedef {};",
-                    cpp::type_name(
-                        machine_type,
-                        type_info,
-                        type_finder,
-                        udt_symbol.type_index,
-                        Some(udt_symbol.name.to_string().to_string()),
-                        None,
-                        false
-                    )?
-                )));
-
-                if !members.contains(&user_defined_type) {
-                    members.push(user_defined_type);
-                }
-            }
-
-            pdb::SymbolData::Constant(constant_symbol) => {
-                let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
-
-                let type_name = cpp::type_name(
-                    machine_type,
-                    type_info,
-                    type_finder,
-                    constant_symbol.type_index,
-                    Some(constant_symbol.name.to_string().to_string()),
-                    None,
-                    false,
-                )?;
-
-                if type_name.starts_with("const float ") {
-                    println!("WARNING: failed to decompile constant float in \"{module_file_path}\": {symbol_data:#?}");
-                    return Ok(());
-                }
-
-                let constant = (path, cpp::ModuleMember::Constant(format!(
-                    "const {type_name} = {};",
-                    match constant_symbol.value {
-                        pdb::Variant::U8(x) => format!("0x{:X}", x),
-                        pdb::Variant::U16(x) => format!("0x{:X}", x),
-                        pdb::Variant::U32(x) => format!("0x{:X}", x),
-                        pdb::Variant::U64(x) => format!("0x{:X}", x),
-                        pdb::Variant::I8(x) => format!("0x{:X}", x),
-                        pdb::Variant::I16(x) => format!("0x{:X}", x),
-                        pdb::Variant::I32(x) => format!("0x{:X}", x),
-                        pdb::Variant::I64(x) => format!("0x{:X}", x),
-                    }
-                )));
-
-                if !members.contains(&constant) {
-                    members.push(constant);
-                }
-            }
-
-            pdb::SymbolData::Data(data_symbol) => {
-                let mut file_name_ref = None;
-                let mut line_info = None;
-
-                for (name_ref, offsets) in line_offsets.iter() {
-                    if let Some(line) = offsets.get(&data_symbol.offset) {
-                        file_name_ref = Some(*name_ref);
-                        line_info = Some(line.clone());
-                        break;
-                    }
-                }
-
-                let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
-
-                let rva = match data_symbol.offset.to_rva(address_map) {
-                    Some(rva) => rva,
-                    None => {
-                        println!("WARNING: no RVA found for data symbol: {data_symbol:?}");
-                        return Ok(());
-                    }
-                };
-
-                let address = base_address.unwrap_or(0) + rva.0 as u64;
-
-                for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Data(_, a, _)) = member {
-                        if p == &path && a == &address {
-                            return Ok(());
-                        }
-                    }
-                }
-
-                members.push((path, cpp::ModuleMember::Data(
-                    format!(
-                        "{}; // 0x{address:X}",
-                        cpp::type_name(
-                            machine_type,
-                            type_info,
-                            type_finder,
-                            data_symbol.type_index,
-                            Some(data_symbol.name.to_string().to_string()),
-                            None,
-                            false
-                        )?,
-                    ),
-                    address,
-                    line_info.map(|x| x.line_start),
-                )));
-
-                writeln!(script_file, "decompile_to_file(0x{address:X}, \"{module_file_path}\")")?;
-            }
-
-            pdb::SymbolData::ThreadStorage(thread_storage_symbol) => {
-                let mut file_name_ref = None;
-                let mut line_info = None;
-
-                for (name_ref, offsets) in line_offsets.iter() {
-                    if let Some(line) = offsets.get(&thread_storage_symbol.offset) {
-                        file_name_ref = Some(*name_ref);
-                        line_info = Some(line.clone());
-                        break;
-                    }
-                }
-
-                let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
-
-                let rva = match thread_storage_symbol.offset.to_rva(address_map) {
-                    Some(rva) => rva,
-                    None => {
-                        println!("WARNING: no RVA found for thread storage symbol: {thread_storage_symbol:?}");
-                        return Ok(());
-                    }
-                };
-
-                let address = base_address.unwrap_or(0) + rva.0 as u64;
-
-                for member in members.iter() {
-                    if let (p, cpp::ModuleMember::ThreadStorage(_, a, _)) = member {
-                        if p == &path && a == &address {
-                            return Ok(());
-                        }
-                    }
-                }
-
-                members.push((path, cpp::ModuleMember::ThreadStorage(
-                    format!(
-                        "thread_local {}; // 0x{address:X}",
-                        cpp::type_name(
-                            machine_type,
-                            type_info,
-                            type_finder,
-                            thread_storage_symbol.type_index,
-                            Some(thread_storage_symbol.name.to_string().to_string()),
-                            None,
-                            false
-                        )?,
-                    ),
-                    address,
-                    line_info.map(|x| x.line_start),
-                )));
-
-                writeln!(
-                    script_file,
-                    "decompile_to_file(0x{address:X}, \"{module_file_path}\")"
-                )?;
-            }
-
-            pdb::SymbolData::Procedure(procedure_symbol) => {
-                let module_symbols = match module_symbols {
-                    Some(x) => x,
-                    None => {
-                        println!("WARNING: unhandled global symbol: {symbol_data:?}");
-                        return Ok(());
-                    }
-                };
-                
-                let parameters = parse_procedure_symbols(module_symbols);
-
-                let mut file_name_ref = None;
-                let mut line_info = None;
-
-                for (name_ref, offsets) in line_offsets.iter() {
-                    if let Some(line) = offsets.get(&procedure_symbol.offset) {
-                        file_name_ref = Some(*name_ref);
-                        line_info = Some(line.clone());
-                        break;
-                    }
-                }
-
-                let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
-                let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
-
-                let rva = match procedure_symbol.offset.to_rva(address_map) {
-                    Some(rva) => rva,
-                    None => {
-                        println!("WARNING: no RVA found for procedure symbol: {procedure_symbol:?}");
-                        return Ok(());
-                    }
-                };
-
-                let address = base_address.unwrap_or(0) + rva.0 as u64;
-
-                for member in members.iter() {
-                    if let (p, cpp::ModuleMember::Procedure(_, a, _)) = member {
-                        if p == &path && a == &address {
-                            return Ok(());
-                        }
-                    }
-                }
-
-                let procedure = cpp::type_name(
-                    machine_type,
-                    type_info,
-                    type_finder,
-                    procedure_symbol.type_index,
-                    Some(procedure_symbol.name.to_string().to_string()),
-                    Some(parameters),
-                    false,
-                )?;
-
-                if procedure.starts_with("...") || procedure.contains('$') || procedure.contains('`') {
-                    return Ok(());
-                }
-
-                members.push((
-                    path,
-                    cpp::ModuleMember::Procedure(
-                        format!("{procedure}; // 0x{address:X}"),
-                        address,
-                        line_info.map(|x| x.line_start),
-                    ),
-                ));
-
-                writeln!(
-                    script_file,
-                    "decompile_to_file(0x{address:X}, \"{module_file_path}\")",
-                )?;
-            }
-
-            pdb::SymbolData::Thunk(_) => {
-                let module_symbols = match module_symbols {
-                    Some(x) => x,
-                    None => {
-                        println!("WARNING: unhandled global symbol: {symbol_data:?}");
-                        return Ok(());
-                    }
-                };
-                                
-                parse_thunk_symbols(module_symbols)
-            }
-
-            pdb::SymbolData::SeparatedCode(_) => {
-                let module_symbols = match module_symbols {
-                    Some(x) => x,
-                    None => {
-                        println!("WARNING: unhandled global symbol: {symbol_data:?}");
-                        return Ok(());
-                    }
-                };
-                
-                parse_separated_code_symbols(module_symbols)
-            }
-
-            pdb::SymbolData::Public(_)
-            | pdb::SymbolData::ProcedureReference(_)
-            | pdb::SymbolData::ObjName(_)
-            | pdb::SymbolData::BuildInfo(_)
-            | pdb::SymbolData::CompileFlags(_)
-            | pdb::SymbolData::Export(_)
-            | pdb::SymbolData::Label(_) => {}
-
-            ref data => panic!("Unhandled module symbol: {:#?}", data),
-        }
-
-        Ok(())
-    };
-
     if let Some(global_symbols) = module_global_symbols.get(&module.module_name().to_string()) {
         for symbol_data in global_symbols {
-            process_symbol_data(symbol_data, None)?;
+            process_module_symbol_data(
+                machine_type,
+                base_address,
+                address_map,
+                string_table,
+                type_info,
+                type_finder,
+                script_file,
+                &line_offsets,
+                module_file_name_ref,
+                module_file_path.as_str(),
+                None,
+                &mut members,
+                symbol_data
+            )?;
         }
     }
 
@@ -813,7 +562,21 @@ fn parse_module(
             }
         };
 
-        process_symbol_data(&symbol_data, Some(&mut module_symbols))?;
+        process_module_symbol_data(
+            machine_type,
+            base_address,
+            address_map,
+            string_table,
+            type_info,
+            type_finder,
+            script_file,
+            &line_offsets,
+            module_file_name_ref,
+            module_file_path.as_str(),
+            Some(&mut module_symbols),
+            &mut members,
+            &symbol_data
+        )?;
     }
 
     let path = PathBuf::from(module_file_path);
@@ -840,12 +603,313 @@ fn parse_module(
     }
 
     for (path, member) in members {
-        let module = modules
-            .entry(path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string())
-            .or_insert(cpp::Module::default().with_path(path));
+        let source_file = path.to_string_lossy().trim_start_matches("/").to_lowercase().to_string();
+        let module = modules.entry(source_file).or_insert(cpp::Module::default().with_path(path));
 
         // TODO: check if module already contains member...
         module.members.push(member);
+    }
+
+    Ok(())
+}
+
+fn process_module_symbol_data(
+    machine_type: pdb::MachineType,
+    base_address: Option<u64>,
+    address_map: &pdb::AddressMap,
+    string_table: &pdb::StringTable,
+    type_info: &pdb::TypeInformation,
+    type_finder: &pdb::TypeFinder,
+    script_file: &mut File,
+    line_offsets: &HashMap<pdb::StringRef, HashMap<pdb::PdbInternalSectionOffset, pdb::LineInfo>>,
+    module_file_name_ref: pdb::StringRef,
+    module_file_path: &str,
+    module_symbols: Option<&mut pdb::SymbolIter>,
+    members: &mut Vec<(PathBuf, cpp::ModuleMember)>,
+    symbol_data: &pdb::SymbolData,
+) -> pdb::Result<()> {
+    match symbol_data {
+        pdb::SymbolData::UsingNamespace(symbol) => {
+            let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
+            let using_namespace = (path, cpp::ModuleMember::UsingNamespace(symbol.name.to_string().to_string()));
+
+            if !members.contains(&using_namespace) {
+                members.push(using_namespace);
+            }
+        }
+
+        pdb::SymbolData::UserDefinedType(udt_symbol) => {
+            let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
+
+            let user_defined_type = (path, cpp::ModuleMember::UserDefinedType(format!(
+                "typedef {};",
+                cpp::type_name(
+                    machine_type,
+                    type_info,
+                    type_finder,
+                    udt_symbol.type_index,
+                    Some(udt_symbol.name.to_string().to_string()),
+                    None,
+                    false
+                )?
+            )));
+
+            if !members.contains(&user_defined_type) {
+                members.push(user_defined_type);
+            }
+        }
+
+        pdb::SymbolData::Constant(constant_symbol) => {
+            let path = PathBuf::from(sanitize_path(&module_file_name_ref.to_string_lossy(string_table)?));
+
+            let type_name = cpp::type_name(
+                machine_type,
+                type_info,
+                type_finder,
+                constant_symbol.type_index,
+                Some(constant_symbol.name.to_string().to_string()),
+                None,
+                false,
+            )?;
+
+            if type_name.starts_with("const float ") {
+                println!("WARNING: failed to decompile constant float in \"{module_file_path}\": {symbol_data:#?}");
+                return Ok(());
+            }
+
+            let constant = (path, cpp::ModuleMember::Constant(format!(
+                "const {type_name} = {};",
+                match constant_symbol.value {
+                    pdb::Variant::U8(x) => format!("0x{:X}", x),
+                    pdb::Variant::U16(x) => format!("0x{:X}", x),
+                    pdb::Variant::U32(x) => format!("0x{:X}", x),
+                    pdb::Variant::U64(x) => format!("0x{:X}", x),
+                    pdb::Variant::I8(x) => format!("0x{:X}", x),
+                    pdb::Variant::I16(x) => format!("0x{:X}", x),
+                    pdb::Variant::I32(x) => format!("0x{:X}", x),
+                    pdb::Variant::I64(x) => format!("0x{:X}", x),
+                }
+            )));
+
+            if !members.contains(&constant) {
+                members.push(constant);
+            }
+        }
+
+        pdb::SymbolData::Data(data_symbol) => {
+            let mut file_name_ref = None;
+            let mut line_info = None;
+
+            for (name_ref, offsets) in line_offsets.iter() {
+                if let Some(line) = offsets.get(&data_symbol.offset) {
+                    file_name_ref = Some(*name_ref);
+                    line_info = Some(line.clone());
+                    break;
+                }
+            }
+
+            let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
+            let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
+
+            let rva = match data_symbol.offset.to_rva(address_map) {
+                Some(rva) => rva,
+                None => {
+                    println!("WARNING: no RVA found for data symbol: {data_symbol:?}");
+                    return Ok(());
+                }
+            };
+
+            let address = base_address.unwrap_or(0) + rva.0 as u64;
+
+            for member in members.iter() {
+                if let (p, cpp::ModuleMember::Data(_, a, _)) = member {
+                    if p == &path && a == &address {
+                        return Ok(());
+                    }
+                }
+            }
+
+            members.push((path, cpp::ModuleMember::Data(
+                format!(
+                    "{}; // 0x{address:X}",
+                    cpp::type_name(
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        data_symbol.type_index,
+                        Some(data_symbol.name.to_string().to_string()),
+                        None,
+                        false
+                    )?,
+                ),
+                address,
+                line_info.map(|x| x.line_start),
+            )));
+
+            writeln!(script_file, "decompile_to_file(0x{address:X}, \"{module_file_path}\")")?;
+        }
+
+        pdb::SymbolData::ThreadStorage(thread_storage_symbol) => {
+            let mut file_name_ref = None;
+            let mut line_info = None;
+
+            for (name_ref, offsets) in line_offsets.iter() {
+                if let Some(line) = offsets.get(&thread_storage_symbol.offset) {
+                    file_name_ref = Some(*name_ref);
+                    line_info = Some(line.clone());
+                    break;
+                }
+            }
+
+            let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
+            let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
+
+            let rva = match thread_storage_symbol.offset.to_rva(address_map) {
+                Some(rva) => rva,
+                None => {
+                    println!("WARNING: no RVA found for thread storage symbol: {thread_storage_symbol:?}");
+                    return Ok(());
+                }
+            };
+
+            let address = base_address.unwrap_or(0) + rva.0 as u64;
+
+            for member in members.iter() {
+                if let (p, cpp::ModuleMember::ThreadStorage(_, a, _)) = member {
+                    if p == &path && a == &address {
+                        return Ok(());
+                    }
+                }
+            }
+
+            members.push((path, cpp::ModuleMember::ThreadStorage(
+                format!(
+                    "thread_local {}; // 0x{address:X}",
+                    cpp::type_name(
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        thread_storage_symbol.type_index,
+                        Some(thread_storage_symbol.name.to_string().to_string()),
+                        None,
+                        false
+                    )?,
+                ),
+                address,
+                line_info.map(|x| x.line_start),
+            )));
+
+            writeln!(
+                script_file,
+                "decompile_to_file(0x{address:X}, \"{module_file_path}\")"
+            )?;
+        }
+
+        pdb::SymbolData::Procedure(procedure_symbol) => {
+            let module_symbols = match module_symbols {
+                Some(x) => x,
+                None => {
+                    println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                    return Ok(());
+                }
+            };
+            
+            let parameters = parse_procedure_symbols(module_symbols);
+
+            let mut file_name_ref = None;
+            let mut line_info = None;
+
+            for (name_ref, offsets) in line_offsets.iter() {
+                if let Some(line) = offsets.get(&procedure_symbol.offset) {
+                    file_name_ref = Some(*name_ref);
+                    line_info = Some(line.clone());
+                    break;
+                }
+            }
+
+            let file_name_ref = file_name_ref.unwrap_or(module_file_name_ref);
+            let path = PathBuf::from(sanitize_path(&file_name_ref.to_string_lossy(string_table)?));
+
+            let rva = match procedure_symbol.offset.to_rva(address_map) {
+                Some(rva) => rva,
+                None => {
+                    println!("WARNING: no RVA found for procedure symbol: {procedure_symbol:?}");
+                    return Ok(());
+                }
+            };
+
+            let address = base_address.unwrap_or(0) + rva.0 as u64;
+
+            for member in members.iter() {
+                if let (p, cpp::ModuleMember::Procedure(_, a, _)) = member {
+                    if p == &path && a == &address {
+                        return Ok(());
+                    }
+                }
+            }
+
+            let procedure = cpp::type_name(
+                machine_type,
+                type_info,
+                type_finder,
+                procedure_symbol.type_index,
+                Some(procedure_symbol.name.to_string().to_string()),
+                Some(parameters),
+                false,
+            )?;
+
+            if procedure.starts_with("...") || procedure.contains('$') || procedure.contains('`') {
+                return Ok(());
+            }
+
+            members.push((
+                path,
+                cpp::ModuleMember::Procedure(
+                    format!("{procedure}; // 0x{address:X}"),
+                    address,
+                    line_info.map(|x| x.line_start),
+                ),
+            ));
+
+            writeln!(
+                script_file,
+                "decompile_to_file(0x{address:X}, \"{module_file_path}\")",
+            )?;
+        }
+
+        pdb::SymbolData::Thunk(_) => {
+            let module_symbols = match module_symbols {
+                Some(x) => x,
+                None => {
+                    println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                    return Ok(());
+                }
+            };
+                            
+            parse_thunk_symbols(module_symbols)
+        }
+
+        pdb::SymbolData::SeparatedCode(_) => {
+            let module_symbols = match module_symbols {
+                Some(x) => x,
+                None => {
+                    println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                    return Ok(());
+                }
+            };
+            
+            parse_separated_code_symbols(module_symbols)
+        }
+
+        pdb::SymbolData::Public(_)
+        | pdb::SymbolData::ProcedureReference(_)
+        | pdb::SymbolData::ObjName(_)
+        | pdb::SymbolData::BuildInfo(_)
+        | pdb::SymbolData::CompileFlags(_)
+        | pdb::SymbolData::Export(_)
+        | pdb::SymbolData::Label(_) => {}
+
+        ref data => panic!("Unhandled module symbol: {:#?}", data),
     }
 
     Ok(())
