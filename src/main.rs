@@ -131,14 +131,6 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     )
     .map_err(|e| format!("failed to process id info: {e}"))?;
 
-    let section_contributions = load_section_contributions(&debug_info)
-        .map_err(|e| format!("does not contain module section information: {e}"))?;
-
-    let mut module_global_symbols = HashMap::new();
-
-    load_module_global_symbols(&debug_info, &global_symbols, &section_contributions, &mut module_global_symbols)
-        .map_err(|e| format!("failed to load module global symbol info: {e}"))?;
-
     process_modules(
         &out_path,
         machine_type,
@@ -147,14 +139,12 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
         &address_map,
         &string_table,
         &debug_info,
+        &global_symbols,
         &type_info,
         &type_finder,
-        &module_global_symbols,
         &mut modules,
         &mut script_file
-    )?;
-
-    Ok(())
+    )
 }
 
 fn load_section_contributions(
@@ -253,11 +243,13 @@ fn process_id_information<'a>(
 fn load_module_global_symbols<'a>(
     debug_info: &pdb::DebugInformation,
     global_symbols: &'a pdb::SymbolTable,
-    section_contributions: &Vec<pdb::DBISectionContribution>,
-    module_global_symbols: &mut HashMap<String, Vec<pdb::SymbolData<'a>>>,
-) -> pdb::Result<()> {
+) -> Result<HashMap<String, Vec<pdb::SymbolData<'a>>>, Box<dyn Error>> {
+    let section_contributions = load_section_contributions(&debug_info)?;
+
     let modules = debug_info.modules()?.collect::<Vec<_>>()?;
     let mut prev_module_name = None;
+
+    let mut module_global_symbols = HashMap::new();
 
     let mut global_symbols_iter = global_symbols.iter();
 
@@ -317,10 +309,10 @@ fn load_module_global_symbols<'a>(
         }
     }
 
-    Ok(())
+    Ok(module_global_symbols)
 }
 
-fn process_modules(
+fn process_modules<'a>(
     out_path: &PathBuf,
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
@@ -328,12 +320,15 @@ fn process_modules(
     address_map: &pdb::AddressMap,
     string_table: &pdb::StringTable,
     debug_info: &pdb::DebugInformation,
+    global_symbols: &'a pdb::SymbolTable,
     type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder,
-    module_global_symbols: &HashMap<String, Vec<pdb::SymbolData>>,
     modules: &mut HashMap<String, cpp::Module>,
     script_file: &mut File,
 ) -> Result<(), Box<dyn Error>> {
+    let module_global_symbols = load_module_global_symbols(&debug_info, &global_symbols)
+        .map_err(|e| format!("failed to load module global symbol info: {e}"))?;
+
     let mut module_iter = debug_info.modules().map_err(|e| format!("does not contain debug module info: {e}"))?;
 
     while let Some(ref module) = module_iter.next().map_err(|e| format!("failed to get next debug module info: {e}"))? {
@@ -352,7 +347,7 @@ fn process_modules(
             string_table,
             type_info,
             type_finder,
-            module_global_symbols,
+            &module_global_symbols,
             modules,
             script_file,
             module,

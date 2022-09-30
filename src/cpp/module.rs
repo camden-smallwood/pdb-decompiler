@@ -78,6 +78,7 @@ pub struct Module {
     pub enable_string_pooling: bool,
     pub check_buffer_security: bool,
     pub enable_whole_program_optimization: bool,
+    pub optimization_disabled: bool,
     pub favors_small_code: bool,
     pub favors_fast_code: bool,
     pub generate_c7_debug_info: bool,
@@ -106,6 +107,10 @@ pub struct Module {
     pub use_c_source_file_type: bool,
     pub use_cpp_source_file_type: bool,
     pub enable_loop_parallelization: bool,
+    pub enable_fast_runtime_checks: bool,
+    pub convert_to_smaller_type_check_at_runtime: bool,
+    pub enable_stack_frame_runtime_checks: bool,
+    pub enable_uninitialized_local_usage_checks: bool,
 }
 
 impl Module {
@@ -457,7 +462,7 @@ impl Module {
                     Some(s) if s.starts_with("rch:") => self.minimum_cpu_architecture = Some(s[4..].to_owned()),
                     Some(s) if s == "wait" => self.enable_coroutines = true,
                     Some(s) if s == "wait:strict" => self.enable_coroutines_strict = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'a{s}'"),
+                    Some(s) => panic!("Unexpected characters in build info arg: 'a{s}...'"),
                     None => panic!("Unexpected character in build info arg: 'a'"),
                 }
 
@@ -476,7 +481,7 @@ impl Module {
                     
                     Some('b') => match parse_arg_string(&mut chars_iter) {
                         Some(s) if s == "string" => self.use_byte_strings = true,
-                        Some(s) => panic!("Unexpected characters in build info arg: 'cb{s}'"),
+                        Some(s) => panic!("Unexpected characters in build info arg: 'cb{s}...'"),
                         None => panic!("Unexpected characters in build info arg: 'cb'"),
                     }
 
@@ -595,7 +600,7 @@ impl Module {
                     Some(s) if s == "p:strict" => self.floating_point_model = Some("strict".to_string()),
                     Some(s) if s == "pcvt:BC" => self.floating_point_conversions = Some("BC".to_string()),
                     Some(s) if s == "pcvt:IA" => self.floating_point_conversions = Some("IA".to_string()),
-                    Some(s) => panic!("Unexpected characters in build info arg: 'f{s}'"),
+                    Some(s) => panic!("Unexpected characters in build info arg: 'f{s}...'"),
                     None => panic!("Unexpected character in build info arg: 'f'"),
                 }
 
@@ -690,7 +695,7 @@ impl Module {
 
                 Some('k') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "ernel" => self.create_kernel_mode_binary = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'k{s}'"),
+                    Some(s) => panic!("Unexpected characters in build info arg: 'k{s}...'"),
                     None => panic!("Unexpected character in build info arg: 'k'"),
                 }
 
@@ -743,7 +748,7 @@ impl Module {
 
                 Some('n') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "ologo" => self.nologo = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'n{s}'"),
+                    Some(s) => panic!("Unexpected characters in build info arg: 'n{s}...'"),
                     None => panic!("Unexpected character in build info arg: 'n'"),
                 }
 
@@ -781,6 +786,11 @@ impl Module {
                         
                         Some(c) => panic!("Unexpected characters in build info arg: 'Ob{c}...'"),
                         None => panic!("Unexpected characters in build info arg: 'Ob'"),
+                    }
+
+                    Some('d') => match chars_iter.next() {
+                        None | Some(' ') => self.optimization_disabled = true,
+                        Some(c) => panic!("Unexpected characters in build info arg: 'Od{c}...'"),
                     }
 
                     Some('i') => match chars_iter.next() {
@@ -830,15 +840,24 @@ impl Module {
 
                 Some('Q') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "par" => self.enable_loop_parallelization = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'Q{s}'"),
+                    Some(s) => panic!("Unexpected characters in build info arg: 'Q{s}...'"),
                     None => panic!("Unexpected character in build info arg: 'Q'"),
+                }
+
+                Some('R') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s == "TC1" || s == "TCsu" => self.enable_fast_runtime_checks = true,
+                    Some(s) if s == "TCc" => self.convert_to_smaller_type_check_at_runtime = true,
+                    Some(s) if s == "TCs" => self.enable_stack_frame_runtime_checks = true,
+                    Some(s) if s == "TCu" => self.enable_uninitialized_local_usage_checks = true,
+                    Some(s) => panic!("Unexpected characters in build info arg: 'R{s}...'"),
+                    None => panic!("Unexpected characters in build info arg: 'R'"),
                 }
 
                 Some('s') => match chars_iter.next() {
                     Some('d') => match parse_arg_string(&mut chars_iter) {
                         Some(s) if s == "l" => self.enable_sdl = true,
                         Some(s) if s == "l-" => self.enable_sdl = false,
-                        Some(s) => panic!("Unexpected characters in build info arg: 'sd{s}'"),
+                        Some(s) => panic!("Unexpected characters in build info arg: 'sd{s}...'"),
                         None => panic!("Unexpected characters in build info arg: 'sd'"),
                     }
 
@@ -978,7 +997,7 @@ impl Module {
                         
                         Some(':') => match parse_arg_string(&mut chars_iter) {
                             Some(s) if s == "nostdlib" => self.windows_runtime_compilation_nostdlib = true,
-                            Some(s) => panic!("Unexpected characters in build info arg: 'ZW:{s}'"),
+                            Some(s) => panic!("Unexpected characters in build info arg: 'ZW:{s}...'"),
                             None => panic!("Unexpected characters in build info arg: 'ZW:'"),
                         }
 
