@@ -119,6 +119,7 @@ pub struct Module {
     pub enable_stack_frame_runtime_checks: bool,
     pub enable_uninitialized_local_usage_checks: bool,
     pub bigobj: bool,
+    pub build_inline: bool,
     pub serialize_pdb_with_mspdbsrv: bool,
 }
 
@@ -491,6 +492,12 @@ impl Module {
                     Some(s) if s == "igobj" => self.bigobj = true,
                     Some(s) => panic!("Unexpected characters in build info arg: 'b{s}...'"),
                     None => panic!("Unexpected characters in build info arg: 'b'"),
+                }
+
+                Some('B') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s == "inl" => self.build_inline = true,
+                    Some(s) => panic!("Unexpected characters in build info arg: 'B{s}...'"),
+                    None => panic!("Unexpected characters in build info arg: 'B'"),
                 }
 
                 Some('c') => match chars_iter.next() {
