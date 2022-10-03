@@ -397,6 +397,8 @@ impl Module {
         self.compiler_path = compiler_path.into();
         self.pdb_path = pdb_path.into();
 
+        println!("Module arguments: {args_string}");
+
         let mut chars_iter = args_string.chars();
 
         let parse_arg_string = |chars_iter: &mut std::str::Chars| -> Option<String> {
