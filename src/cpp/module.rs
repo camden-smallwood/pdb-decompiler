@@ -1003,6 +1003,10 @@ impl Module {
 
                     Some('o') => match chars_iter.next() {
                         None | Some(' ') => self.generate_richer_debug_info_for_optimized_code = true,
+                        Some('-') => match chars_iter.next() {
+                            None | Some(' ') => self.generate_richer_debug_info_for_optimized_code = false,
+                            Some(c) => panic!("Unexpected characters in build info arg: 'Zo-{c}...'"),
+                        }
                         Some(c) => panic!("Unexpected characters in build info arg: 'Zo{c}...'"),
                     }
 
