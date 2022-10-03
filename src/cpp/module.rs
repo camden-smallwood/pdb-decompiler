@@ -54,6 +54,7 @@ pub struct Module {
     pub guard_string: Option<String>,
     pub hash_algorithm: Option<String>,
     pub disable_warnings_after_version: Option<String>,
+    pub openmp: Option<String>,
     pub inline_function_expansion: Option<usize>,
 
     pub additional_include_dirs: Vec<PathBuf>,
@@ -125,6 +126,7 @@ pub struct Module {
     pub bigobj: bool,
     pub build_inline: bool,
     pub serialize_pdb_with_mspdbsrv: bool,
+    pub unknown_compiler_options_are_errors: bool,
 }
 
 impl Module {
@@ -803,6 +805,15 @@ impl Module {
                     Some(s) if s == "othreadsafestatics" => self.no_thread_safe_statics = true,
                     Some(s) => panic!("Unexpected characters in build info arg: 'n{s}...'"),
                     None => panic!("Unexpected character in build info arg: 'n'"),
+                }
+
+                Some('o') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s == "penmp" => self.openmp = Some("omp".to_string()),
+                    Some(s) if s == "penmp:experimental" => self.openmp = Some("experimental".to_string()),
+                    Some(s) if s == "penmp:llvm" => self.openmp = Some("llvm".to_string()),
+                    Some(s) if s == "ptions:strict" => self.unknown_compiler_options_are_errors = true,
+                    Some(s) => panic!("Unexpected characters in build info arg: 'o{s}...'"),
+                    None => panic!("Unexpected character in build info arg: 'o'"),
                 }
 
                 Some('O') => match chars_iter.next() {
