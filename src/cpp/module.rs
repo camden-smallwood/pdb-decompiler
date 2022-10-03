@@ -59,6 +59,11 @@ pub struct Module {
     pub preprocessor_definitions: Vec<(String, Option<String>)>,
     pub preprocess_include_files: Vec<String>,
     pub disabled_warnings: Vec<String>,
+    pub warnings_as_errors: Vec<String>,
+    pub warnings_level1: Vec<String>,
+    pub warnings_level2: Vec<String>,
+    pub warnings_level3: Vec<String>,
+    pub warnings_level4: Vec<String>,
     pub feature_toggles: Vec<String>,
     pub pch_references: Vec<String>,
     pub d1_args: Vec<String>,
@@ -899,9 +904,19 @@ impl Module {
                 }
 
                 Some('w') => match chars_iter.next() {
+                    Some('1') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or("".into())),
+                    Some('2') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or("".into())),
+                    Some('3') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or("".into())),
+                    Some('4') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or("".into())),
+
                     Some('d') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.disabled_warnings.push(s),
                         None => panic!("Unexpected characters in build info arg: 'wd'"),
+                    }
+
+                    Some('e') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) => self.warnings_as_errors.push(s),
+                        None => panic!("Unexpected characters in build info arg: 'we'"),
                     }
 
                     Some(s) => todo!("arg switch 'w{s}...'"),
