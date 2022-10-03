@@ -809,6 +809,7 @@ impl Module {
 
                 Some('o') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "penmp" => self.openmp = Some("omp".to_string()),
+                    Some(s) if s == "penmp-" => self.openmp = None,
                     Some(s) if s == "penmp:experimental" => self.openmp = Some("experimental".to_string()),
                     Some(s) if s == "penmp:llvm" => self.openmp = Some("llvm".to_string()),
                     Some(s) if s == "ptions:strict" => self.unknown_compiler_options_are_errors = true,
