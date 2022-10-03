@@ -87,6 +87,7 @@ pub struct Module {
     pub inject_pch_reference: bool,
     pub ignore_standard_include_dir: bool,
     pub nologo: bool,
+    pub no_thread_safe_statics: bool,
     pub enable_sdl: bool,
     pub create_small_code: bool,
     pub create_fast_code: bool,
@@ -764,6 +765,7 @@ impl Module {
 
                 Some('n') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "ologo" => self.nologo = true,
+                    Some(s) if s == "othreadsafestatics" => self.no_thread_safe_statics = true,
                     Some(s) => panic!("Unexpected characters in build info arg: 'n{s}...'"),
                     None => panic!("Unexpected character in build info arg: 'n'"),
                 }
