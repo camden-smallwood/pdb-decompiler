@@ -51,6 +51,7 @@ pub struct Module {
     pub floating_point_model: Option<String>,
     pub floating_point_conversions: Option<String>,
     pub error_report: Option<String>,
+    pub guard_string: Option<String>,
     pub inline_function_expansion: Option<usize>,
 
     pub additional_include_dirs: Vec<PathBuf>,
@@ -656,6 +657,12 @@ impl Module {
 
                     Some(c) => todo!("arg switch 'F{c}...'"),
                     None => panic!("Unexpected character in build info arg: 'F'"),
+                }
+
+                Some('g') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s.starts_with("uard") => self.guard_string = Some(s.trim_start_matches("uard").to_string()),
+                    Some(s) => panic!("Unexpected characters in build info arg: 'g{s}...'"),
+                    None => panic!("Unexpected character in build info arg: 'g'"),
                 }
 
                 Some('G') => match chars_iter.next() {
