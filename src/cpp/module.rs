@@ -1026,6 +1026,14 @@ impl Module {
 
                     Some('i') => match chars_iter.next() {
                         None | Some(' ') => self.generate_full_debug_info = true,
+                        Some('+') => match chars_iter.next() {
+                            None | Some(' ') => self.generate_full_debug_info = true,
+                            Some(c) => panic!("Unexpected characters in build info arg: 'Zi+{c}...'"),
+                        }
+                        Some('-') => match chars_iter.next() {
+                            None | Some(' ') => self.generate_full_debug_info = false,
+                            Some(c) => panic!("Unexpected characters in build info arg: 'Zi-{c}...'"),
+                        }
                         Some(c) => panic!("Unexpected characters in build info arg: 'Zi{c}...'"),
                     }
 
