@@ -111,6 +111,7 @@ pub struct Module {
     pub convert_to_smaller_type_check_at_runtime: bool,
     pub enable_stack_frame_runtime_checks: bool,
     pub enable_uninitialized_local_usage_checks: bool,
+    pub bigobj: bool,
 }
 
 impl Module {
@@ -474,6 +475,12 @@ impl Module {
 
                     Some(c) => todo!("arg switch 'A{c}...'"),
                     None => panic!("Unexpected character in build info arg: 'A'"),
+                }
+
+                Some('b') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s == "igobj" => self.bigobj = true,
+                    Some(s) => panic!("Unexpected characters in build info arg: 'b{s}...'"),
+                    None => panic!("Unexpected characters in build info arg: 'b'"),
                 }
 
                 Some('c') => match chars_iter.next() {
