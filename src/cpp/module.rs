@@ -53,6 +53,7 @@ pub struct Module {
     pub error_report: Option<String>,
     pub guard_string: Option<String>,
     pub hash_algorithm: Option<String>,
+    pub disable_warnings_after_version: Option<String>,
     pub inline_function_expansion: Option<usize>,
 
     pub additional_include_dirs: Vec<PathBuf>,
@@ -85,6 +86,7 @@ pub struct Module {
     pub enable_string_pooling: bool,
     pub check_buffer_security: bool,
     pub enable_whole_program_optimization: bool,
+    pub enable_whole_program_data_optimization: bool,
     pub optimization_disabled: bool,
     pub favors_small_code: bool,
     pub favors_fast_code: bool,
@@ -717,6 +719,19 @@ impl Module {
                         Some(c) => panic!("Unexpected characters in build info arg: 'GS{c}...'"),
                     }
 
+                    Some('w') => match chars_iter.next() {
+                        None | Some(' ') => self.enable_whole_program_data_optimization = true,
+                        Some('+') => match chars_iter.next() {
+                            None | Some(' ') => self.enable_whole_program_data_optimization = true,
+                            Some(c) => panic!("Unexpected characters in build info arg: 'Gw+{c}...'"),
+                        }
+                        Some('-') => match chars_iter.next() {
+                            None | Some(' ') => self.enable_whole_program_data_optimization = false,
+                            Some(c) => panic!("Unexpected characters in build info arg: 'Gw-{c}...'"),
+                        }
+                        Some(c) => panic!("Unexpected characters in build info arg: 'Gw{c}...'"),
+                    }
+
                     Some('y') => match chars_iter.next() {
                         None | Some(' ') => self.function_level_linking = true,
                         Some('-') => match chars_iter.next() {
@@ -967,6 +982,12 @@ impl Module {
                     Some('a') => match parse_arg_string(&mut chars_iter) {
                         Some(s) if s == "ll" => self.enable_all_warnings = true,
                         x => panic!("Unexpected characters in build info arg: 'Wa{}'", x.unwrap_or(String::new())),
+                    }
+
+                    Some('v') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) if s.starts_with(":") => self.disable_warnings_after_version = Some(s.to_string()),
+                        Some(s) => panic!("Unexpected characters in build info arg: 'Wv{s}...'"),
+                        None => panic!("Unexpected characters in build info arg: 'Wv'"),
                     }
 
                     Some('X') => match chars_iter.next() {
