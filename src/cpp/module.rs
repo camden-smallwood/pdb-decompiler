@@ -52,6 +52,7 @@ pub struct Module {
     pub floating_point_conversions: Option<String>,
     pub error_report: Option<String>,
     pub guard_string: Option<String>,
+    pub hash_algorithm: Option<String>,
     pub inline_function_expansion: Option<usize>,
 
     pub additional_include_dirs: Vec<PathBuf>,
@@ -1022,6 +1023,12 @@ impl Module {
 
                         Some(c) => todo!("arg switch 'Zc{c}...'"),
                         None => panic!("Unexpected characters in build info arg: 'Zc'"),
+                    }
+
+                    Some('H') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) if s.starts_with(":") => self.hash_algorithm = Some(s.trim_start_matches(":").to_string()),
+                        Some(s) => panic!("Unexpected characters in build info arg: 'ZH{s}...'"),
+                        None => panic!("Unexpected characters in build info arg: 'ZH'"),
                     }
 
                     Some('i') => match chars_iter.next() {
