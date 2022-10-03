@@ -112,6 +112,7 @@ pub struct Module {
     pub enable_stack_frame_runtime_checks: bool,
     pub enable_uninitialized_local_usage_checks: bool,
     pub bigobj: bool,
+    pub serialize_pdb_with_mspdbsrv: bool,
 }
 
 impl Module {
@@ -625,6 +626,11 @@ impl Module {
                     Some('p') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.pch_file_name = Some(crate::canonicalize_file_path(out_path.to_str().unwrap_or(""), root_path.as_str(), s.as_str())),
                         None => self.pch_file_name = Some(PathBuf::new()),
+                    }
+
+                    Some('S') => match chars_iter.next() {
+                        Some(' ') | None => self.serialize_pdb_with_mspdbsrv = true,
+                        Some(c) => panic!("Unexpected characters in build info arg: 'FS{c}...'"),
                     }
 
                     Some('U') => match parse_arg_string(&mut chars_iter) {
