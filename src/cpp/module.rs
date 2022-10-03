@@ -83,6 +83,7 @@ pub struct Module {
     pub favors_fast_code: bool,
     pub generate_c7_debug_info: bool,
     pub generate_full_debug_info: bool,
+    pub generate_richer_debug_info_for_optimized_code: bool,
     pub inject_pch_reference: bool,
     pub ignore_standard_include_dir: bool,
     pub nologo: bool,
@@ -998,6 +999,11 @@ impl Module {
                     Some('l') => match chars_iter.next() {
                         None | Some(' ') => self.remove_default_library_name = true,
                         Some(c) => todo!("arg switch 'Zl{c}...'"),
+                    }
+
+                    Some('o') => match chars_iter.next() {
+                        None | Some(' ') => self.generate_richer_debug_info_for_optimized_code = true,
+                        Some(c) => panic!("Unexpected characters in build info arg: 'Zo{c}...'"),
                     }
 
                     Some('p') => match parse_arg_string(&mut chars_iter) {
