@@ -42,6 +42,7 @@ pub struct Module {
     pub headers: Vec<(PathBuf, bool)>,
     pub members: Vec<ModuleMember>,
 
+    pub compiler_response_file: Option<PathBuf>,
     pub pack_structure_members: Option<String>,
     pub pch_file_name: Option<PathBuf>,
     pub precompiled_header_file_name: Option<String>,
@@ -56,6 +57,7 @@ pub struct Module {
     pub disable_warnings_after_version: Option<String>,
     pub openmp: Option<String>,
     pub inline_function_expansion: Option<usize>,
+    pub code_generation_threads: Option<usize>,
 
     pub additional_include_dirs: Vec<PathBuf>,
     pub using_directive_dirs: Vec<PathBuf>,
@@ -115,6 +117,7 @@ pub struct Module {
     pub frame_pointer_emission: bool,
     pub full_source_path_in_diagnostics: bool,
     pub use_byte_strings: bool,
+    pub preserve_comments_during_preprocessing: bool,
     pub create_kernel_mode_binary: bool,
     pub use_c_source_file_type: bool,
     pub use_cpp_source_file_type: bool,
@@ -475,12 +478,17 @@ impl Module {
             match chars_iter.next() {
                 None => break,
 
+                Some('@') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) => self.compiler_response_file = Some(crate::canonicalize_file_path(out_path.to_str().unwrap_or(""), root_path.as_str(), s.as_str())),
+                    None => panic!("Unexpected character in build info arg: '@'"),
+                }
+
                 Some('a') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "nalyze" => self.enable_code_analysis = true,
                     Some(s) if s.starts_with("rch:") => self.minimum_cpu_architecture = Some(s[4..].to_owned()),
                     Some(s) if s == "wait" => self.enable_coroutines = true,
                     Some(s) if s == "wait:strict" => self.enable_coroutines_strict = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'a{s}...'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'a{s}'"),
                     None => panic!("Unexpected character in build info arg: 'a'"),
                 }
 
@@ -496,37 +504,37 @@ impl Module {
 
                 Some('b') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "igobj" => self.bigobj = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'b{s}...'"),
-                    None => panic!("Unexpected characters in build info arg: 'b'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'b{s}'"),
+                    None => panic!("Unhandled characters in build info arg: 'b'"),
                 }
 
                 Some('B') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "inl" => self.build_inline = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'B{s}...'"),
-                    None => panic!("Unexpected characters in build info arg: 'B'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'B{s}'"),
+                    None => panic!("Unhandled characters in build info arg: 'B'"),
                 }
 
-                Some('c') => match chars_iter.next() {
-                    None | Some(' ') => self.compile_without_linking = true,
-                    
-                    Some('b') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) if s == "string" => self.use_byte_strings = true,
-                        Some(s) => panic!("Unexpected characters in build info arg: 'cb{s}...'"),
-                        None => panic!("Unexpected characters in build info arg: 'cb'"),
-                    }
+                Some('c') => match parse_arg_string(&mut chars_iter) {
+                    None => self.compile_without_linking = true,
+                    Some(s) if s == "bstring" => self.use_byte_strings = true,
+                    Some(s) if s.starts_with("gthreads") => self.code_generation_threads = Some(s.trim_start_matches("gthreads").parse().expect("Invalid code generation thread count")),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'c{s}'"),
+                }
 
-                    Some(c) => todo!("arg switch 'c{c}...'")
+                Some('C') => match chars_iter.next() {
+                    None | Some(' ') => self.preserve_comments_during_preprocessing = true,
+                    Some(c) => panic!("Unhandled characters in build info arg: 'C{c}...'"),
                 }
 
                 Some('d') => match chars_iter.next() {
                     Some('1') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.d1_args.push(s),
-                        None => panic!("Unexpected characters in build info arg: 'd1'"),
+                        None => panic!("Unhandled characters in build info arg: 'd1'"),
                     }
 
                     Some('2') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.d2_args.push(s),
-                        None => panic!("Unexpected characters in build info arg: 'd2'"),
+                        None => panic!("Unhandled characters in build info arg: 'd2'"),
                     }
 
                     Some(c) => todo!("arg switch 'd{c}...'"),
@@ -561,10 +569,10 @@ impl Module {
                                     self.enable_cpp_exceptions = false;
                                     self.enable_seh_exceptions = false;
                                 },
-                                Some(c) => panic!("Unexpected characters in build info arg: 'EHa-{c}...'"),
+                                Some(c) => panic!("Unhandled characters in build info arg: 'EHa-{c}...'"),
                             }
 
-                            Some(c) => panic!("Unexpected characters in build info arg: 'EHa{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'EHa{c}...'"),
                         }
 
                         Some('c') => match chars_iter.next() {
@@ -572,10 +580,10 @@ impl Module {
                             
                             Some('-') => match chars_iter.next() {
                                 None | Some(' ') => self.extern_c_defaults_to_nothrow = false,
-                                Some(c) => panic!("Unexpected characters in build info arg: 'EHc-{c}...'"),
+                                Some(c) => panic!("Unhandled characters in build info arg: 'EHc-{c}...'"),
                             }
 
-                            Some(c) => panic!("Unexpected characters in build info arg: 'EHc{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'EHc{c}...'"),
                         }
 
                         Some('r') => match chars_iter.next() {
@@ -583,10 +591,10 @@ impl Module {
                             
                             Some('-') => match chars_iter.next() {
                                 None | Some(' ') => self.always_generate_noexcept_checks = false,
-                                Some(c) => panic!("Unexpected characters in build info arg: 'EHr-{c}...'"),
+                                Some(c) => panic!("Unhandled characters in build info arg: 'EHr-{c}...'"),
                             }
 
-                            Some(c) => panic!("Unexpected characters in build info arg: 'EHr{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'EHr{c}...'"),
                         }
 
                         Some('s') => match chars_iter.next() {
@@ -600,24 +608,24 @@ impl Module {
                                     self.enable_cpp_exceptions = false;
                                     self.enable_seh_exceptions = false;
                                 },
-                                Some(c) => panic!("Unexpected characters in build info arg: 'EHs-{c}...'"),
+                                Some(c) => panic!("Unhandled characters in build info arg: 'EHs-{c}...'"),
                             }
 
-                            Some(c) => panic!("Unexpected characters in build info arg: 'EHs{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'EHs{c}...'"),
                         }
 
-                        Some(c) => panic!("Unexpected characters in build info arg: 'EH{c}...'"),
-                        None => panic!("Unexpected characters in build info arg: 'EH'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'EH{c}...'"),
+                        None => panic!("Unhandled characters in build info arg: 'EH'"),
                     }
 
                     Some('P') => match chars_iter.next() {
                         None | Some(' ') => self.copy_preprocessor_output_to_stdout = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'EP{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'EP{c}...'"),
                     }
 
                     None => self.copy_preprocessor_output_to_stdout = true,
 
-                    Some(c) => panic!("Unexpected characters in build info arg: 'E{c}...'"),
+                    Some(c) => panic!("Unhandled characters in build info arg: 'E{c}...'"),
                 }
 
                 Some('f') => match parse_arg_string(&mut chars_iter) {
@@ -630,14 +638,14 @@ impl Module {
                     Some(s) if s == "p:strict" => self.floating_point_model = Some("strict".to_string()),
                     Some(s) if s == "pcvt:BC" => self.floating_point_conversions = Some("BC".to_string()),
                     Some(s) if s == "pcvt:IA" => self.floating_point_conversions = Some("IA".to_string()),
-                    Some(s) => panic!("Unexpected characters in build info arg: 'f{s}...'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'f{s}'"),
                     None => panic!("Unexpected character in build info arg: 'f'"),
                 }
 
                 Some('F') => match chars_iter.next() {
                     Some('C') => match chars_iter.next() {
                         None | Some(' ') => self.full_source_path_in_diagnostics = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'FC{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'FC{c}...'"),
                     }
 
                     Some('I') => match parse_arg_string(&mut chars_iter) {
@@ -652,12 +660,12 @@ impl Module {
 
                     Some('S') => match chars_iter.next() {
                         Some(' ') | None => self.serialize_pdb_with_mspdbsrv = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'FS{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'FS{c}...'"),
                     }
 
                     Some('U') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.forced_using_directives.push(crate::canonicalize_file_path(out_path.to_str().unwrap_or(""), root_path.as_str(), s.as_str())),
-                        None => panic!("Unexpected characters in build info arg: 'FU'"),
+                        None => panic!("Unhandled characters in build info arg: 'FU'"),
                     }
 
                     Some(c) => todo!("arg switch 'F{c}...'"),
@@ -666,79 +674,79 @@ impl Module {
 
                 Some('g') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s.starts_with("uard") => self.guard_string = Some(s.trim_start_matches("uard").to_string()),
-                    Some(s) => panic!("Unexpected characters in build info arg: 'g{s}...'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'g{s}'"),
                     None => panic!("Unexpected character in build info arg: 'g'"),
                 }
 
                 Some('G') => match chars_iter.next() {
                     Some('d') => match chars_iter.next() {
                         None | Some(' ') => self.use_cdecl_calling_convention = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Gd{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Gd{c}...'"),
                     }
 
                     Some('F') => match chars_iter.next() {
                         None | Some(' ') => self.enable_string_pooling = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.enable_string_pooling = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'GF-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'GF-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'GF{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'GF{c}...'"),
                     }
 
                     Some('L') => match chars_iter.next() {
                         None | Some(' ') => self.enable_whole_program_optimization = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.enable_whole_program_optimization = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'GL-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'GL-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'GL{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'GL{c}...'"),
                     }
 
                     Some('m') => match chars_iter.next() {
                         None | Some(' ') => self.enable_minimal_rebuild = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.enable_minimal_rebuild = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Gm-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Gm-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Gm{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Gm{c}...'"),
                     }
 
                     Some('R') => match chars_iter.next() {
                         None | Some(' ') => self.enable_rtti = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.enable_rtti = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'GR-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'GR-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'GR{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'GR{c}...'"),
                     }
 
                     Some('S') => match chars_iter.next() {
                         None | Some(' ') => self.check_buffer_security = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.check_buffer_security = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'GS-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'GS-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'GS{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'GS{c}...'"),
                     }
 
                     Some('w') => match chars_iter.next() {
                         None | Some(' ') => self.enable_whole_program_data_optimization = true,
                         Some('+') => match chars_iter.next() {
                             None | Some(' ') => self.enable_whole_program_data_optimization = true,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Gw+{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Gw+{c}...'"),
                         }
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.enable_whole_program_data_optimization = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Gw-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Gw-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Gw{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Gw{c}...'"),
                     }
 
                     Some('y') => match chars_iter.next() {
                         None | Some(' ') => self.function_level_linking = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.function_level_linking = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Gy-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Gy-{c}...'"),
                         }
                         Some(c) => todo!("arg switch 'Gy{c}...'"),
                     }
@@ -749,7 +757,7 @@ impl Module {
 
                 Some('k') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "ernel" => self.create_kernel_mode_binary = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'k{s}...'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'k{s}'"),
                     None => panic!("Unexpected character in build info arg: 'k'"),
                 }
 
@@ -763,9 +771,9 @@ impl Module {
                         None | Some(' ') => self.feature_toggles.push("LD".to_string()),
                         Some('d') => match chars_iter.next() {
                             None | Some(' ') => self.feature_toggles.push("LDd".to_string()),
-                            Some(c) => panic!("Unexpected characters in build info arg: 'LDd{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'LDd{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'LD{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'LD{c}...'"),
                     }
 
                     Some(c) => todo!("arg switch 'L{c}...'"),
@@ -777,23 +785,23 @@ impl Module {
                         None | Some(' ') => self.feature_toggles.push("MD".to_string()),
                         Some('d') => match chars_iter.next() {
                             None | Some(' ') => self.feature_toggles.push("MDd".to_string()),
-                            Some(c) => panic!("Unexpected characters in build info arg: 'MDd{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'MDd{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'MD{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'MD{c}...'"),
                     }
 
                     Some('P') => match chars_iter.next() {
                         None | Some(' ') => self.multiple_process_support = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'MP{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'MP{c}...'"),
                     }
 
                     Some('T') => match chars_iter.next() {
                         None | Some(' ') => self.feature_toggles.push("MT".to_string()),
                         Some('d') => match chars_iter.next() {
                             None | Some(' ') => self.feature_toggles.push("MTd".to_string()),
-                            Some(c) => panic!("Unexpected characters in build info arg: 'MTd{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'MTd{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'MT{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'MT{c}...'"),
                     }
 
                     Some(c) => todo!("arg switch 'M{c}...'"),
@@ -803,7 +811,7 @@ impl Module {
                 Some('n') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "ologo" => self.nologo = true,
                     Some(s) if s == "othreadsafestatics" => self.no_thread_safe_statics = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'n{s}...'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'n{s}'"),
                     None => panic!("Unexpected character in build info arg: 'n'"),
                 }
 
@@ -813,68 +821,68 @@ impl Module {
                     Some(s) if s == "penmp:experimental" => self.openmp = Some("experimental".to_string()),
                     Some(s) if s == "penmp:llvm" => self.openmp = Some("llvm".to_string()),
                     Some(s) if s == "ptions:strict" => self.unknown_compiler_options_are_errors = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'o{s}...'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'o{s}'"),
                     None => panic!("Unexpected character in build info arg: 'o'"),
                 }
 
                 Some('O') => match chars_iter.next() {
                     Some('1') => match chars_iter.next() {
                         None | Some(' ') => self.create_small_code = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'O1{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'O1{c}...'"),
                     }
 
                     Some('2') => match chars_iter.next() {
                         None | Some(' ') => self.create_fast_code = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'O2{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'O2{c}...'"),
                     }
 
                     Some('b') => match chars_iter.next() {
                         Some('0') => match chars_iter.next() {
                             None | Some(' ') => self.inline_function_expansion = Some(0),
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Ob0{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Ob0{c}...'"),
                         }
                         
                         Some('1') => match chars_iter.next() {
                             None | Some(' ') => self.inline_function_expansion = Some(1),
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Ob1{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Ob1{c}...'"),
                         }
 
                         Some('2') => match chars_iter.next() {
                             None | Some(' ') => self.inline_function_expansion = Some(2),
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Ob2{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Ob2{c}...'"),
                         }
                         
                         Some('3') => match chars_iter.next() {
                             None | Some(' ') => self.inline_function_expansion = Some(3),
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Ob3{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Ob3{c}...'"),
                         }
                         
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Ob{c}...'"),
-                        None => panic!("Unexpected characters in build info arg: 'Ob'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Ob{c}...'"),
+                        None => panic!("Unhandled characters in build info arg: 'Ob'"),
                     }
 
                     Some('d') => match chars_iter.next() {
                         None | Some(' ') => self.optimization_disabled = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Od{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Od{c}...'"),
                     }
 
                     Some('i') => match chars_iter.next() {
                         None | Some(' ') => self.generate_intrinsic_functions = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.generate_intrinsic_functions = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Oi-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Oi-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Oi{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Oi{c}...'"),
                     }
 
                     Some('s') => match chars_iter.next() {
                         None | Some(' ') => self.favors_small_code = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Os{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Os{c}...'"),
                     }
 
                     Some('t') => match chars_iter.next() {
                         None | Some(' ') => self.favors_fast_code = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Ot{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Ot{c}...'"),
                     }
 
                     Some('x') => match chars_iter.next() {
@@ -885,18 +893,18 @@ impl Module {
                             None | Some(' ') => {
                                 // TODO: O2 without GF or Gy
                             }
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Ox-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Ox-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Ox{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Ox{c}...'"),
                     }
 
                     Some('y') => match chars_iter.next() {
                         None | Some(' ') => self.frame_pointer_emission = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.frame_pointer_emission = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Oy-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Oy-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Oy{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Oy{c}...'"),
                     }
 
                     Some(c) => todo!("arg switch 'O{c}...'"),
@@ -905,7 +913,7 @@ impl Module {
 
                 Some('Q') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "par" => self.enable_loop_parallelization = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'Q{s}...'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'Q{s}'"),
                     None => panic!("Unexpected character in build info arg: 'Q'"),
                 }
 
@@ -914,16 +922,16 @@ impl Module {
                     Some(s) if s == "TCc" => self.convert_to_smaller_type_check_at_runtime = true,
                     Some(s) if s == "TCs" => self.enable_stack_frame_runtime_checks = true,
                     Some(s) if s == "TCu" => self.enable_uninitialized_local_usage_checks = true,
-                    Some(s) => panic!("Unexpected characters in build info arg: 'R{s}...'"),
-                    None => panic!("Unexpected characters in build info arg: 'R'"),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'R{s}'"),
+                    None => panic!("Unhandled characters in build info arg: 'R'"),
                 }
 
                 Some('s') => match chars_iter.next() {
                     Some('d') => match parse_arg_string(&mut chars_iter) {
                         Some(s) if s == "l" => self.enable_sdl = true,
                         Some(s) if s == "l-" => self.enable_sdl = false,
-                        Some(s) => panic!("Unexpected characters in build info arg: 'sd{s}...'"),
-                        None => panic!("Unexpected characters in build info arg: 'sd'"),
+                        Some(s) => panic!("Unhandled characters in build info arg: 'sd{s}'"),
+                        None => panic!("Unhandled characters in build info arg: 'sd'"),
                     }
 
                     Some(c) => todo!("arg switch 's{c}...'"),
@@ -933,12 +941,12 @@ impl Module {
                 Some('T') => match chars_iter.next() {
                     Some('C') => match chars_iter.next() {
                         None | Some(' ') => self.use_c_source_file_type = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'TC{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'TC{c}...'"),
                     }
 
                     Some('P') => match chars_iter.next() {
                         None | Some(' ') => self.use_cpp_source_file_type = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'TP{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'TP{c}...'"),
                     }
 
                     Some(c) => todo!("arg switch 'T{c}...'"),
@@ -953,71 +961,71 @@ impl Module {
 
                     Some('d') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.disabled_warnings.push(s),
-                        None => panic!("Unexpected characters in build info arg: 'wd'"),
+                        None => panic!("Unhandled characters in build info arg: 'wd'"),
                     }
 
                     Some('e') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.warnings_as_errors.push(s),
-                        None => panic!("Unexpected characters in build info arg: 'we'"),
+                        None => panic!("Unhandled characters in build info arg: 'we'"),
                     }
 
-                    Some(s) => todo!("arg switch 'w{s}...'"),
+                    Some(s) => todo!("arg switch 'w{s}'"),
                     None => panic!("Missing warning number to disable"),
                 }
 
                 Some('W') => match chars_iter.next() {
                     Some('0') => match chars_iter.next() {
                         None | Some(' ') => self.output_warning_level = Some(0),
-                        Some(c) => panic!("Unexpected characters in build info arg: 'W0{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'W0{c}...'"),
                     }
 
                     Some('1') => match chars_iter.next() {
                         None | Some(' ') => self.output_warning_level = Some(1),
-                        Some(c) => panic!("Unexpected characters in build info arg: 'W1{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'W1{c}...'"),
                     }
 
                     Some('2') => match chars_iter.next() {
                         None | Some(' ') => self.output_warning_level = Some(2),
-                        Some(c) => panic!("Unexpected characters in build info arg: 'W2{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'W2{c}...'"),
                     }
 
                     Some('3') => match chars_iter.next() {
                         None | Some(' ') => self.output_warning_level = Some(3),
-                        Some(c) => panic!("Unexpected characters in build info arg: 'W3{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'W3{c}...'"),
                     }
 
                     Some('4') => match chars_iter.next() {
                         None | Some(' ') => self.output_warning_level = Some(4),
-                        Some(c) => panic!("Unexpected characters in build info arg: 'W4{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'W4{c}...'"),
                     }
 
                     Some('a') => match parse_arg_string(&mut chars_iter) {
                         Some(s) if s == "ll" => self.enable_all_warnings = true,
-                        x => panic!("Unexpected characters in build info arg: 'Wa{}'", x.unwrap_or(String::new())),
+                        x => panic!("Unhandled characters in build info arg: 'Wa{}'", x.unwrap_or(String::new())),
                     }
 
                     Some('v') => match parse_arg_string(&mut chars_iter) {
                         Some(s) if s.starts_with(":") => self.disable_warnings_after_version = Some(s.to_string()),
-                        Some(s) => panic!("Unexpected characters in build info arg: 'Wv{s}...'"),
-                        None => panic!("Unexpected characters in build info arg: 'Wv'"),
+                        Some(s) => panic!("Unhandled characters in build info arg: 'Wv{s}'"),
+                        None => panic!("Unhandled characters in build info arg: 'Wv'"),
                     }
 
                     Some('X') => match chars_iter.next() {
                         None | Some(' ') => self.treat_warnings_as_errors = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.treat_warnings_as_errors = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'WX-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'WX-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'WX{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'WX{c}...'"),
                     }
 
-                    Some(s) => todo!("arg switch 'W{s}...'"),
+                    Some(s) => todo!("arg switch 'W{s}'"),
                     None => panic!("Unexpected character in build info arg: 'W'"),
                 }
 
                 Some('X') => match chars_iter.next() {
                     None | Some(' ') => self.ignore_standard_include_dir = true,
-                    Some(c) => panic!("Unexpected characters in build info arg: 'X{c}...'"),
+                    Some(c) => panic!("Unhandled characters in build info arg: 'X{c}...'"),
                 }
 
                 Some('Y') => match chars_iter.next() {
@@ -1035,7 +1043,7 @@ impl Module {
 
                     Some('u') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.precompiled_header_file_name = Some(s),
-                        None => panic!("Unexpected characters in build info arg: 'Yu'"),
+                        None => panic!("Unhandled characters in build info arg: 'Yu'"),
                     }
 
                     Some(c) => todo!("arg switch 'Y{c}...'"),
@@ -1045,7 +1053,7 @@ impl Module {
                 Some('Z') => match chars_iter.next() {
                     Some('7') => match chars_iter.next() {
                         None | Some(' ') => self.generate_c7_debug_info = true,
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Z7{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Z7{c}...'"),
                     }
 
                     Some('c') => match chars_iter.next() {
@@ -1055,26 +1063,26 @@ impl Module {
                         }
 
                         Some(c) => todo!("arg switch 'Zc{c}...'"),
-                        None => panic!("Unexpected characters in build info arg: 'Zc'"),
+                        None => panic!("Unhandled characters in build info arg: 'Zc'"),
                     }
 
                     Some('H') => match parse_arg_string(&mut chars_iter) {
                         Some(s) if s.starts_with(":") => self.hash_algorithm = Some(s.trim_start_matches(":").to_string()),
-                        Some(s) => panic!("Unexpected characters in build info arg: 'ZH{s}...'"),
-                        None => panic!("Unexpected characters in build info arg: 'ZH'"),
+                        Some(s) => panic!("Unhandled characters in build info arg: 'ZH{s}'"),
+                        None => panic!("Unhandled characters in build info arg: 'ZH'"),
                     }
 
                     Some('i') => match chars_iter.next() {
                         None | Some(' ') => self.generate_full_debug_info = true,
                         Some('+') => match chars_iter.next() {
                             None | Some(' ') => self.generate_full_debug_info = true,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Zi+{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Zi+{c}...'"),
                         }
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.generate_full_debug_info = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Zi-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Zi-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Zi{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Zi{c}...'"),
                     }
 
                     Some('l') => match chars_iter.next() {
@@ -1086,9 +1094,9 @@ impl Module {
                         None | Some(' ') => self.generate_richer_debug_info_for_optimized_code = true,
                         Some('-') => match chars_iter.next() {
                             None | Some(' ') => self.generate_richer_debug_info_for_optimized_code = false,
-                            Some(c) => panic!("Unexpected characters in build info arg: 'Zo-{c}...'"),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Zo-{c}...'"),
                         }
-                        Some(c) => panic!("Unexpected characters in build info arg: 'Zo{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Zo{c}...'"),
                     }
 
                     Some('p') => match parse_arg_string(&mut chars_iter) {
@@ -1101,11 +1109,11 @@ impl Module {
                         
                         Some(':') => match parse_arg_string(&mut chars_iter) {
                             Some(s) if s == "nostdlib" => self.windows_runtime_compilation_nostdlib = true,
-                            Some(s) => panic!("Unexpected characters in build info arg: 'ZW:{s}...'"),
-                            None => panic!("Unexpected characters in build info arg: 'ZW:'"),
+                            Some(s) => panic!("Unhandled characters in build info arg: 'ZW:{s}'"),
+                            None => panic!("Unhandled characters in build info arg: 'ZW:'"),
                         }
 
-                        Some(c) => panic!("Unexpected characters in build info arg: 'ZW{c}...'"),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'ZW{c}...'"),
                     }
 
                     Some(c) => todo!("arg switch 'Z{c}...'"),
