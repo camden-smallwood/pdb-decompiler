@@ -413,7 +413,7 @@ impl Module {
         self.compiler_path = compiler_path.into();
         self.pdb_path = pdb_path.into();
 
-        println!("Module arguments: {args_string}");
+        // println!("Module arguments: {args_string}");
 
         let mut chars_iter = args_string.chars();
 
@@ -514,11 +514,19 @@ impl Module {
                     None => panic!("Unhandled characters in build info arg: 'B'"),
                 }
 
-                Some('c') => match parse_arg_string(&mut chars_iter) {
-                    None => self.compile_without_linking = true,
-                    Some(s) if s == "bstring" => self.use_byte_strings = true,
-                    Some(s) if s.starts_with("gthreads") => self.code_generation_threads = Some(s.trim_start_matches("gthreads").parse().expect("Invalid code generation thread count")),
-                    Some(s) => panic!("Unhandled characters in build info arg: 'c{s}'"),
+                Some('c') => match chars_iter.next() {
+                    None | Some('-') | Some(' ') => self.compile_without_linking = true,
+                    Some('b') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) if s == "string" => self.use_byte_strings = true,
+                        None => panic!("Unhandled characters in build info arg: 'cb'"),
+                        Some(s) => panic!("Unhandled characters in build info arg: 'cb{s}'"),
+                    }
+                    Some('g') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) if s.starts_with("threads") => self.code_generation_threads = Some(s.trim_start_matches("threads").parse().expect("Invalid code generation thread count")),
+                        None => panic!("Unhandled characters in build info arg: 'cg'"),
+                        Some(s) => panic!("Unhandled characters in build info arg: 'cg{s}'"),
+                    }
+                    Some(c) => panic!("Unhandled characters in build info arg: 'c{c}...'"),
                 }
 
                 Some('C') => match chars_iter.next() {
