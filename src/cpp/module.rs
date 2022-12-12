@@ -33,11 +33,71 @@ impl fmt::Display for ModuleMember {
     }
 }
 
+#[repr(u64)]
+pub enum ModuleFlags {
+    CompileWithoutLinking = 1 << 0,
+    RemoveDefaultLibraryName = 1 << 1,
+    FunctionLevelLinking = 1 << 2,
+    EnableAllWarnings = 1 << 3,
+    TreatWarningsAsErrors = 1 << 4,
+    CopyPreprocessorOutputToStdout = 1 << 5,
+    EnableCppExceptions = 1 << 6,
+    EnableSehExceptions = 1 << 7,
+    ExternCDefaultsToNothrow = 1 << 8,
+    AlwaysGenerateNoexceptChecks = 1 << 9,
+    EnableRtti = 1 << 10,
+    EnableStringPooling = 1 << 11,
+    CheckBufferSecurity = 1 << 12,
+    EnableWholeProgramOptimization = 1 << 13,
+    EnableWholeProgramDataOptimization = 1 << 14,
+    OptimizationDisabled = 1 << 15,
+    FavorsSmallCode = 1 << 16,
+    FavorsFastCode = 1 << 17,
+    GenerateC7DebugInfo = 1 << 18,
+    GenerateFullDebugInfo = 1 << 19,
+    GenerateRicherDebugInfoForOptimizedCode = 1 << 20,
+    InjectPchReference = 1 << 21,
+    IgnoreStandardIncludeDir = 1 << 22,
+    Nologo = 1 << 23,
+    NoThreadSafeStatics = 1 << 24,
+    EnableSdl = 1 << 25,
+    CreateSmallCode = 1 << 26,
+    CreateFastCode = 1 << 27,
+    GenerateIntrinsicFunctions = 1 << 28,
+    EnableMinimalRebuild = 1 << 29,
+    EnableCodeAnalysis = 1 << 30,
+    EnableCoroutines = 1 << 31,
+    EnableCoroutinesStrict = 1 << 32,
+    ConsiderFloatingPointContractions = 1 << 33,
+    ConsiderFloatingPointExceptions = 1 << 34,
+    UseCdeclCallingConvention = 1 << 35,
+    WindowsRuntimeCompilation = 1 << 36,
+    WindowsRuntimeCompilationNostdlib = 1 << 37,
+    MultipleProcessSupport = 1 << 38,
+    FramePointerEmission = 1 << 39,
+    FullSourcePathInDiagnostics = 1 << 40,
+    UseByteStrings = 1 << 41,
+    PreserveCommentsDuringPreprocessing = 1 << 42,
+    CreateKernelModeBinary = 1 << 43,
+    UseCSourceFileType = 1 << 44,
+    UseCppSourceFileType = 1 << 45,
+    EnableLoopParallelization = 1 << 46,
+    EnableFastRuntimeChecks = 1 << 47,
+    ConvertToSmallerTypeCheckAtRuntime = 1 << 48,
+    EnableStackFrameRuntimeChecks = 1 << 49,
+    EnableUninitializedLocalUsageChecks = 1 << 50,
+    Bigobj = 1 << 51,
+    BuildInline = 1 << 52,
+    SerializePdbWithMspdbsrv = 1 << 53,
+    UnknownCompilerOptionsAreErrors = 1 << 54,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Module {
     pub path: PathBuf,
     pub compiler_path: PathBuf,
     pub pdb_path: PathBuf,
+    pub flags: u64,
 
     pub headers: Vec<(PathBuf, bool)>,
     pub members: Vec<ModuleMember>,
@@ -74,68 +134,24 @@ pub struct Module {
     pub pch_references: Vec<String>,
     pub d1_args: Vec<String>,
     pub d2_args: Vec<String>,
-
-    pub compile_without_linking: bool,
-    pub remove_default_library_name: bool,
-    pub function_level_linking: bool,
-    pub enable_all_warnings: bool,
-    pub treat_warnings_as_errors: bool,
-    pub copy_preprocessor_output_to_stdout: bool,
-    pub enable_cpp_exceptions: bool,
-    pub enable_seh_exceptions: bool,
-    pub extern_c_defaults_to_nothrow: bool,
-    pub always_generate_noexcept_checks: bool,
-    pub enable_rtti: bool,
-    pub enable_string_pooling: bool,
-    pub check_buffer_security: bool,
-    pub enable_whole_program_optimization: bool,
-    pub enable_whole_program_data_optimization: bool,
-    pub optimization_disabled: bool,
-    pub favors_small_code: bool,
-    pub favors_fast_code: bool,
-    pub generate_c7_debug_info: bool,
-    pub generate_full_debug_info: bool,
-    pub generate_richer_debug_info_for_optimized_code: bool,
-    pub inject_pch_reference: bool,
-    pub ignore_standard_include_dir: bool,
-    pub nologo: bool,
-    pub no_thread_safe_statics: bool,
-    pub enable_sdl: bool,
-    pub create_small_code: bool,
-    pub create_fast_code: bool,
-    pub generate_intrinsic_functions: bool,
-    pub enable_minimal_rebuild: bool,
-    pub enable_code_analysis: bool,
-    pub enable_coroutines: bool,
-    pub enable_coroutines_strict: bool,
-    pub consider_floating_point_contractions: bool,
-    pub consider_floating_point_exceptions: bool,
-    pub use_cdecl_calling_convention: bool,
-    pub windows_runtime_compilation: bool,
-    pub windows_runtime_compilation_nostdlib: bool,
-    pub multiple_process_support: bool,
-    pub frame_pointer_emission: bool,
-    pub full_source_path_in_diagnostics: bool,
-    pub use_byte_strings: bool,
-    pub preserve_comments_during_preprocessing: bool,
-    pub create_kernel_mode_binary: bool,
-    pub use_c_source_file_type: bool,
-    pub use_cpp_source_file_type: bool,
-    pub enable_loop_parallelization: bool,
-    pub enable_fast_runtime_checks: bool,
-    pub convert_to_smaller_type_check_at_runtime: bool,
-    pub enable_stack_frame_runtime_checks: bool,
-    pub enable_uninitialized_local_usage_checks: bool,
-    pub bigobj: bool,
-    pub build_inline: bool,
-    pub serialize_pdb_with_mspdbsrv: bool,
-    pub unknown_compiler_options_are_errors: bool,
 }
 
 impl Module {
     pub fn with_path(mut self, path: PathBuf) -> Self {
         self.path = path;
         self
+    }
+
+    pub fn set_flag(&mut self, flag: ModuleFlags, on: bool) {
+        if on {
+            self.flags |= flag as u64;
+        } else {
+            self.flags ^= flag as u64;
+        }
+    }
+
+    pub fn test_flag(&self, flag: ModuleFlags) -> bool {
+        (self.flags & (flag as u64)) != 0
     }
 
     pub fn add_type_definition(
@@ -484,10 +500,10 @@ impl Module {
                 }
 
                 Some('a') => match parse_arg_string(&mut chars_iter) {
-                    Some(s) if s == "nalyze" => self.enable_code_analysis = true,
+                    Some(s) if s == "nalyze" => self.set_flag(ModuleFlags::EnableCodeAnalysis, true),
                     Some(s) if s.starts_with("rch:") => self.minimum_cpu_architecture = Some(s[4..].to_owned()),
-                    Some(s) if s == "wait" => self.enable_coroutines = true,
-                    Some(s) if s == "wait:strict" => self.enable_coroutines_strict = true,
+                    Some(s) if s == "wait" => self.set_flag(ModuleFlags::EnableCoroutines, true),
+                    Some(s) if s == "wait:strict" => self.set_flag(ModuleFlags::EnableCoroutinesStrict, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'a{s}'"),
                     None => panic!("Unexpected character in build info arg: 'a'"),
                 }
@@ -503,21 +519,21 @@ impl Module {
                 }
 
                 Some('b') => match parse_arg_string(&mut chars_iter) {
-                    Some(s) if s == "igobj" => self.bigobj = true,
+                    Some(s) if s == "igobj" => self.set_flag(ModuleFlags::Bigobj, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'b{s}'"),
                     None => panic!("Unhandled characters in build info arg: 'b'"),
                 }
 
                 Some('B') => match parse_arg_string(&mut chars_iter) {
-                    Some(s) if s == "inl" => self.build_inline = true,
+                    Some(s) if s == "inl" => self.set_flag(ModuleFlags::BuildInline, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'B{s}'"),
                     None => panic!("Unhandled characters in build info arg: 'B'"),
                 }
 
                 Some('c') => match chars_iter.next() {
-                    None | Some('-') | Some(' ') => self.compile_without_linking = true,
+                    None | Some('-') | Some(' ') => self.set_flag(ModuleFlags::CompileWithoutLinking, true),
                     Some('b') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) if s == "string" => self.use_byte_strings = true,
+                        Some(s) if s == "string" => self.set_flag(ModuleFlags::UseByteStrings, true),
                         None => panic!("Unhandled characters in build info arg: 'cb'"),
                         Some(s) => panic!("Unhandled characters in build info arg: 'cb{s}'"),
                     }
@@ -530,7 +546,7 @@ impl Module {
                 }
 
                 Some('C') => match chars_iter.next() {
-                    None | Some(' ') => self.preserve_comments_during_preprocessing = true,
+                    None | Some(' ') => self.set_flag(ModuleFlags::PreserveCommentsDuringPreprocessing, true),
                     Some(c) => panic!("Unhandled characters in build info arg: 'C{c}...'"),
                 }
 
@@ -568,14 +584,14 @@ impl Module {
                     Some('H') => match chars_iter.next() {
                         Some('a') => match chars_iter.next() {
                             None | Some(' ') => {
-                                self.enable_cpp_exceptions = true;
-                                self.enable_seh_exceptions = true;
+                                self.set_flag(ModuleFlags::EnableCppExceptions, true);
+                                self.set_flag(ModuleFlags::EnableSehExceptions, true);
                             },
                             
                             Some('-') => match chars_iter.next() {
                                 None | Some(' ') => {
-                                    self.enable_cpp_exceptions = false;
-                                    self.enable_seh_exceptions = false;
+                                    self.set_flag(ModuleFlags::EnableCppExceptions, false);
+                                    self.set_flag(ModuleFlags::EnableSehExceptions, false);
                                 },
                                 Some(c) => panic!("Unhandled characters in build info arg: 'EHa-{c}...'"),
                             }
@@ -584,10 +600,10 @@ impl Module {
                         }
 
                         Some('c') => match chars_iter.next() {
-                            None | Some(' ') => self.extern_c_defaults_to_nothrow = true,
+                            None | Some(' ') => self.set_flag(ModuleFlags::ExternCDefaultsToNothrow, true),
                             
                             Some('-') => match chars_iter.next() {
-                                None | Some(' ') => self.extern_c_defaults_to_nothrow = false,
+                                None | Some(' ') => self.set_flag(ModuleFlags::ExternCDefaultsToNothrow, false),
                                 Some(c) => panic!("Unhandled characters in build info arg: 'EHc-{c}...'"),
                             }
 
@@ -595,10 +611,10 @@ impl Module {
                         }
 
                         Some('r') => match chars_iter.next() {
-                            None | Some(' ') => self.always_generate_noexcept_checks = true,
+                            None | Some(' ') => self.set_flag(ModuleFlags::AlwaysGenerateNoexceptChecks, true),
                             
                             Some('-') => match chars_iter.next() {
-                                None | Some(' ') => self.always_generate_noexcept_checks = false,
+                                None | Some(' ') => self.set_flag(ModuleFlags::AlwaysGenerateNoexceptChecks, false),
                                 Some(c) => panic!("Unhandled characters in build info arg: 'EHr-{c}...'"),
                             }
 
@@ -607,14 +623,14 @@ impl Module {
 
                         Some('s') => match chars_iter.next() {
                             None | Some(' ') => {
-                                self.enable_cpp_exceptions = true;
-                                self.enable_seh_exceptions = false;
+                                self.set_flag(ModuleFlags::EnableCppExceptions, true);
+                                self.set_flag(ModuleFlags::EnableSehExceptions, false);
                             },
                             
                             Some('-') => match chars_iter.next() {
                                 None | Some(' ') => {
-                                    self.enable_cpp_exceptions = false;
-                                    self.enable_seh_exceptions = false;
+                                    self.set_flag(ModuleFlags::EnableCppExceptions, false);
+                                    self.set_flag(ModuleFlags::EnableSehExceptions, false);
                                 },
                                 Some(c) => panic!("Unhandled characters in build info arg: 'EHs-{c}...'"),
                             }
@@ -627,20 +643,20 @@ impl Module {
                     }
 
                     Some('P') => match chars_iter.next() {
-                        None | Some(' ') => self.copy_preprocessor_output_to_stdout = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::CopyPreprocessorOutputToStdout, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'EP{c}...'"),
                     }
 
-                    None => self.copy_preprocessor_output_to_stdout = true,
+                    None => self.set_flag(ModuleFlags::CopyPreprocessorOutputToStdout, true),
 
                     Some(c) => panic!("Unhandled characters in build info arg: 'E{c}...'"),
                 }
 
                 Some('f') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s.starts_with("avor:") => self.optimize_for_cpu_architecture = Some(s[5..].to_owned()),
-                    Some(s) if s == "p:contract" => self.consider_floating_point_contractions = true,
-                    Some(s) if s == "p:except" => self.consider_floating_point_exceptions = true,
-                    Some(s) if s == "p:except-" => self.consider_floating_point_exceptions = false,
+                    Some(s) if s == "p:contract" => self.set_flag(ModuleFlags::ConsiderFloatingPointContractions, true),
+                    Some(s) if s == "p:except" => self.set_flag(ModuleFlags::ConsiderFloatingPointExceptions, true),
+                    Some(s) if s == "p:except-" => self.set_flag(ModuleFlags::ConsiderFloatingPointExceptions, false),
                     Some(s) if s == "p:fast" => self.floating_point_model = Some("fast".to_string()),
                     Some(s) if s == "p:precise" => self.floating_point_model = Some("precise".to_string()),
                     Some(s) if s == "p:strict" => self.floating_point_model = Some("strict".to_string()),
@@ -652,7 +668,7 @@ impl Module {
 
                 Some('F') => match chars_iter.next() {
                     Some('C') => match chars_iter.next() {
-                        None | Some(' ') => self.full_source_path_in_diagnostics = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::FullSourcePathInDiagnostics, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'FC{c}...'"),
                     }
 
@@ -667,7 +683,7 @@ impl Module {
                     }
 
                     Some('S') => match chars_iter.next() {
-                        Some(' ') | None => self.serialize_pdb_with_mspdbsrv = true,
+                        Some(' ') | None => self.set_flag(ModuleFlags::SerializePdbWithMspdbsrv, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'FS{c}...'"),
                     }
 
@@ -688,72 +704,72 @@ impl Module {
 
                 Some('G') => match chars_iter.next() {
                     Some('d') => match chars_iter.next() {
-                        None | Some(' ') => self.use_cdecl_calling_convention = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::UseCdeclCallingConvention, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'Gd{c}...'"),
                     }
 
                     Some('F') => match chars_iter.next() {
-                        None | Some(' ') => self.enable_string_pooling = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::EnableStringPooling, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.enable_string_pooling = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::EnableStringPooling, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'GF-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'GF{c}...'"),
                     }
 
                     Some('L') => match chars_iter.next() {
-                        None | Some(' ') => self.enable_whole_program_optimization = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::EnableWholeProgramOptimization, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.enable_whole_program_optimization = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::EnableWholeProgramOptimization, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'GL-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'GL{c}...'"),
                     }
 
                     Some('m') => match chars_iter.next() {
-                        None | Some(' ') => self.enable_minimal_rebuild = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::EnableMinimalRebuild, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.enable_minimal_rebuild = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::EnableMinimalRebuild, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Gm-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'Gm{c}...'"),
                     }
 
                     Some('R') => match chars_iter.next() {
-                        None | Some(' ') => self.enable_rtti = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::EnableRtti, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.enable_rtti = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::EnableRtti, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'GR-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'GR{c}...'"),
                     }
 
                     Some('S') => match chars_iter.next() {
-                        None | Some(' ') => self.check_buffer_security = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::CheckBufferSecurity, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.check_buffer_security = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::CheckBufferSecurity, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'GS-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'GS{c}...'"),
                     }
 
                     Some('w') => match chars_iter.next() {
-                        None | Some(' ') => self.enable_whole_program_data_optimization = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::EnableWholeProgramDataOptimization, true),
                         Some('+') => match chars_iter.next() {
-                            None | Some(' ') => self.enable_whole_program_data_optimization = true,
+                            None | Some(' ') => self.set_flag(ModuleFlags::EnableWholeProgramDataOptimization, true),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Gw+{c}...'"),
                         }
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.enable_whole_program_data_optimization = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::EnableWholeProgramDataOptimization, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Gw-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'Gw{c}...'"),
                     }
 
                     Some('y') => match chars_iter.next() {
-                        None | Some(' ') => self.function_level_linking = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::FunctionLevelLinking, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.function_level_linking = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::FunctionLevelLinking, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Gy-{c}...'"),
                         }
                         Some(c) => todo!("arg switch 'Gy{c}...'"),
@@ -764,7 +780,7 @@ impl Module {
                 }
 
                 Some('k') => match parse_arg_string(&mut chars_iter) {
-                    Some(s) if s == "ernel" => self.create_kernel_mode_binary = true,
+                    Some(s) if s == "ernel" => self.set_flag(ModuleFlags::CreateKernelModeBinary, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'k{s}'"),
                     None => panic!("Unexpected character in build info arg: 'k'"),
                 }
@@ -799,7 +815,7 @@ impl Module {
                     }
 
                     Some('P') => match chars_iter.next() {
-                        None | Some(' ') => self.multiple_process_support = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::MultipleProcessSupport, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'MP{c}...'"),
                     }
 
@@ -817,8 +833,8 @@ impl Module {
                 }
 
                 Some('n') => match parse_arg_string(&mut chars_iter) {
-                    Some(s) if s == "ologo" => self.nologo = true,
-                    Some(s) if s == "othreadsafestatics" => self.no_thread_safe_statics = true,
+                    Some(s) if s == "ologo" => self.set_flag(ModuleFlags::Nologo, true),
+                    Some(s) if s == "othreadsafestatics" => self.set_flag(ModuleFlags::NoThreadSafeStatics, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'n{s}'"),
                     None => panic!("Unexpected character in build info arg: 'n'"),
                 }
@@ -828,19 +844,19 @@ impl Module {
                     Some(s) if s == "penmp-" => self.openmp = None,
                     Some(s) if s == "penmp:experimental" => self.openmp = Some("experimental".to_string()),
                     Some(s) if s == "penmp:llvm" => self.openmp = Some("llvm".to_string()),
-                    Some(s) if s == "ptions:strict" => self.unknown_compiler_options_are_errors = true,
+                    Some(s) if s == "ptions:strict" => self.set_flag(ModuleFlags::UnknownCompilerOptionsAreErrors, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'o{s}'"),
                     None => panic!("Unexpected character in build info arg: 'o'"),
                 }
 
                 Some('O') => match chars_iter.next() {
                     Some('1') => match chars_iter.next() {
-                        None | Some(' ') => self.create_small_code = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::CreateSmallCode, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'O1{c}...'"),
                     }
 
                     Some('2') => match chars_iter.next() {
-                        None | Some(' ') => self.create_fast_code = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::CreateFastCode, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'O2{c}...'"),
                     }
 
@@ -870,26 +886,26 @@ impl Module {
                     }
 
                     Some('d') => match chars_iter.next() {
-                        None | Some(' ') => self.optimization_disabled = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::OptimizationDisabled, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'Od{c}...'"),
                     }
 
                     Some('i') => match chars_iter.next() {
-                        None | Some(' ') => self.generate_intrinsic_functions = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::GenerateIntrinsicFunctions, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.generate_intrinsic_functions = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::GenerateIntrinsicFunctions, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Oi-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'Oi{c}...'"),
                     }
 
                     Some('s') => match chars_iter.next() {
-                        None | Some(' ') => self.favors_small_code = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::FavorsSmallCode, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'Os{c}...'"),
                     }
 
                     Some('t') => match chars_iter.next() {
-                        None | Some(' ') => self.favors_fast_code = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::FavorsFastCode, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'Ot{c}...'"),
                     }
 
@@ -907,9 +923,9 @@ impl Module {
                     }
 
                     Some('y') => match chars_iter.next() {
-                        None | Some(' ') => self.frame_pointer_emission = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::FramePointerEmission, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.frame_pointer_emission = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::FramePointerEmission, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Oy-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'Oy{c}...'"),
@@ -920,24 +936,24 @@ impl Module {
                 }
 
                 Some('Q') => match parse_arg_string(&mut chars_iter) {
-                    Some(s) if s == "par" => self.enable_loop_parallelization = true,
+                    Some(s) if s == "par" => self.set_flag(ModuleFlags::EnableLoopParallelization, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'Q{s}'"),
                     None => panic!("Unexpected character in build info arg: 'Q'"),
                 }
 
                 Some('R') => match parse_arg_string(&mut chars_iter) {
-                    Some(s) if s == "TC1" || s == "TCsu" => self.enable_fast_runtime_checks = true,
-                    Some(s) if s == "TCc" => self.convert_to_smaller_type_check_at_runtime = true,
-                    Some(s) if s == "TCs" => self.enable_stack_frame_runtime_checks = true,
-                    Some(s) if s == "TCu" => self.enable_uninitialized_local_usage_checks = true,
+                    Some(s) if s == "TC1" || s == "TCsu" => self.set_flag(ModuleFlags::EnableFastRuntimeChecks, true),
+                    Some(s) if s == "TCc" => self.set_flag(ModuleFlags::ConvertToSmallerTypeCheckAtRuntime, true),
+                    Some(s) if s == "TCs" => self.set_flag(ModuleFlags::EnableStackFrameRuntimeChecks, true),
+                    Some(s) if s == "TCu" => self.set_flag(ModuleFlags::EnableUninitializedLocalUsageChecks, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'R{s}'"),
                     None => panic!("Unhandled characters in build info arg: 'R'"),
                 }
 
                 Some('s') => match chars_iter.next() {
                     Some('d') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) if s == "l" => self.enable_sdl = true,
-                        Some(s) if s == "l-" => self.enable_sdl = false,
+                        Some(s) if s == "l" => self.set_flag(ModuleFlags::EnableSdl, true),
+                        Some(s) if s == "l-" => self.set_flag(ModuleFlags::EnableSdl, false),
                         Some(s) => panic!("Unhandled characters in build info arg: 'sd{s}'"),
                         None => panic!("Unhandled characters in build info arg: 'sd'"),
                     }
@@ -948,12 +964,12 @@ impl Module {
 
                 Some('T') => match chars_iter.next() {
                     Some('C') => match chars_iter.next() {
-                        None | Some(' ') => self.use_c_source_file_type = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::UseCSourceFileType, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'TC{c}...'"),
                     }
 
                     Some('P') => match chars_iter.next() {
-                        None | Some(' ') => self.use_cpp_source_file_type = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::UseCppSourceFileType, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'TP{c}...'"),
                     }
 
@@ -1008,7 +1024,7 @@ impl Module {
                     }
 
                     Some('a') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) if s == "ll" => self.enable_all_warnings = true,
+                        Some(s) if s == "ll" => self.set_flag(ModuleFlags::EnableAllWarnings, true),
                         x => panic!("Unhandled characters in build info arg: 'Wa{}'", x.unwrap_or(String::new())),
                     }
 
@@ -1019,9 +1035,9 @@ impl Module {
                     }
 
                     Some('X') => match chars_iter.next() {
-                        None | Some(' ') => self.treat_warnings_as_errors = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::TreatWarningsAsErrors, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.treat_warnings_as_errors = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::TreatWarningsAsErrors, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'WX-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'WX{c}...'"),
@@ -1032,7 +1048,7 @@ impl Module {
                 }
 
                 Some('X') => match chars_iter.next() {
-                    None | Some(' ') => self.ignore_standard_include_dir = true,
+                    None | Some(' ') => self.set_flag(ModuleFlags::IgnoreStandardIncludeDir, true),
                     Some(c) => panic!("Unhandled characters in build info arg: 'X{c}...'"),
                 }
 
@@ -1043,9 +1059,9 @@ impl Module {
                     }
 
                     Some('l') => match parse_arg_string(&mut chars_iter) {
-                        None => self.inject_pch_reference = true,
-                        Some(s) if s == "" => self.inject_pch_reference = true,
-                        Some(s) if s == "-" => self.inject_pch_reference = false,
+                        None => self.set_flag(ModuleFlags::InjectPchReference, true),
+                        Some(s) if s == "" => self.set_flag(ModuleFlags::InjectPchReference, true),
+                        Some(s) if s == "-" => self.set_flag(ModuleFlags::InjectPchReference, false),
                         Some(s) => self.pch_references.push(s),
                     }
 
@@ -1060,7 +1076,7 @@ impl Module {
 
                 Some('Z') => match chars_iter.next() {
                     Some('7') => match chars_iter.next() {
-                        None | Some(' ') => self.generate_c7_debug_info = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::GenerateC7DebugInfo, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'Z7{c}...'"),
                     }
 
@@ -1081,27 +1097,27 @@ impl Module {
                     }
 
                     Some('i') => match chars_iter.next() {
-                        None | Some(' ') => self.generate_full_debug_info = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::GenerateFullDebugInfo, true),
                         Some('+') => match chars_iter.next() {
-                            None | Some(' ') => self.generate_full_debug_info = true,
+                            None | Some(' ') => self.set_flag(ModuleFlags::GenerateFullDebugInfo, true),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Zi+{c}...'"),
                         }
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.generate_full_debug_info = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::GenerateFullDebugInfo, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Zi-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'Zi{c}...'"),
                     }
 
                     Some('l') => match chars_iter.next() {
-                        None | Some(' ') => self.remove_default_library_name = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::RemoveDefaultLibraryName, true),
                         Some(c) => todo!("arg switch 'Zl{c}...'"),
                     }
 
                     Some('o') => match chars_iter.next() {
-                        None | Some(' ') => self.generate_richer_debug_info_for_optimized_code = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::GenerateRicherDebugInfoForOptimizedCode, true),
                         Some('-') => match chars_iter.next() {
-                            None | Some(' ') => self.generate_richer_debug_info_for_optimized_code = false,
+                            None | Some(' ') => self.set_flag(ModuleFlags::GenerateRicherDebugInfoForOptimizedCode, false),
                             Some(c) => panic!("Unhandled characters in build info arg: 'Zo-{c}...'"),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'Zo{c}...'"),
@@ -1113,10 +1129,10 @@ impl Module {
                     }
 
                     Some('W') => match chars_iter.next() {
-                        None | Some(' ') => self.windows_runtime_compilation = true,
+                        None | Some(' ') => self.set_flag(ModuleFlags::WindowsRuntimeCompilation, true),
                         
                         Some(':') => match parse_arg_string(&mut chars_iter) {
-                            Some(s) if s == "nostdlib" => self.windows_runtime_compilation_nostdlib = true,
+                            Some(s) if s == "nostdlib" => self.set_flag(ModuleFlags::WindowsRuntimeCompilationNostdlib, true),
                             Some(s) => panic!("Unhandled characters in build info arg: 'ZW:{s}'"),
                             None => panic!("Unhandled characters in build info arg: 'ZW:'"),
                         }
