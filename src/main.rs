@@ -17,11 +17,11 @@ struct Options {
     base_address: Option<u64>,
 }
 
-pub fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
+fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
     u64::from_str_radix(src.trim_start_matches("0x"), 16)
 }
 
-pub fn sanitize_path<S: AsRef<str>>(path: S) -> String {
+fn sanitize_path<S: AsRef<str>>(path: S) -> String {
     let mut result = path.as_ref().to_string().replace('\\', "/");
 
     if let Some((_, rest)) = result.split_once(':') {
@@ -31,49 +31,35 @@ pub fn sanitize_path<S: AsRef<str>>(path: S) -> String {
     result
 }
 
-pub fn canonicalize_file_path(out_path: &str, root_path: &str, path: &str) -> PathBuf {
+pub fn canonicalize_path(out_path: &str, root_path: &str, path: &str, is_directory: bool) -> PathBuf {
     let path = PathBuf::from(format!(
-        "{}/{}",
+        "{}/{}{}",
         out_path,
         if path.contains(":") {
-            crate::sanitize_path(path)
+            sanitize_path(path)
         } else {
             format!("{}/{}", sanitize_path(root_path), sanitize_path(path))
         },
+        if is_directory { "/" } else { "" },
     ));
 
     if !path.exists() {
-        if let Some(parent_path) = path.parent() {
-            if let Err(e) = fs::create_dir_all(parent_path) {
-                panic!("Failed to create parent directories for file \"{}\": {e}", path.to_string_lossy());
+        if is_directory {
+            if !path.exists() {
+                if let Err(e) = fs::create_dir_all(path.clone()) {
+                    panic!("Failed to create directory \"{}\": {e}", path.to_string_lossy());
+                }
             }
-        }
-
-        if let Err(e) = File::create(path.clone()) {
-            panic!("Failed to create file \"{}\": {e}", path.to_string_lossy());
-        }
-    }
-
-    match path.canonicalize() {
-        Ok(x) => x.to_string_lossy().replace(out_path, "").into(),
-        Err(e) => panic!("Failed to canonicalize path \"{}\": {e}", path.to_string_lossy())
-    }
-}
-
-pub fn canonicalize_dir_path(out_path: &str, root_path: &str, path: &str) -> PathBuf {
-    let path = PathBuf::from(format!(
-        "{}/{}/",
-        out_path,
-        if path.contains(":") {
-            crate::sanitize_path(path)
         } else {
-            format!("{}/{}", sanitize_path(root_path), sanitize_path(path))
-        },
-    ));
-
-    if !path.exists() {
-        if let Err(e) = fs::create_dir_all(path.clone()) {
-            panic!("Failed to create directory \"{}\": {e}", path.to_string_lossy());
+            if let Some(parent_path) = path.parent() {
+                if let Err(e) = fs::create_dir_all(parent_path) {
+                    panic!("Failed to create parent directories for file \"{}\": {e}", path.to_string_lossy());
+                }
+            }
+    
+            if let Err(e) = File::create(path.clone()) {
+                panic!("Failed to create file \"{}\": {e}", path.to_string_lossy());
+            }
         }
     }
 
@@ -494,9 +480,9 @@ fn process_module(
         }
     }
 
-    let mut files = line_program.files();
+    let files = line_program.files().collect::<Vec<_>>()?;
 
-    while let Some(file) = files.next()? {
+    for file in &files {
         let path = PathBuf::from(sanitize_path(&file.name.to_string_lossy(string_table)?));
 
         match path.extension() {
