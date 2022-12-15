@@ -1019,7 +1019,7 @@ impl fmt::Display for Class {
                 }
             },
             if self.name.is_empty() {
-                format!("")
+                String::new()
             } else {
                 format!(" {}", self.name)
             }

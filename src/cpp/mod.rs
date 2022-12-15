@@ -338,7 +338,7 @@ pub fn type_name<'p>(
 
 pub fn type_size<'p>(
     machine_type: pdb::MachineType,
-    type_info: &pdb::TypeInformation,
+    _type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder<'p>,
     type_index: pdb::TypeIndex,
 ) -> pdb::Result<usize> {
@@ -507,10 +507,10 @@ pub fn type_size<'p>(
         }
 
         pdb::TypeData::Class(data) => Ok(data.size as usize),
-        pdb::TypeData::Enumeration(data) => type_size(machine_type, type_info, type_finder, data.underlying_type),
+        pdb::TypeData::Enumeration(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
         pdb::TypeData::Union(data) => Ok(data.size as usize),
-        pdb::TypeData::Modifier(data) => type_size(machine_type, type_info, type_finder, data.underlying_type),
-        pdb::TypeData::Bitfield(data) => type_size(machine_type, type_info, type_finder, data.underlying_type),
+        pdb::TypeData::Modifier(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
+        pdb::TypeData::Bitfield(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
         pdb::TypeData::Array(data) => Ok(*data.dimensions.last().unwrap() as usize),
 
         _ => panic!(

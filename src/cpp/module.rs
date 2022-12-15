@@ -162,11 +162,11 @@ impl Module {
         type_index: pdb::TypeIndex,
         line: u32,
     ) -> pdb::Result<()> {
-        if self.members.iter().position(|x| match x {
+        if self.members.iter().any(|x| match x {
             ModuleMember::Class(c) => c.index == type_index,
             ModuleMember::Enum(e) => e.index == type_index,
             _ => false,
-        }).is_some() {
+        }) {
             return Ok(());
         }
 
@@ -978,10 +978,10 @@ impl Module {
                 }
 
                 Some('w') => match chars_iter.next() {
-                    Some('1') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or("".into())),
-                    Some('2') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or("".into())),
-                    Some('3') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or("".into())),
-                    Some('4') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or("".into())),
+                    Some('1') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or_default()),
+                    Some('2') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or_default()),
+                    Some('3') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or_default()),
+                    Some('4') => self.warnings_level1.push(parse_arg_string(&mut chars_iter).unwrap_or_default()),
 
                     Some('d') => match parse_arg_string(&mut chars_iter) {
                         Some(s) => self.disabled_warnings.push(s),
@@ -1025,11 +1025,11 @@ impl Module {
 
                     Some('a') => match parse_arg_string(&mut chars_iter) {
                         Some(s) if s == "ll" => self.set_flag(ModuleFlags::EnableAllWarnings, true),
-                        x => panic!("Unhandled characters in build info arg: 'Wa{}'", x.unwrap_or(String::new())),
+                        x => panic!("Unhandled characters in build info arg: 'Wa{}'", x.unwrap_or_default()),
                     }
 
                     Some('v') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) if s.starts_with(":") => self.disable_warnings_after_version = Some(s.to_string()),
+                        Some(s) if s.starts_with(':') => self.disable_warnings_after_version = Some(s.to_string()),
                         Some(s) => panic!("Unhandled characters in build info arg: 'Wv{s}'"),
                         None => panic!("Unhandled characters in build info arg: 'Wv'"),
                     }
@@ -1060,7 +1060,7 @@ impl Module {
 
                     Some('l') => match parse_arg_string(&mut chars_iter) {
                         None => self.set_flag(ModuleFlags::InjectPchReference, true),
-                        Some(s) if s == "" => self.set_flag(ModuleFlags::InjectPchReference, true),
+                        Some(s) if s.is_empty() => self.set_flag(ModuleFlags::InjectPchReference, true),
                         Some(s) if s == "-" => self.set_flag(ModuleFlags::InjectPchReference, false),
                         Some(s) => self.pch_references.push(s),
                     }
@@ -1091,7 +1091,7 @@ impl Module {
                     }
 
                     Some('H') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) if s.starts_with(":") => self.hash_algorithm = Some(s.trim_start_matches(":").to_string()),
+                        Some(s) if s.starts_with(':') => self.hash_algorithm = Some(s.trim_start_matches(':').to_string()),
                         Some(s) => panic!("Unhandled characters in build info arg: 'ZH{s}'"),
                         None => panic!("Unhandled characters in build info arg: 'ZH'"),
                     }
@@ -1149,7 +1149,7 @@ impl Module {
         }
 
         // Sort additional include directories from longest to shortest
-        self.additional_include_dirs.sort_by(|a, b| a.to_string_lossy().len().cmp(&b.to_string_lossy().len()));
+        self.additional_include_dirs.sort_by_key(|a| a.to_string_lossy().len());
         self.additional_include_dirs.reverse();
 
         Ok(())
@@ -1174,9 +1174,9 @@ impl fmt::Display for Module {
 
         for (header, is_global) in self.headers.iter() {
             if *is_global {
-                writeln!(f, "#include <{}>", header.to_string_lossy().trim_start_matches("/"))?;
+                writeln!(f, "#include <{}>", header.to_string_lossy().trim_start_matches('/'))?;
             } else {
-                writeln!(f, "#include \"{}\"", header.to_string_lossy().trim_start_matches("/"))?;
+                writeln!(f, "#include \"{}\"", header.to_string_lossy().trim_start_matches('/'))?;
             }
         }
 
@@ -1193,18 +1193,18 @@ impl fmt::Display for Module {
                 }
 
                 ModuleMember::Data(_, _, Some(line)) => {
-                    storage.push((line.clone(), u.clone()));
-                    prev_line = line.clone();
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
                 }
 
                 ModuleMember::ThreadStorage(_, _, Some(line)) => {
-                    storage.push((line.clone(), u.clone()));
-                    prev_line = line.clone();
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
                 }
 
                 ModuleMember::Procedure(_, _, Some(line)) => {
-                    storage.push((line.clone(), u.clone()));
-                    prev_line = line.clone();
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
                 }
 
                 _ => {
