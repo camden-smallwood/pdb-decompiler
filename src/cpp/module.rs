@@ -501,6 +501,7 @@ impl Module {
 
                 Some('a') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "nalyze" => self.set_flag(ModuleFlags::EnableCodeAnalysis, true),
+                    Some(s) if s == "nalyze-" => self.set_flag(ModuleFlags::EnableCodeAnalysis, false),
                     Some(s) if s.starts_with("rch:") => self.minimum_cpu_architecture = Some(s[4..].to_owned()),
                     Some(s) if s == "wait" => self.set_flag(ModuleFlags::EnableCoroutines, true),
                     Some(s) if s == "wait:strict" => self.set_flag(ModuleFlags::EnableCoroutinesStrict, true),
