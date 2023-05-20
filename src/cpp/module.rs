@@ -90,6 +90,7 @@ pub enum ModuleFlags {
     BuildInline = 1 << 52,
     SerializePdbWithMspdbsrv = 1 << 53,
     UnknownCompilerOptionsAreErrors = 1 << 54,
+    ReproducableOutput = 1 << 55,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -527,6 +528,7 @@ impl Module {
 
                 Some('B') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "inl" => self.set_flag(ModuleFlags::BuildInline, true),
+                    Some(s) if s == "repro" => self.set_flag(ModuleFlags::ReproducableOutput, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'B{s}'"),
                     None => panic!("Unhandled characters in build info arg: 'B'"),
                 }
