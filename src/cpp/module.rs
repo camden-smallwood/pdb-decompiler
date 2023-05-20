@@ -91,6 +91,9 @@ pub enum ModuleFlags {
     SerializePdbWithMspdbsrv = 1 << 53,
     UnknownCompilerOptionsAreErrors = 1 << 54,
     ReproducableOutput = 1 << 55,
+    MitigateSpectreVulnerabilities = 1 << 56,
+    Permissive = 1 << 57,
+    ExternalAngleBracketsHeaders = 1 << 58,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -117,6 +120,12 @@ pub struct Module {
     pub hash_algorithm: Option<String>,
     pub disable_warnings_after_version: Option<String>,
     pub openmp: Option<String>,
+    pub language_standard: Option<String>,
+    pub diagnostics: Option<String>,
+    pub external_headers: Vec<String>,
+    pub external_headers_var: Option<String>,
+    pub external_headers_warning_level: Option<usize>,
+    pub fid_file: Option<String>,
     pub inline_function_expansion: Option<usize>,
     pub code_generation_threads: Option<usize>,
 
@@ -489,7 +498,7 @@ impl Module {
             match chars_iter.next() {
                 None => break,
                 Some('-' | '/') => (),
-                Some(c) => panic!("Unexpected character in build info arg: '{c}'"),
+                Some(c) => panic!("Unexpected character in build info arg at character {}: '{c}'", args_string.len() - chars_iter.size_hint().0),
             }
 
             match chars_iter.next() {
@@ -564,6 +573,12 @@ impl Module {
                         None => panic!("Unhandled characters in build info arg: 'd2'"),
                     }
 
+                    Some('i') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) if s.starts_with("agnostics:") => self.diagnostics = Some(s.trim_start_matches("agnostics:").to_string()),
+                        Some(s) => panic!("Unhandled characters in build info arg: 'di{s}'"),
+                        None => panic!("Unhandled characters in build info arg: 'di'"),
+                    }
+
                     Some(c) => todo!("arg switch 'd{c}...'"),
                     None => panic!("Unexpected character in build info arg: 'd'"),
                 }
@@ -573,14 +588,50 @@ impl Module {
                     None => panic!("Missing name from preprocessor definition"),
                 }
 
-                Some('e') => match parse_arg_string(&mut chars_iter) {
-                    Some(s) if s.to_lowercase() == "rrorreport" => self.error_report = Some("".to_string()),
-                    Some(s) if s.to_lowercase() == "rrorreport:none" => self.error_report = Some("none".to_string()),
-                    Some(s) if s.to_lowercase() == "rrorreport:prompt" => self.error_report = Some("prompt".to_string()),
-                    Some(s) if s.to_lowercase() == "rrorreport:queue" => self.error_report = Some("queue".to_string()),
-                    Some(s) if s.to_lowercase() == "rrorreport:send" => self.error_report = Some("send".to_string()),
-                    Some(_) => todo!(),
-                    None => todo!(),
+                Some('e') => match chars_iter.next() {
+                    Some('r') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) if s.to_lowercase() == "rorreport" => self.error_report = Some("".to_string()),
+                        Some(s) if s.to_lowercase() == "rorreport:none" => self.error_report = Some("none".to_string()),
+                        Some(s) if s.to_lowercase() == "rorreport:prompt" => self.error_report = Some("prompt".to_string()),
+                        Some(s) if s.to_lowercase() == "rorreport:queue" => self.error_report = Some("queue".to_string()),
+                        Some(s) if s.to_lowercase() == "rorreport:send" => self.error_report = Some("send".to_string()),
+                        Some(s) => panic!("Unhandled characters in build info arg: 'er{s}'"),
+                        None => panic!("Unhandled characters in build info arg: 'er'"),
+                    }
+                    Some('x') => match chars_iter.by_ref().take_while(|c| *c != ':').collect::<String>().as_str() {
+                        "ternal" => match chars_iter.next() {
+                            Some('a') => match parse_arg_string(&mut chars_iter) {
+                                Some(s) if s == "nglebrackets" => self.set_flag(ModuleFlags::ExternalAngleBracketsHeaders, true),
+                                Some(s) => panic!("Unhandled characters in build info arg: 'external:a{s}"),
+                                None => panic!("Unhandled characters in build info arg: 'external:a"),
+                            }
+                            Some('e') => match chars_iter.by_ref().take_while(|c| *c != ':').collect::<String>().as_str() {
+                                "nv" => match parse_arg_string(&mut chars_iter) {
+                                    Some(s) => self.external_headers_var = Some(s.to_string()),
+                                    None => panic!("Unhandled characters in build info arg: 'external:env:'"),
+                                }
+                                s => panic!("Unhandled characters in build info arg: 'external:e{s}"),
+                            }
+                            Some('I') => match parse_arg_string(&mut chars_iter) {
+                                Some(s) => self.external_headers.push(s),
+                                None => panic!("Unhandled characters in build info arg: 'external:I'"),
+                            }
+                            Some('W') => match parse_arg_string(&mut chars_iter) {
+                                Some(s) if s == "0" => self.external_headers_warning_level = Some(0),
+                                Some(s) if s == "1" => self.external_headers_warning_level = Some(1),
+                                Some(s) if s == "2" => self.external_headers_warning_level = Some(2),
+                                Some(s) if s == "3" => self.external_headers_warning_level = Some(3),
+                                Some(s) if s == "4" => self.external_headers_warning_level = Some(4),
+                                Some(s) => panic!("Unhandled characters in build info arg: 'external:W{s}'"),
+                                None => panic!("Unhandled characters in build info arg: 'external:W'"),
+                            }
+                            Some(c) => panic!("Unhandled characters in build info arg: 'external:{c}'"),
+                            None => panic!("Unhandled characters in build info arg: 'external:'"),
+                        }
+                        s => panic!("Unhandled characters in build info arg: 'ex{s}'"),
+                    }
+                    Some(c) => panic!("Unhandled characters in build info arg: 'e{c}'"),
+                    None => panic!("Unhandled characters in build info arg: 'e'"),
                 }
 
                 Some('E') => match chars_iter.next() {
@@ -938,8 +989,16 @@ impl Module {
                     None => panic!("Unexpected character in build info arg: 'O'"),
                 }
 
+                Some('p') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s == "ermissive" => self.set_flag(ModuleFlags::Permissive, true),
+                    Some(s) if s == "ermissive-" => self.set_flag(ModuleFlags::Permissive, false),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'p{s}'"),
+                    None => panic!("Unexpected character in build info arg: 'p'"),
+                }
+
                 Some('Q') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "par" => self.set_flag(ModuleFlags::EnableLoopParallelization, true),
+                    Some(s) if s == "spectre" => self.set_flag(ModuleFlags::MitigateSpectreVulnerabilities, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'Q{s}'"),
                     None => panic!("Unexpected character in build info arg: 'Q'"),
                 }
@@ -953,16 +1012,12 @@ impl Module {
                     None => panic!("Unhandled characters in build info arg: 'R'"),
                 }
 
-                Some('s') => match chars_iter.next() {
-                    Some('d') => match parse_arg_string(&mut chars_iter) {
-                        Some(s) if s == "l" => self.set_flag(ModuleFlags::EnableSdl, true),
-                        Some(s) if s == "l-" => self.set_flag(ModuleFlags::EnableSdl, false),
-                        Some(s) => panic!("Unhandled characters in build info arg: 'sd{s}'"),
-                        None => panic!("Unhandled characters in build info arg: 'sd'"),
-                    }
-
-                    Some(c) => todo!("arg switch 's{c}...'"),
-                    None => panic!("Unexpected character in build info arg: 's'"),
+                Some('s') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s == "dl" => self.set_flag(ModuleFlags::EnableSdl, true),
+                    Some(s) if s == "dl-" => self.set_flag(ModuleFlags::EnableSdl, false),
+                    Some(s) if s.starts_with("td:") => self.language_standard = Some(s.trim_start_matches("td:").to_string()),
+                    Some(s) => panic!("Unhandled characters in build info arg: 's{s}'"),
+                    None => panic!("Unhandled characters in build info arg: 's'"),
                 }
 
                 Some('T') => match chars_iter.next() {
