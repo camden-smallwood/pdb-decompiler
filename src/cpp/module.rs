@@ -93,6 +93,7 @@ pub enum ModuleFlags {
     MitigateSpectreVulnerabilities = 1 << 55,
     Permissive = 1 << 56,
     ExternalAngleBracketsHeaders = 1 << 57,
+    FasterPdbGeneration = 1 << 58,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -1143,6 +1144,11 @@ impl Module {
 
                         Some(c) => todo!("arg switch 'Zc{c}...'"),
                         None => panic!("Unhandled characters in build info arg: 'Zc'"),
+                    }
+
+                    Some('f') => match chars_iter.next() {
+                        None | Some(' ') => self.set_flag(ModuleFlags::FasterPdbGeneration, true),
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Zf{c}...'"),
                     }
 
                     Some('H') => match parse_arg_string(&mut chars_iter) {
