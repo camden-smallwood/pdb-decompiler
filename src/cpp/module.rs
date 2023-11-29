@@ -95,6 +95,7 @@ pub enum ModuleFlags {
     ExternalAngleBracketsHeaders = 1 << 57,
     FasterPdbGeneration = 1 << 58,
     ExperimentalModuleSupport = 1 << 59,
+    ExperimentalDeterministic = 1 << 60,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -446,13 +447,13 @@ impl Module {
 
         let mut chars_iter = args_string.chars();
 
-        let parse_arg_string = |chars_iter: &mut std::str::Chars| -> Option<String> {
+        fn parse_arg_string(chars_iter: &mut std::str::Chars) -> Option<String> {
             let mut string = String::new();
             let mut quoted = false;
 
             match chars_iter.next() {
-                Some(' ') => (),
                 Some('"') => quoted = true,
+                Some(c) if c.is_whitespace() => (),
                 Some(c) => string.push(c),
                 None => return None,
             }
@@ -463,21 +464,27 @@ impl Module {
                         None | Some(' ') => break,
                         Some(c) => panic!("Unexpected character after string: '{c}'"),
                     },
-                    ' ' if !quoted => break,
+
+                    c if c.is_whitespace() && !quoted => break,
+
                     _ => string.push(c),
                 }
             }
 
-            Some(string)
-        };
+            if string.is_empty() {
+                None
+            } else {
+                Some(string)
+            }
+        }
 
-        let parse_arg_binding = |chars_iter: &mut std::str::Chars| -> Option<(String, Option<String>)> {
+        fn parse_arg_binding(chars_iter: &mut std::str::Chars) -> Option<(String, Option<String>)> {
             let mut name = String::new();
             let mut quoted = false;
 
             match chars_iter.next() {
-                Some(' ') => (),
                 Some('"') => quoted = true,
+                Some(c) if c.is_whitespace() => (),
                 Some(c) => name.push(c),
                 None => return None,
             }
@@ -485,22 +492,25 @@ impl Module {
             loop {
                 match chars_iter.next() {
                     None => break,
-                    Some(c) => match c {
-                        '"' if quoted => (),
-                        ' ' if !quoted => break,
-                        '=' => return Some((name, parse_arg_string(chars_iter))),
-                        _ => name.push(c),
-                    }
+                    Some(c) if c.is_whitespace() && !quoted => break,
+                    Some('"') if quoted => (),
+                    Some('=') => return Some((name, parse_arg_string(chars_iter))),
+                    Some(c) => name.push(c),
                 }
             }
 
-            Some((name, None))
-        };
+            if name.is_empty() {
+                None
+            } else {
+                Some((name, None))
+            }
+        }
 
         loop {
             match chars_iter.next() {
                 None => break,
                 Some('-' | '/') => (),
+                Some(c) if c.is_whitespace() => continue,
                 Some(c) => panic!("Unexpected character in build info arg at character {}: '{c}'", args_string.len() - chars_iter.size_hint().0),
             }
 
@@ -607,6 +617,9 @@ impl Module {
                                 Some(s) => self.experimental_logs_file = Some(s),
                                 None => panic!("Build info arg '/experimental:log' missing file path"),
                             }
+
+                            Some(s) if s == "deterministic" => self.set_flag(ModuleFlags::ExperimentalDeterministic, true),
+                            Some(s) if s == "deterministic-" => self.set_flag(ModuleFlags::ExperimentalDeterministic, false),
 
                             Some(s) if s == "module" => self.set_flag(ModuleFlags::ExperimentalModuleSupport, true),
                             Some(s) if s == "module-" => self.set_flag(ModuleFlags::ExperimentalModuleSupport, false),
