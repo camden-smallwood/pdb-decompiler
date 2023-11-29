@@ -858,34 +858,28 @@ impl Module {
                     None => panic!("Unexpected character in build info arg: 'L'"),
                 }
 
-                Some('M') => match chars_iter.next() {
-                    Some('D') => match chars_iter.next() {
-                        None | Some(' ') => self.feature_toggles.push("MD".to_string()),
-                        Some('d') => match chars_iter.next() {
-                            None | Some(' ') => self.feature_toggles.push("MDd".to_string()),
-                            Some(c) => panic!("Unhandled characters in build info arg: 'MDd{c}...'"),
-                        }
-                        Some(c) => panic!("Unhandled characters in build info arg: 'MD{c}...'"),
+                Some('M') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s.starts_with("D") => match &s[1..] {
+                        s if s.is_empty() => self.feature_toggles.push("MD".to_string()),
+                        "d" => self.feature_toggles.push("MDd".to_string()),
+                        s => panic!("Unhandled characters in build info arg: 'MD{s}'"),
                     }
 
-                    Some('P') => match parse_arg_string(&mut chars_iter) {
-                        None => self.build_process_count = Some(1),
-                        Some(s) => match s.parse::<usize>() {
+                    Some(s) if s.starts_with("P") => match &s[1..] {
+                        s if s.is_empty() => self.build_process_count = Some(1),
+                        s => match s.parse::<usize>() {
                             Ok(x) => self.build_process_count = Some(x),
                             Err(_) => panic!("Unhandled characters in build info arg: 'MP{s}'"),
                         }
                     }
 
-                    Some('T') => match chars_iter.next() {
-                        None | Some(' ') => self.feature_toggles.push("MT".to_string()),
-                        Some('d') => match chars_iter.next() {
-                            None | Some(' ') => self.feature_toggles.push("MTd".to_string()),
-                            Some(c) => panic!("Unhandled characters in build info arg: 'MTd{c}...'"),
-                        }
-                        Some(c) => panic!("Unhandled characters in build info arg: 'MT{c}...'"),
+                    Some(s) if s.starts_with("T") => match &s[1..] {
+                        s if s.is_empty() => self.feature_toggles.push("MT".to_string()),
+                        "d" => self.feature_toggles.push("MTd".to_string()),
+                        s => panic!("Unhandled characters in build info arg: 'MT{s}'"),
                     }
 
-                    Some(c) => todo!("arg switch 'M{c}...'"),
+                    Some(s) => todo!("arg switch 'M{s}'"),
                     None => panic!("Unexpected character in build info arg: 'M'"),
                 }
 
