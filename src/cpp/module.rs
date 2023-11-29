@@ -94,6 +94,7 @@ pub enum ModuleFlags {
     Permissive = 1 << 56,
     ExternalAngleBracketsHeaders = 1 << 57,
     FasterPdbGeneration = 1 << 58,
+    ExperimentalModuleSupport = 1 << 59,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -129,6 +130,7 @@ pub struct Module {
     pub inline_function_expansion: Option<usize>,
     pub code_generation_threads: Option<usize>,
     pub build_process_count: Option<usize>,
+    pub experimental_logs_file: Option<String>,
 
     pub additional_include_dirs: Vec<PathBuf>,
     pub using_directive_dirs: Vec<PathBuf>,
@@ -600,6 +602,19 @@ impl Module {
                         None => panic!("Unhandled characters in build info arg: 'er'"),
                     }
                     Some('x') => match chars_iter.by_ref().take_while(|c| *c != ':').collect::<String>().as_str() {
+                        "perimental" => match parse_arg_string(&mut chars_iter) {
+                            Some(s) if s == "log" => match parse_arg_string(&mut chars_iter) {
+                                Some(s) => self.experimental_logs_file = Some(s),
+                                None => panic!("Build info arg '/experimental:log' missing file path"),
+                            }
+
+                            Some(s) if s == "module" => self.set_flag(ModuleFlags::ExperimentalModuleSupport, true),
+                            Some(s) if s == "module-" => self.set_flag(ModuleFlags::ExperimentalModuleSupport, false),
+
+                            Some(s) => panic!("Unhandled characters in build info arg: 'experimental:{s}'"),
+                            None => panic!("Unhandled characters in build info arg: 'experimental:'"),
+                        }
+
                         "ternal" => match chars_iter.next() {
                             Some('a') => match parse_arg_string(&mut chars_iter) {
                                 Some(s) if s == "nglebrackets" => self.set_flag(ModuleFlags::ExternalAngleBracketsHeaders, true),
