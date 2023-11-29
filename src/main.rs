@@ -71,11 +71,13 @@ pub fn canonicalize_path(out_path: &str, root_path: &str, path: &str, is_directo
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut options = Options::from_args();
+    
     if let Some(out) = options.out.as_mut() {
         if !out.is_dir() {
             *out = PathBuf::from(format!("{}/", out.to_string_lossy()));
         }
     }
+
     let pdb = pdb::PDB::open(File::open(options.pdb.clone().ok_or("PDB path not provided")?)?)?;
 
     if let Err(error) = decompile_pdb(options, pdb) {

@@ -73,27 +73,26 @@ pub enum ModuleFlags {
     UseCdeclCallingConvention = 1 << 35,
     WindowsRuntimeCompilation = 1 << 36,
     WindowsRuntimeCompilationNostdlib = 1 << 37,
-    MultipleProcessSupport = 1 << 38,
-    FramePointerEmission = 1 << 39,
-    FullSourcePathInDiagnostics = 1 << 40,
-    UseByteStrings = 1 << 41,
-    PreserveCommentsDuringPreprocessing = 1 << 42,
-    CreateKernelModeBinary = 1 << 43,
-    UseCSourceFileType = 1 << 44,
-    UseCppSourceFileType = 1 << 45,
-    EnableLoopParallelization = 1 << 46,
-    EnableFastRuntimeChecks = 1 << 47,
-    ConvertToSmallerTypeCheckAtRuntime = 1 << 48,
-    EnableStackFrameRuntimeChecks = 1 << 49,
-    EnableUninitializedLocalUsageChecks = 1 << 50,
-    Bigobj = 1 << 51,
-    BuildInline = 1 << 52,
-    SerializePdbWithMspdbsrv = 1 << 53,
-    UnknownCompilerOptionsAreErrors = 1 << 54,
-    ReproducableOutput = 1 << 55,
-    MitigateSpectreVulnerabilities = 1 << 56,
-    Permissive = 1 << 57,
-    ExternalAngleBracketsHeaders = 1 << 58,
+    FramePointerEmission = 1 << 38,
+    FullSourcePathInDiagnostics = 1 << 39,
+    UseByteStrings = 1 << 40,
+    PreserveCommentsDuringPreprocessing = 1 << 41,
+    CreateKernelModeBinary = 1 << 42,
+    UseCSourceFileType = 1 << 43,
+    UseCppSourceFileType = 1 << 44,
+    EnableLoopParallelization = 1 << 45,
+    EnableFastRuntimeChecks = 1 << 46,
+    ConvertToSmallerTypeCheckAtRuntime = 1 << 47,
+    EnableStackFrameRuntimeChecks = 1 << 48,
+    EnableUninitializedLocalUsageChecks = 1 << 49,
+    Bigobj = 1 << 50,
+    BuildInline = 1 << 51,
+    SerializePdbWithMspdbsrv = 1 << 52,
+    UnknownCompilerOptionsAreErrors = 1 << 53,
+    ReproducableOutput = 1 << 54,
+    MitigateSpectreVulnerabilities = 1 << 55,
+    Permissive = 1 << 56,
+    ExternalAngleBracketsHeaders = 1 << 57,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -128,6 +127,7 @@ pub struct Module {
     pub fid_file: Option<String>,
     pub inline_function_expansion: Option<usize>,
     pub code_generation_threads: Option<usize>,
+    pub build_process_count: Option<usize>,
 
     pub additional_include_dirs: Vec<PathBuf>,
     pub using_directive_dirs: Vec<PathBuf>,
@@ -868,9 +868,12 @@ impl Module {
                         Some(c) => panic!("Unhandled characters in build info arg: 'MD{c}...'"),
                     }
 
-                    Some('P') => match chars_iter.next() {
-                        None | Some(' ') => self.set_flag(ModuleFlags::MultipleProcessSupport, true),
-                        Some(c) => panic!("Unhandled characters in build info arg: 'MP{c}...'"),
+                    Some('P') => match parse_arg_string(&mut chars_iter) {
+                        None => self.build_process_count = Some(1),
+                        Some(s) => match s.parse::<usize>() {
+                            Ok(x) => self.build_process_count = Some(x),
+                            Err(_) => panic!("Unhandled characters in build info arg: 'MP{s}'"),
+                        }
                     }
 
                     Some('T') => match chars_iter.next() {
