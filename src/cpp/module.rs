@@ -898,7 +898,6 @@ impl Module {
                     }
 
                     Some('R') => {
-                        println!("/GR data: {args_string}");
                         match chars_iter.next() {
                             None | Some(' ') => self.set_primary_flag(ModulePrimaryFlags::EnableRtti, true),
                             Some('-') => match chars_iter.next() {
