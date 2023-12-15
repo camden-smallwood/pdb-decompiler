@@ -122,6 +122,10 @@ pub enum ModuleSecondaryFlags {
     BuildingVCCorlib = 1 << 16,
     BuildingMSVCDLL = 1 << 17,
     WindowsRuntimeNoMetadata = 1 << 18,
+    GenerateEditAndContinueDebugInfo = 1 << 19,
+    ShowIncludes = 1 << 20,
+    UseStdcallCallingConvention = 1 << 21,
+    CreateHotpatchableImage = 1 << 22,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -163,6 +167,9 @@ pub struct Module {
     pub loop_parallelization_report_level: Option<usize>,
     pub vec_report_level: Option<usize>,
     pub precompiled_header_memory: Option<usize>,
+    pub object_file: Option<String>,
+    pub program_database_file: Option<String>,
+    pub stack_probe_threshold: Option<usize>,
 
     pub additional_include_dirs: Vec<PathBuf>,
     pub using_directive_dirs: Vec<PathBuf>,
@@ -261,7 +268,7 @@ impl Module {
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
                 } else if let Some(fields) = data.fields {
-                    if let Err(e) = definition.add_members(machine_type, type_info, type_finder, fields) {
+                    if let Err(e) = definition.add_members(machine_type, type_info, type_finder, fields, None) {
                         eprintln!("WARNING: failed to add class members: {e}");
                     }
                 }
@@ -304,7 +311,7 @@ impl Module {
 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
-                } else if let Err(e) = definition.add_members(machine_type, type_info, type_finder, data.fields) {
+                } else if let Err(e) = definition.add_members(machine_type, type_info, type_finder, data.fields, None) {
                     eprintln!("WARNING: failed to add union members: {e}");
                 }
 
@@ -822,6 +829,11 @@ impl Module {
                         Some(c) => panic!("Unhandled characters in build info arg: 'FC{c}...'; Data: \"{args_string}\""),
                     }
 
+                    Some('d') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) => self.program_database_file = Some(s),
+                        None => panic!("Unhandled characters in build info arg: 'Fd'; Data: \"{args_string}\""),
+                    }
+
                     Some('I') => {
                         if let Some(' ') = chars_iter.peek() {
                             chars_iter.next();
@@ -831,6 +843,11 @@ impl Module {
                             Some(s) => self.preprocess_include_files.push(s),
                             None => panic!("Missing string from preprocess include file arg"),
                         }
+                    }
+
+                    Some('o') => match parse_arg_string(&mut chars_iter) {
+                        Some(s) => self.object_file = Some(s),
+                        None => panic!("Unhandled characters in build info arg: 'Fo'; Data: \"{args_string}\""),
                     }
 
                     Some('p') => match parse_arg_string(&mut chars_iter) {
@@ -908,6 +925,27 @@ impl Module {
                         }
                     }
 
+                    Some('s') => {
+                        let mut s = String::new();
+
+                        while let Some(c) = chars_iter.next() {
+                            if c.is_whitespace() {
+                                break;
+                            }
+
+                            s.push(c);
+                        }
+
+                        if s.is_empty() {
+                            s = "0".into();
+                        }
+
+                        match s.parse() {
+                            Ok(x) => self.stack_probe_threshold = Some(x),
+                            Err(_) => panic!("Unhandled characters in build info arg: 'Gs{s}'; Data: \"{args_string}\""),
+                        }
+                    }
+
                     Some('S') => match chars_iter.next() {
                         None | Some(' ') => self.set_primary_flag(ModulePrimaryFlags::CheckBufferSecurity, true),
                         Some('-') => match chars_iter.next() {
@@ -944,8 +982,27 @@ impl Module {
                         Some(c) => panic!("Unhandled characters in build info arg: 'Gy{c}...'; Data: \"{args_string}\""),
                     }
 
+                    Some('z') => match chars_iter.next() {
+                        None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::UseStdcallCallingConvention, true),
+                        Some('+') => match chars_iter.next() {
+                            None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::UseStdcallCallingConvention, true),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Gz+{c}...'; Data: \"{args_string}\""),
+                        }
+                        Some('-') => match chars_iter.next() {
+                            None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::UseStdcallCallingConvention, false),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'Gz-{c}...'; Data: \"{args_string}\""),
+                        }
+                        Some(c) => panic!("Unhandled characters in build info arg: 'Gz{c}...'; Data: \"{args_string}\""),
+                    }
+
                     Some(c) => panic!("Unhandled characters in build info arg: 'G{c}...'; Data: \"{args_string}\""),
                     None => panic!("Unexpected character in build info arg: 'G'; Data: \"{args_string}\""),
+                }
+
+                Some('h') => match parse_arg_string(&mut chars_iter) {
+                    Some(s) if s == "otpatch" => self.set_secondary_flag(ModuleSecondaryFlags::CreateHotpatchableImage, true),
+                    Some(s) => panic!("Unhandled characters in build info arg: 'h{s}'; Data: \"{args_string}\""),
+                    None => panic!("Unexpected character in build info arg: 'h'; Data: \"{args_string}\""),
                 }
 
                 Some('k') => match parse_arg_string(&mut chars_iter) {
@@ -1149,6 +1206,7 @@ impl Module {
                 Some('s') => match parse_arg_string(&mut chars_iter) {
                     Some(s) if s == "dl" => self.set_primary_flag(ModulePrimaryFlags::EnableSdl, true),
                     Some(s) if s == "dl-" => self.set_primary_flag(ModulePrimaryFlags::EnableSdl, false),
+                    Some(s) if s == "howIncludes" => self.set_secondary_flag(ModuleSecondaryFlags::ShowIncludes, true),
                     Some(s) if s.starts_with("td:") => self.language_standard = Some(s.trim_start_matches("td:").to_string()),
                     Some(s) => panic!("Unhandled characters in build info arg: 's{s}'; Data: \"{args_string}\""),
                     None => panic!("Unhandled characters in build info arg: 's'; Data: \"{args_string}\""),
@@ -1323,6 +1381,19 @@ impl Module {
                             Some(c) => panic!("Unhandled characters in build info arg: 'Zi-{c}...'; Data: \"{args_string}\""),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'Zi{c}...'; Data: \"{args_string}\""),
+                    }
+
+                    Some('I') => match chars_iter.next() {
+                        None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::GenerateEditAndContinueDebugInfo, true),
+                        Some('+') => match chars_iter.next() {
+                            None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::GenerateEditAndContinueDebugInfo, true),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'ZI+{c}...'; Data: \"{args_string}\""),
+                        }
+                        Some('-') => match chars_iter.next() {
+                            None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::GenerateEditAndContinueDebugInfo, false),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'ZI-{c}...'; Data: \"{args_string}\""),
+                        }
+                        Some(c) => panic!("Unhandled characters in build info arg: 'ZI{c}...'; Data: \"{args_string}\""),
                     }
 
                     Some('l') => match chars_iter.next() {

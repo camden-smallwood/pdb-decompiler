@@ -137,12 +137,13 @@ impl Class {
         machine_type: pdb::MachineType,
         type_info: &pdb::TypeInformation,
         type_finder: &pdb::TypeFinder,
-        type_index: pdb::TypeIndex
+        type_index: pdb::TypeIndex,
+        offset: Option<u64>,
     ) -> pdb::Result<()> {
         match type_finder.find(type_index)?.parse() {
             Ok(pdb::TypeData::FieldList(data)) => {
                 let mut members: Vec<ClassMember> = vec![];
-                let mut prev_offset = 0;
+                let mut prev_offset = offset.unwrap_or(0);
 
                 for field in &data.fields {
                     match field {
@@ -210,8 +211,7 @@ impl Class {
                 }
 
                 if let Some(continuation) = data.continuation {
-                    // recurse
-                    self.add_members(machine_type, type_info, type_finder, continuation)?;
+                    self.add_members(machine_type, type_info, type_finder, continuation, Some(prev_offset))?;
                 }
             }
 
@@ -407,7 +407,7 @@ impl Class {
                         if data.properties.forward_reference() {
                             definition.is_declaration = true;
                         } else if let Some(fields) = data.fields {
-                            definition.add_members(machine_type, type_info, type_finder, fields)?;
+                            definition.add_members(machine_type, type_info, type_finder, fields, None)?;
                         }
                         
                         let mut exists = false;
@@ -483,7 +483,7 @@ impl Class {
                         if data.properties.forward_reference() {
                             definition.is_declaration = true;
                         } else {
-                            definition.add_members(machine_type, type_info, type_finder, data.fields)?;
+                            definition.add_members(machine_type, type_info, type_finder, data.fields, None)?;
                         }
                         
                         let mut exists = false;
