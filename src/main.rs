@@ -415,7 +415,6 @@ fn process_modules<'a>(
     //
 
     for (module_path, module) in modules {
-        println!("Writing module: \"{module_path}\"");
         let path = PathBuf::from(sanitize_path(format!("{}/{}", out_path.to_string_lossy(), module_path.trim_start_matches('/'))));
 
         if let Some(parent_path) = path.parent() {
