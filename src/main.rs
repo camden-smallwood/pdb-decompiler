@@ -143,19 +143,6 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     )
 }
 
-fn load_section_contributions(
-    debug_info: &pdb::DebugInformation,
-) -> pdb::Result<Vec<pdb::DBISectionContribution>> {
-    let mut result = vec![];
-    let mut section_contributions = debug_info.section_contributions()?;
-
-    while let Some(section_contribution) = section_contributions.next()? {
-        result.push(section_contribution);
-    }
-
-    Ok(result)
-}
-
 fn process_type_information<'a>(
     type_info: &'a pdb::TypeInformation,
     type_finder: &mut pdb::TypeFinder<'a>,
@@ -237,6 +224,19 @@ fn process_id_information<'a>(
     }
 
     Ok(())
+}
+
+fn load_section_contributions(
+    debug_info: &pdb::DebugInformation,
+) -> pdb::Result<Vec<pdb::DBISectionContribution>> {
+    let mut result = vec![];
+    let mut section_contributions = debug_info.section_contributions()?;
+
+    while let Some(section_contribution) = section_contributions.next()? {
+        result.push(section_contribution);
+    }
+
+    Ok(result)
 }
 
 fn load_module_global_symbols<'a>(
@@ -449,7 +449,6 @@ fn process_module(
     module_info: &pdb::ModuleInfo,
 ) -> pdb::Result<()> {
     let mut headers = vec![];
-    let mut members = vec![];
     let mut line_offsets = HashMap::new();
     let mut module_file_path = None;
 
@@ -553,9 +552,9 @@ fn process_module(
                 type_finder,
                 script_file,
                 &line_offsets,
+                modules,
                 module_file_path.as_str(),
                 None,
-                &mut members,
                 symbol_data
             )?;
         }
@@ -581,9 +580,9 @@ fn process_module(
             type_finder,
             script_file,
             &line_offsets,
+            modules,
             module_file_path.as_str(),
             Some(&mut module_symbols),
-            &mut members,
             &symbol_data
         )?;
     }
@@ -611,14 +610,6 @@ fn process_module(
         }
     }
 
-    for (path, member) in members {
-        let source_file = path.to_string_lossy().to_lowercase().to_string();
-        let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
-
-        // TODO: check if module already contains member...
-        module.members.push(member);
-    }
-
     Ok(())
 }
 
@@ -631,25 +622,29 @@ fn process_module_symbol_data(
     type_finder: &pdb::TypeFinder,
     script_file: &mut File,
     line_offsets: &HashMap<pdb::StringRef, HashMap<pdb::PdbInternalSectionOffset, pdb::LineInfo>>,
+    modules: &mut HashMap<String, cpp::Module>,
     module_file_path: &str,
     module_symbols: Option<&mut pdb::SymbolIter>,
-    members: &mut Vec<(PathBuf, cpp::ModuleMember)>,
     symbol_data: &pdb::SymbolData,
 ) -> pdb::Result<()> {
     match symbol_data {
         pdb::SymbolData::UsingNamespace(symbol) => {
             let path = PathBuf::from(sanitize_path(module_file_path));
-            let using_namespace = (path, cpp::ModuleMember::UsingNamespace(symbol.name.to_string().to_string()));
+            let source_file = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+            let using_namespace = cpp::ModuleMember::UsingNamespace(symbol.name.to_string().to_string());
 
-            if !members.contains(&using_namespace) {
-                members.push(using_namespace);
+            if !module.members.contains(&using_namespace) {
+                module.members.push(using_namespace);
             }
         }
 
         pdb::SymbolData::UserDefinedType(udt_symbol) => {
             let path = PathBuf::from(sanitize_path(module_file_path));
+            let source_file = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
 
-            let user_defined_type = (path, cpp::ModuleMember::UserDefinedType(format!(
+            let user_defined_type = cpp::ModuleMember::UserDefinedType(format!(
                 "typedef {};",
                 cpp::type_name(
                     machine_type,
@@ -660,15 +655,17 @@ fn process_module_symbol_data(
                     None,
                     false
                 )?
-            )));
+            ));
 
-            if !members.contains(&user_defined_type) {
-                members.push(user_defined_type);
+            if !module.members.contains(&user_defined_type) {
+                module.members.push(user_defined_type);
             }
         }
 
         pdb::SymbolData::Constant(constant_symbol) => {
             let path = PathBuf::from(sanitize_path(module_file_path));
+            let source_file = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
 
             let type_name = cpp::type_name(
                 machine_type,
@@ -685,7 +682,7 @@ fn process_module_symbol_data(
                 return Ok(());
             }
 
-            let constant = (path, cpp::ModuleMember::Constant(format!(
+            let constant = cpp::ModuleMember::Constant(format!(
                 "const {type_name} = {};",
                 match constant_symbol.value {
                     pdb::Variant::U8(x) => format!("0x{:X}", x),
@@ -697,10 +694,10 @@ fn process_module_symbol_data(
                     pdb::Variant::I32(x) => format!("0x{:X}", x),
                     pdb::Variant::I64(x) => format!("0x{:X}", x),
                 }
-            )));
+            ));
 
-            if !members.contains(&constant) {
-                members.push(constant);
+            if !module.members.contains(&constant) {
+                module.members.push(constant);
             }
         }
 
@@ -724,6 +721,9 @@ fn process_module_symbol_data(
                 }
             ));
 
+            let source_file = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+
             let rva = match data_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
                 None => {
@@ -734,15 +734,14 @@ fn process_module_symbol_data(
 
             let address = base_address.unwrap_or(0) + rva.0 as u64;
 
-            for member in members.iter() {
-                if let (p, cpp::ModuleMember::Data(_, a, _)) = member {
-                    if p == &path && a == &address {
-                        return Ok(());
-                    }
-                }
+            if module.members.iter().any(|member| match member {
+                cpp::ModuleMember::Data(_, a, _) if *a == address => true,
+                _ => false,
+            }) {
+                return Ok(());
             }
 
-            members.push((path, cpp::ModuleMember::Data(
+            module.members.push(cpp::ModuleMember::Data(
                 format!(
                     "{}; // 0x{address:X}",
                     cpp::type_name(
@@ -757,7 +756,7 @@ fn process_module_symbol_data(
                 ),
                 address,
                 line_info.map(|x| x.line_start),
-            )));
+            ));
 
             writeln!(script_file, "decompile_to_file(0x{address:X}, \"{module_file_path}\")")?;
         }
@@ -782,6 +781,9 @@ fn process_module_symbol_data(
                 }
             ));
 
+            let source_file = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+
             let rva = match thread_storage_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
                 None => {
@@ -792,15 +794,14 @@ fn process_module_symbol_data(
 
             let address = base_address.unwrap_or(0) + rva.0 as u64;
 
-            for member in members.iter() {
-                if let (p, cpp::ModuleMember::ThreadStorage(_, a, _)) = member {
-                    if p == &path && a == &address {
-                        return Ok(());
-                    }
-                }
+            if module.members.iter().any(|member| match member {
+                cpp::ModuleMember::Data(_, a, _) if *a == address => true,
+                _ => false,
+            }) {
+                return Ok(());
             }
 
-            members.push((path, cpp::ModuleMember::ThreadStorage(
+            module.members.push(cpp::ModuleMember::ThreadStorage(
                 format!(
                     "thread_local {}; // 0x{address:X}",
                     cpp::type_name(
@@ -815,7 +816,7 @@ fn process_module_symbol_data(
                 ),
                 address,
                 line_info.map(|x| x.line_start),
-            )));
+            ));
 
             writeln!(
                 script_file,
@@ -853,6 +854,9 @@ fn process_module_symbol_data(
                 }
             ));
 
+            let source_file = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+
             let rva = match procedure_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
                 None => {
@@ -863,12 +867,11 @@ fn process_module_symbol_data(
 
             let address = base_address.unwrap_or(0) + rva.0 as u64;
 
-            for member in members.iter() {
-                if let (p, cpp::ModuleMember::Procedure(_, a, _)) = member {
-                    if p == &path && a == &address {
-                        return Ok(());
-                    }
-                }
+            if module.members.iter().any(|member| match member {
+                cpp::ModuleMember::Data(_, a, _) if *a == address => true,
+                _ => false,
+            }) {
+                return Ok(());
             }
 
             let procedure = cpp::type_name(
@@ -885,14 +888,13 @@ fn process_module_symbol_data(
                 return Ok(());
             }
 
-            members.push((
-                path,
+            module.members.push(
                 cpp::ModuleMember::Procedure(
                     format!("{procedure}; // 0x{address:X}"),
                     address,
                     line_info.map(|x| x.line_start),
                 ),
-            ));
+            );
 
             writeln!(
                 script_file,
