@@ -1556,7 +1556,7 @@ impl Module {
 mod tests {
     #[test]
     fn test() {
-        let args_string = "-O2 -DNDEBUG -MD -DCURL_STATICLIB -ID:\\Perforce\\ian.fox-third-party\\3rdParty\\libcurl\\intermediate\\curl-7.55.1\\winbuild -ID:\\Perforce\\ian.fox-third-party\\3rdParty\\libcurl\\intermediate\\curl-7.55.1\\lib -ID:\\Perforce\\ian.fox-third-party\\3rdParty\\libcurl\\intermediate\\curl-7.55.1\\include -nologo -W4 -wd4127 -EHs -EHc -DWIN32 -FD -c -DBUILDING_LIBCURL -ID:\\Perforce\\ian.fox-third-party\\3rdParty\\libcurl\\intermediate\\deps -ID:\\Perforce\\ian.fox-ue4-dev-online\\Engine\\Source\\ThirdParty\\OpenSSL\\1.1.1\\Include -ID:\\Perforce\\ian.fox-ue4-dev-online\\Engine\\Source\\ThirdParty\\zlib\\v1.2.8\\include\\Win64\\VS2015 -DUSE_OPENSSL -ID:\\Perforce\\ian.fox-third-party\\3rdParty\\libcurl\\intermediate\\deps -DHAVE_ZLIB_H -DHAVE_ZLIB -DHAVE_LIBZ -DUSE_WIN32_IDN -DWANT_IDN_PROTOTYPES -DUSE_IPV6 -Zi -I\"C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\INCLUDE\" -I\"C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\ATLMFC\\INCLUDE\" -I\"C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.17134.0\\ucrt\" -I\"C:\\Program Files (x86)\\Windows Kits\\NETFXSDK\\4.6.1\\include\\um\" -I\"C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.17134.0\\shared\" -I\"C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.17134.0\\um\" -I\"C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.17134.0\\winrt\" -TC -X";
+        let args_string = "";
         let mut chars_iter = args_string.chars().peekable();
         let mut module = super::Module::default();
         module.parse_arguments(
