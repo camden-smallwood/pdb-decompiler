@@ -502,20 +502,27 @@ impl Module {
             args.push(arg);
         }
 
-        if args.len() < 5 {
+        // println!("Module build info args: [");
+        // for arg in args.iter() {
+        //     println!("\t\"{arg}\",");
+        // }
+        // println!("]");
+
+        if args.len() != 2 && args.len() != 5 {
             panic!(
                 "Unexpected build info arguments: [{}]",
                 args.iter().map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(", "),
             );
         }
 
-        let mut args_iter = args.iter();
+        let arg_count = args.len();
+        let mut args_iter = args.into_iter();
 
         let root_path = args_iter.next().unwrap();
-        let compiler_path = args_iter.next().unwrap();
+        let compiler_path = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
         let module_path = args_iter.next().unwrap();
-        let pdb_path = args_iter.next().unwrap();
-        let args_string = args_iter.next().unwrap();
+        let pdb_path = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
+        let args_string = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
 
         self.path = crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path.as_str(), module_path.as_str(), false);
         self.compiler_path = compiler_path.into();
