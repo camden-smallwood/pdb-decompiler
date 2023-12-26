@@ -139,6 +139,7 @@ pub enum ModuleSecondaryFlags {
     ClrPure = 1 << 33,
     ClrSafe = 1 << 34,
     JustMyCode = 1 << 35,
+    GenerateXmlDocumentation = 1 << 36,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -167,7 +168,6 @@ pub struct Module {
     pub disable_warnings_after_version: Option<String>,
     pub openmp: Option<String>,
     pub language_standard: Option<String>,
-    pub diagnostics: Option<String>,
     pub external_headers: Vec<String>,
     pub external_headers_var: Option<String>,
     pub external_headers_warning_level: Option<usize>,
@@ -185,6 +185,10 @@ pub struct Module {
     pub stack_probe_threshold: Option<usize>,
     pub source_charset: Option<String>,
     pub execution_charset: Option<String>,
+    pub constexpr_backtrace: Option<usize>,
+    pub constexpr_depth: Option<usize>,
+    pub constexpr_steps: Option<usize>,
+    pub doc_file: Option<String>,
 
     pub additional_include_dirs: Vec<PathBuf>,
     pub using_directive_dirs: Vec<PathBuf>,
@@ -202,6 +206,7 @@ pub struct Module {
     pub d1_args: Vec<String>,
     pub d2_args: Vec<String>,
     pub trim_files: Vec<String>,
+    pub diagnostics: Vec<String>,
 }
 
 impl Module {
@@ -670,6 +675,9 @@ impl Module {
                         Some(s) if s == "lr:nostdlib" => self.set_secondary_flag(ModuleSecondaryFlags::ClrNoStdLib, true),
                         Some(s) if s == "lr:pure" => self.set_secondary_flag(ModuleSecondaryFlags::ClrPure, true),
                         Some(s) if s == "lr:safe" => self.set_secondary_flag(ModuleSecondaryFlags::ClrSafe, true),
+                        Some(s) if s.starts_with("onstexpr:backtrace") => self.constexpr_backtrace = Some(s.trim_start_matches("onstexpr:backtrace").parse().expect("Invalid constexpr backtrace level")),
+                        Some(s) if s.starts_with("onstexpr:depth") => self.constexpr_depth = Some(s.trim_start_matches("onstexpr:depth").parse().expect("Invalid constexpr depth level")),
+                        Some(s) if s.starts_with("onstexpr:steps") => self.constexpr_steps = Some(s.trim_start_matches("onstexpr:steps").parse().expect("Invalid constexpr step count")),
                         Some(s) => panic!("Unhandled characters in build info arg: 'c{s}'; Data: \"{args_string}\""),
                     }
                 }
@@ -691,9 +699,19 @@ impl Module {
                     }
 
                     Some('i') => match parse_arg_string(chars_iter) {
-                        Some(s) if s.starts_with("agnostics:") => self.diagnostics = Some(s.trim_start_matches("agnostics:").to_string()),
+                        Some(s) if s == "agnostics" => self.diagnostics.push("column".into()),
+                        Some(s) if s.starts_with("agnostics:") => self.diagnostics.push(s.trim_start_matches("agnostics:").into()),
                         Some(s) => panic!("Unhandled characters in build info arg: 'di{s}'; Data: \"{args_string}\""),
                         None => panic!("Unhandled characters in build info arg: 'di'; Data: \"{args_string}\""),
+                    }
+
+                    Some('o') => match chars_iter.next() {
+                        Some('c') => match parse_arg_string(chars_iter) {
+                            Some(s) => self.doc_file = Some(s),
+                            None => self.set_secondary_flag(ModuleSecondaryFlags::GenerateXmlDocumentation, true),
+                        }
+                        Some(c) => panic!("Unhandled characters in build info arg: 'do{c}...'; Data: \"{args_string}\""),
+                        None => panic!("Unhandled characters in build info arg: 'do'; Data: \"{args_string}\""),
                     }
 
                     Some(c) => panic!("Unhandled characters in build info arg: 'd{c}...'; Data: \"{args_string}\""),
@@ -730,7 +748,7 @@ impl Module {
                         Some(s) => panic!("Unhandled characters in build info arg: 'er{s}'; Data: \"{args_string}\""),
                         None => panic!("Unhandled characters in build info arg: 'er'; Data: \"{args_string}\""),
                     }
-                    Some('x') => match chars_iter.by_ref().take_while(|c| *c != ':').collect::<String>().as_str() {
+                    Some('x') => match chars_iter.by_ref().take_while(|c| *c != ':' && !c.is_whitespace()).collect::<String>().as_str() {
                         "ecution-charset" => match parse_arg_string(chars_iter) {
                             Some(s) => self.execution_charset = Some(s.into()),
                             None => panic!("Unhandled characters in build info arg: 'execution-charset:'; Data: \"{args_string}\""),
@@ -1518,7 +1536,7 @@ impl Module {
 mod tests {
     #[test]
     fn test() {
-        let args_string = "-c -Zi -JMC -nologo -W3 -WX- -diagnostics:classic -O2 -Ob2 -Oi -DWIN32 -DNDEBUG -D_LIB -D_UNICODE -DUNICODE -Gm- -EHs -EHc -MDd -GS -Gy -fp:precise -Zc:wchar_t -Zc:forScope -Zc:inline -Gd -TC -FC -errorreport:prompt -ID:\\Dev-Enterprise\\Engine\\Source\\ThirdParty\\MikkTSpace\\inc -I\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\VC\\Tools\\MSVC\\14.16.27023\\include\" -I\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\VC\\Tools\\MSVC\\14.16.27023\\atlmfc\\include\" -I\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\VC\\Auxiliary\\VS\\include\" -I\"C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.10240.0\\ucrt\" -I\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\VC\\Auxiliary\\VS\\UnitTest\\include\\v150\" -I\"C:\\Program Files (x86)\\Windows Kits\\8.1\\Include\\um\" -I\"C:\\Program Files (x86)\\Windows Kits\\8.1\\Include\\shared\" -I\"C:\\Program Files (x86)\\Windows Kits\\8.1\\Include\\winrt\" -I\"C:\\Program Files (x86)\\Windows Kits\\NETFXSDK\\4.6.1\\Include\\um\" -X";
+        let args_string = "";
         let mut chars_iter = args_string.chars().peekable();
         let mut module = super::Module::default();
         module.parse_arguments(
