@@ -126,6 +126,8 @@ pub enum ModuleSecondaryFlags {
     ShowIncludes = 1 << 20,
     UseStdcallCallingConvention = 1 << 21,
     CreateHotpatchableImage = 1 << 22,
+    NoCfgRngChk = 1 << 23,
+    ValidateUtf8Charset = 1 << 24,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -1085,6 +1087,7 @@ impl Module {
                 }
 
                 Some('n') => match parse_arg_string(chars_iter) {
+                    Some(s) if s == "ocfgrngchk" => self.set_secondary_flag(ModuleSecondaryFlags::NoCfgRngChk, true),
                     Some(s) if s == "ologo" => self.set_primary_flag(ModulePrimaryFlags::Nologo, true),
                     Some(s) if s == "odatetime" => self.set_secondary_flag(ModuleSecondaryFlags::NoDateTime, true),
                     Some(s) if s == "othreadsafestatics" => self.set_primary_flag(ModulePrimaryFlags::NoThreadSafeStatics, true),
@@ -1256,7 +1259,17 @@ impl Module {
                     None => panic!("Unexpected character in build info arg: 'T'; Data: \"{args_string}\""),
                 }
 
+                Some('u') => match parse_arg_string(chars_iter) {
+                    Some(s) if s == "tf-8" => {
+                        self.source_charset = Some("utf-8".into());
+                        self.execution_charset = Some("utf-8".into());
+                    }
+                    Some(s) => panic!("Unhandled characters in build info arg: 'u{s}'; Data: \"{args_string}\""),
+                    None => panic!("Unexpected character in build info arg: 'u'; Data: \"{args_string}\""),
+                }
+
                 Some('v') => match parse_arg_string(chars_iter) {
+                    Some(s) if s == "alidate-charset" => self.set_secondary_flag(ModuleSecondaryFlags::ValidateUtf8Charset, true),
                     Some(s) if s == "c7dname" => self.set_secondary_flag(ModuleSecondaryFlags::Vc7DName, true),
                     Some(s) if s == "ersionLKG171" => self.set_secondary_flag(ModuleSecondaryFlags::VersionLKG171, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'v{s}'; Data: \"{args_string}\""),
