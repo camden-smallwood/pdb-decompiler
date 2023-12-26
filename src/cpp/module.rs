@@ -502,6 +502,13 @@ impl Module {
             args.push(arg);
         }
 
+        if args.len() < 5 {
+            panic!(
+                "Unexpected build info arguments: [{}]",
+                args.iter().map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(", "),
+            );
+        }
+
         let mut args_iter = args.iter();
 
         let root_path = args_iter.next().unwrap();
