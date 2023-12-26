@@ -128,6 +128,17 @@ pub enum ModuleSecondaryFlags {
     CreateHotpatchableImage = 1 << 22,
     NoCfgRngChk = 1 << 23,
     ValidateUtf8Charset = 1 << 24,
+    GenerateArm64ECCompatibleAbi = 1 << 25,
+    ClrCompatible = 1 << 26,
+    ClrImplicitKeepAlive = 1 << 27,
+    ClrInitialAppDomain = 1 << 28,
+    ClrNetCore = 1 << 29,
+    ClrNoAssembly = 1 << 30,
+    ClrNoStdImport = 1 << 31,
+    ClrNoStdLib = 1 << 32,
+    ClrPure = 1 << 33,
+    ClrSafe = 1 << 34,
+    JustMyCode = 1 << 35,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -596,6 +607,7 @@ impl Module {
                     Some(s) if s == "nalyze" => self.set_primary_flag(ModulePrimaryFlags::EnableCodeAnalysis, true),
                     Some(s) if s == "nalyze-" => self.set_primary_flag(ModulePrimaryFlags::EnableCodeAnalysis, false),
                     Some(s) if s.starts_with("rch:") => self.minimum_cpu_architecture = Some(s[4..].to_owned()),
+                    Some(s) if s == "rm64EC" => self.set_secondary_flag(ModuleSecondaryFlags::GenerateArm64ECCompatibleAbi, true),
                     Some(s) if s == "wait" => self.set_primary_flag(ModulePrimaryFlags::EnableCoroutines, true),
                     Some(s) if s == "wait:strict" => self.set_primary_flag(ModulePrimaryFlags::EnableCoroutinesStrict, true),
                     Some(s) => panic!("Unhandled characters in build info arg: 'a{s}'; Data: \"{args_string}\""),
@@ -633,19 +645,33 @@ impl Module {
                     None => panic!("Unhandled characters in build info arg: 'B'; Data: \"{args_string}\""),
                 }
 
-                Some('c') => match chars_iter.next() {
-                    None | Some('-') | Some(' ') => self.set_primary_flag(ModulePrimaryFlags::CompileWithoutLinking, true),
-                    Some('b') => match parse_arg_string(chars_iter) {
-                        Some(s) if s == "string" => self.set_primary_flag(ModulePrimaryFlags::UseByteStrings, true),
-                        None => panic!("Unhandled characters in build info arg: 'cb'; Data: \"{args_string}\""),
-                        Some(s) => panic!("Unhandled characters in build info arg: 'cb{s}'; Data: \"{args_string}\""),
+                Some('c') => {
+                    match chars_iter.peek() {
+                        Some(c) if c.is_whitespace() => {
+                            self.set_primary_flag(ModulePrimaryFlags::CompileWithoutLinking, true);
+                            continue;
+                        }
+                        
+                        _ => {}
                     }
-                    Some('g') => match parse_arg_string(chars_iter) {
-                        Some(s) if s.starts_with("threads") => self.code_generation_threads = Some(s.trim_start_matches("threads").parse().expect("Invalid code generation thread count")),
-                        None => panic!("Unhandled characters in build info arg: 'cg'; Data: \"{args_string}\""),
-                        Some(s) => panic!("Unhandled characters in build info arg: 'cg{s}'; Data: \"{args_string}\""),
+
+                    match parse_arg_string(chars_iter) {
+                        None => self.set_primary_flag(ModulePrimaryFlags::CompileWithoutLinking, true),
+                        Some(s) if s == "-" => self.set_primary_flag(ModulePrimaryFlags::CompileWithoutLinking, false),
+                        Some(s) if s == "bstring" => self.set_primary_flag(ModulePrimaryFlags::UseByteStrings, true),
+                        Some(s) if s.starts_with("gthreads") => self.code_generation_threads = Some(s.trim_start_matches("threads").parse().expect("Invalid code generation thread count")),
+                        Some(s) if s == "lr" => self.set_secondary_flag(ModuleSecondaryFlags::ClrCompatible, true),
+                        Some(s) if s == "lr:implicitKeepAlive" => self.set_secondary_flag(ModuleSecondaryFlags::ClrImplicitKeepAlive, true),
+                        Some(s) if s == "lr:implicitKeepAlive-" => self.set_secondary_flag(ModuleSecondaryFlags::ClrImplicitKeepAlive, false),
+                        Some(s) if s == "lr:initialAppDomain" => self.set_secondary_flag(ModuleSecondaryFlags::ClrInitialAppDomain, true),
+                        Some(s) if s == "lr:netcore" => self.set_secondary_flag(ModuleSecondaryFlags::ClrNetCore, true),
+                        Some(s) if s == "lr:noAssembly" => self.set_secondary_flag(ModuleSecondaryFlags::ClrNoAssembly, true),
+                        Some(s) if s == "lr:nostdimport" => self.set_secondary_flag(ModuleSecondaryFlags::ClrNoStdImport, true),
+                        Some(s) if s == "lr:nostdlib" => self.set_secondary_flag(ModuleSecondaryFlags::ClrNoStdLib, true),
+                        Some(s) if s == "lr:pure" => self.set_secondary_flag(ModuleSecondaryFlags::ClrPure, true),
+                        Some(s) if s == "lr:safe" => self.set_secondary_flag(ModuleSecondaryFlags::ClrSafe, true),
+                        Some(s) => panic!("Unhandled characters in build info arg: 'c{s}'; Data: \"{args_string}\""),
                     }
-                    Some(c) => panic!("Unhandled characters in build info arg: 'c{c}...'; Data: \"{args_string}\""),
                 }
 
                 Some('C') => match chars_iter.next() {
@@ -1045,6 +1071,12 @@ impl Module {
                 Some('I') => match parse_arg_string(chars_iter) {
                     Some(x) => self.additional_include_dirs.push(crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, x.as_str(), true)),
                     None => panic!("Missing string from additional include directory arg"),
+                }
+
+                Some('J') => match parse_arg_string(chars_iter) {
+                    Some(s) if s == "MC" => self.set_secondary_flag(ModuleSecondaryFlags::JustMyCode, true),
+                    Some(s) => panic!("Unexpected characters in build info arg: 'J{s}'; Data: \"{args_string}\""),
+                    None => panic!("Unexpected character in build info arg: 'J'; Data: \"{args_string}\""),
                 }
 
                 Some('L') => match chars_iter.next() {
@@ -1486,7 +1518,7 @@ impl Module {
 mod tests {
     #[test]
     fn test() {
-        let args_string = "";
+        let args_string = "-c -Zi -JMC -nologo -W3 -WX- -diagnostics:classic -O2 -Ob2 -Oi -DWIN32 -DNDEBUG -D_LIB -D_UNICODE -DUNICODE -Gm- -EHs -EHc -MDd -GS -Gy -fp:precise -Zc:wchar_t -Zc:forScope -Zc:inline -Gd -TC -FC -errorreport:prompt -ID:\\Dev-Enterprise\\Engine\\Source\\ThirdParty\\MikkTSpace\\inc -I\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\VC\\Tools\\MSVC\\14.16.27023\\include\" -I\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\VC\\Tools\\MSVC\\14.16.27023\\atlmfc\\include\" -I\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\VC\\Auxiliary\\VS\\include\" -I\"C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.10240.0\\ucrt\" -I\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\VC\\Auxiliary\\VS\\UnitTest\\include\\v150\" -I\"C:\\Program Files (x86)\\Windows Kits\\8.1\\Include\\um\" -I\"C:\\Program Files (x86)\\Windows Kits\\8.1\\Include\\shared\" -I\"C:\\Program Files (x86)\\Windows Kits\\8.1\\Include\\winrt\" -I\"C:\\Program Files (x86)\\Windows Kits\\NETFXSDK\\4.6.1\\Include\\um\" -X";
         let mut chars_iter = args_string.chars().peekable();
         let mut module = super::Module::default();
         module.parse_arguments(
