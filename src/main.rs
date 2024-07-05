@@ -112,7 +112,13 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
 
     let machine_type = debug_info.machine_type().unwrap_or(pdb::MachineType::Unknown);
 
-    process_type_information(&type_info, &mut type_finder).map_err(|e| format!("failed to process type info: {e}"))?;
+    process_type_information(
+        &out_path,
+        machine_type,
+        &type_info,
+        &mut type_finder,
+        id_info.is_empty(),
+    ).map_err(|e| format!("failed to process type info: {e}"))?;
     
     process_id_information(
         &out_path,
@@ -144,13 +150,87 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
 }
 
 fn process_type_information<'a>(
+    out_path: &Path,
+    machine_type: pdb::MachineType,
     type_info: &'a pdb::TypeInformation,
     type_finder: &mut pdb::TypeFinder<'a>,
+    export_all: bool,
 ) -> pdb::Result<()> {
     let mut type_iter = type_info.iter();
 
-    while type_iter.next()?.is_some() {
+    let mut exported_forward_reference_indices = vec![];
+    let mut exported_type_indices = vec![];
+
+    while let Ok(Some(type_item)) = type_iter.next() {
         type_finder.update(&type_iter);
+        
+        if !export_all {
+            continue;
+        }
+        
+        let type_data = match type_item.parse() {
+            Ok(x) => x,
+            Err(e) => {
+                println!("WARNING: Failed to parse type: {e} - {type_item:#?}");
+                continue;
+            }
+        };
+
+        if let Some(forward_reference) = match type_data {
+            pdb::TypeData::Class(class_type) => Some(class_type.properties.forward_reference()),
+            pdb::TypeData::Enumeration(enum_type) => Some(enum_type.properties.forward_reference()),
+            pdb::TypeData::Union(union_type) => Some(union_type.properties.forward_reference()),
+            _ => None,
+        } {
+            if forward_reference {
+                exported_forward_reference_indices.push(type_item.index());
+            } else {
+                exported_type_indices.push(type_item.index());
+            }
+        }
+    }
+
+    if exported_type_indices.is_empty() && exported_forward_reference_indices.is_empty() {
+        return Ok(());
+    }
+
+    let exported_path = PathBuf::from(format!("{}/exported.h", out_path.to_string_lossy()));
+
+    let mut module = cpp::Module::default();
+    module.path = exported_path.clone();
+
+    for type_index in exported_forward_reference_indices {
+        if let Err(e) = module.add_type_definition(machine_type, type_info, type_finder, type_index, 0) {
+            panic!("{e}");
+        }
+    }
+
+    for type_index in exported_type_indices {
+        if let Err(e) = module.add_type_definition(machine_type, type_info, type_finder, type_index, 0) {
+            panic!("{e}");
+        }
+    }
+
+    if let Some(parent_path) = exported_path.parent() {
+        if let Err(e) = fs::create_dir_all(parent_path) {
+            panic!("{e}");
+        }
+    }
+
+    let mut file = if exported_path.exists() {
+        match OpenOptions::new().write(true).append(true).open(exported_path.clone()) {
+            Ok(x) => x,
+            Err(e) => panic!("{e}: {}", exported_path.to_string_lossy()),
+        }
+    } else {
+        match File::create(exported_path.clone()) {
+            Ok(x) => x,
+            Err(e) => panic!("{e}: {}", exported_path.to_string_lossy()),
+        }
+    };
+
+    if let Err(e) = write!(file, "{module}") {
+        panic!("{e}");
     }
 
     Ok(())

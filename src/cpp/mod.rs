@@ -322,6 +322,21 @@ pub fn type_name<'p>(
             format!("{}({})", name, argument_list(machine_type, type_info, type_finder, data.argument_list, parameter_names)?.join(", "))
         }
 
+        pdb::TypeData::MethodList(_) => {
+            println!("WARNING: Encountered method list in type_name, using `...`");
+            format!("/* TODO: method list */ ...")
+        }
+
+        pdb::TypeData::ArgumentList(_) => {
+            println!("WARNING: Encountered argument list in type_name, using `...`");
+            format!("/* TODO: argument list */ ...")
+        }
+
+        pdb::TypeData::FieldList(_) => {
+            println!("WARNING: Encountered field list in type_name, using `...`");
+            format!("/* TODO: field list */ ...")
+        }
+
         _ => panic!(
             "Unhandled type data for type_name at index {}: {:#?}",
             type_index, type_data
@@ -352,7 +367,7 @@ pub fn type_size<'p>(
         })
         | pdb::TypeData::Pointer(_)
         | pdb::TypeData::Procedure(_) => match machine_type {
-            pdb::MachineType::X86 => Ok(4),
+            pdb::MachineType::Unknown | pdb::MachineType::X86 => Ok(4),
             pdb::MachineType::Amd64 => Ok(8),
             _ => panic!("Unhandled machine type: {machine_type}")
         }
