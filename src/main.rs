@@ -64,7 +64,7 @@ pub fn canonicalize_path(out_path: &str, root_path: &str, path: &str, is_directo
     }
 
     match path.canonicalize() {
-        Ok(x) => x.to_string_lossy().replace(out_path, "").into(),
+        Ok(x) => x.to_string_lossy().replace(out_path, "").trim_start_matches("\\\\?\\").into(),
         Err(e) => panic!("Failed to canonicalize path \"{}\": {e}", path.to_string_lossy())
     }
 }
