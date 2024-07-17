@@ -905,6 +905,8 @@ fn process_module_symbol_data(
         }
 
         pdb::SymbolData::Procedure(procedure_symbol) => {
+            println!("Procedure symbol: {}", procedure_symbol.name.to_string());
+
             let module_symbols = match module_symbols {
                 Some(x) => x,
                 None => {
@@ -912,7 +914,7 @@ fn process_module_symbol_data(
                     return Ok(());
                 }
             };
-            
+
             let parameters = parse_procedure_symbols(module_symbols);
 
             let mut file_name_ref = None;
@@ -1021,7 +1023,8 @@ fn process_module_symbol_data(
 }
 
 fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
-    let mut parameter_names = vec![];
+    let mut register_variable_names = vec![];
+    let mut register_relative_names = vec![];
 
     loop {
         let symbol = match symbols.next() {
@@ -1040,25 +1043,67 @@ fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
         match symbol_data {
             pdb::SymbolData::ScopeEnd => break,
 
-            pdb::SymbolData::RegisterRelative(x) => parameter_names.push(x.name.to_string().to_string()),
+            pdb::SymbolData::RegisterVariable(x) => {
+                println!("Storing {x:#?}");
+                register_variable_names.push(x.name.to_string().to_string());
+            }
 
-            pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
-            pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
-            pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
+            pdb::SymbolData::RegisterRelative(x) => {
+                println!("Storing {x:#?}");
+                register_relative_names.push(x.name.to_string().to_string());
+            }
 
-            pdb::SymbolData::Constant(_)
-            | pdb::SymbolData::Data(_)
-            | pdb::SymbolData::Local(_)
-            | pdb::SymbolData::Label(_)
-            | pdb::SymbolData::UserDefinedType(_)
-            | pdb::SymbolData::RegisterVariable(_)
-            | pdb::SymbolData::ThreadStorage(_) => {}
+            pdb::SymbolData::Block(x) => {
+                println!("Parsing Block: {x:#?}");
+                parse_block_symbols(symbols)
+            }
+
+            pdb::SymbolData::InlineSite(x) => {
+                println!("Parsing InlineSite: {x:#?}");
+                parse_inline_site_symbols(symbols)
+            }
+
+            pdb::SymbolData::SeparatedCode(x) => {
+                println!("Parsing SeparatedCode: {x:#?}");
+                parse_separated_code_symbols(symbols)
+            }
+
+            pdb::SymbolData::Constant(x) => println!("WARNING: Unused {x:#?}"),
+            pdb::SymbolData::Data(x) => println!("WARNING: Unused {x:#?}"),
+            pdb::SymbolData::Local(x) => println!("WARNING: Unused {x:#?}"),
+            pdb::SymbolData::Label(x) => println!("WARNING: Unused {x:#?}"),
+            pdb::SymbolData::UserDefinedType(x) => println!("WARNING: Unused {x:#?}"),
+            pdb::SymbolData::ThreadStorage(x) => println!("WARNING: Unused {x:#?}"),
 
             data => panic!("Unhandled symbol data in parse_procedure_symbols - {data:?}"),
         }
     }
 
-    parameter_names
+    //
+    // NOTE:
+    //
+    // Some PDBs have all the function parameter names in RegisterVariable symbols,
+    // but still have extra RegisterRelative symbols.
+    //
+    // Other PDBs don't have any RegisterVariable symbols at all, and store all
+    // the function parameter names in RegisterRelative symbols, but can have more
+    // symbols than parameter names.
+    //
+    // In all cases observed so far, the parameter name symbols come first,
+    // then the extra RegisterRelative symbols follow.
+    //
+    // Are these extra RegisterRelative symbols local variable names?
+    //
+    // HACK:
+    //
+    // If we don't have any RegisterVariable symbols, use RegisterRelative symbols.
+    //
+
+    if register_variable_names.is_empty() {
+        return register_relative_names;
+    }
+
+    register_variable_names
 }
 
 fn parse_block_symbols(symbols: &mut pdb::SymbolIter) {
