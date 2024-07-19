@@ -1,4 +1,4 @@
-use super::{type_name, Class, Enum};
+use super::{type_name, Class, Enum, Procedure};
 use std::{fmt, iter::Peekable, path::PathBuf, str::Chars};
 
 pub static SOURCE_FILE_EXTS: &[&str] = &[
@@ -14,7 +14,7 @@ pub enum ModuleMember {
     Constant(String),
     Data(String, u64, Option<u32>),
     ThreadStorage(String, u64, Option<u32>),
-    Procedure(String, u64, Option<u32>),
+    Procedure(Procedure),
 }
 
 impl fmt::Display for ModuleMember {
@@ -28,7 +28,7 @@ impl fmt::Display for ModuleMember {
             Self::Constant(c) => c.fmt(f),
             Self::Data(d, _, _) => d.fmt(f),
             Self::ThreadStorage(t, _, _) => t.fmt(f),
-            Self::Procedure(p, _, _) => p.fmt(f),
+            Self::Procedure(p) => p.fmt(f),
         }
     }
 }
@@ -1614,7 +1614,7 @@ impl fmt::Display for Module {
                     prev_line = *line;
                 }
 
-                ModuleMember::Procedure(_, _, Some(line)) => {
+                ModuleMember::Procedure(Procedure { line: Some(line), .. }) => {
                     storage.push((*line, u.clone()));
                     prev_line = *line;
                 }

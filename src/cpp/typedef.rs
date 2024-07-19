@@ -2,7 +2,7 @@
 pub struct TypeDefinition {
     pub type_name: String,
     pub underlying_type: pdb::TypeIndex,
-    pub field_attributes: pdb::FieldAttributes,
+    pub field_attributes: Option<pdb::FieldAttributes>,
     pub pointer_attributes: Option<pdb::PointerAttributes>,
     pub containing_class: Option<pdb::TypeIndex>,
 }

@@ -1,20 +1,35 @@
 mod cpp;
+mod tabbed;
 
 use pdb::FallibleIterator;
-use std::{collections::HashMap, error::Error, fs::{self, File, OpenOptions}, io::Write, num, path::{PathBuf, Path}};
+use std::{
+    collections::HashMap,
+    error::Error,
+    fs::{self, File, OpenOptions},
+    io::Write,
+    num,
+    path::PathBuf,
+};
 use structopt::StructOpt;
 
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 #[structopt(name = "pdb-decompiler", about = "A tool to decompile MSVC PDB files to C++ source code.")]
 struct Options {
+    /// The output directory to dump all C++ code to.
     #[structopt(short, long, parse(from_os_str))]
     out: Option<PathBuf>,
 
+    /// The file path to the MSVC PDB file to decompile.
     #[structopt(short, long)]
     pdb: Option<String>,
 
+    /// The base address to add when resolving an RVA (optional).
     #[structopt(short, long, parse(try_from_str = parse_base_address))]
     base_address: Option<u64>,
+
+    /// Whether to include scope information in decompiled function stubs.
+    #[structopt(short, long)]
+    unroll_functions: bool,
 }
 
 fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
@@ -80,18 +95,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         *out = canonicalize_path(out.to_str().unwrap_or(""), "", "", true);
     }
 
-    let pdb = pdb::PDB::open(File::open(options.pdb.clone().ok_or("PDB path not provided")?)?)?;
+    let pdb_path = options.pdb.clone().ok_or("PDB path not provided")?;
+    let pdb = pdb::PDB::open(File::open(pdb_path)?)?;
 
-    if let Err(error) = decompile_pdb(options, pdb) {
+    if let Err(error) = decompile_pdb(&options, pdb) {
         println!("ERROR: could not decompile PDB because it {error}");
     }
 
     Ok(())
 }
 
-fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dyn Error>> {
+fn decompile_pdb(options: &Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dyn Error>> {
     let debug_info = pdb.debug_information().map_err(|e| format!("does not contain debug information: {e}"))?;
+    let machine_type = debug_info.machine_type().unwrap_or(pdb::MachineType::Unknown);
+
     let address_map = pdb.address_map().map_err(|e| format!("does not contain an address map: {e}"))?;
+    
     let string_table = pdb.string_table().map_err(|e| format!("does not contain a string table: {e}"))?;
 
     let type_info = pdb.type_information().map_err(|e| format!("does not contain type information: {e}"))?;
@@ -104,16 +123,14 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
 
     let mut modules = HashMap::new();
 
-    let out_path: PathBuf = options.out.ok_or_else(|| "Out path not supplied".to_string())?;
+    let out_path = options.out.as_ref().ok_or_else(|| "Out path not supplied".to_string())?;
     fs::create_dir_all(out_path.clone())?;
 
     let mut script_file = File::create(out_path.join("ida_script.py"))?;
     writeln!(script_file, include_str!("../ida_script_base.py"))?;
 
-    let machine_type = debug_info.machine_type().unwrap_or(pdb::MachineType::Unknown);
-
     process_type_information(
-        &out_path,
+        options,
         machine_type,
         &type_info,
         &mut type_finder,
@@ -121,7 +138,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     ).map_err(|e| format!("failed to process type info: {e}"))?;
     
     process_id_information(
-        &out_path,
+        options,
         machine_type,
         &string_table,
         &id_info,
@@ -133,7 +150,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
     .map_err(|e| format!("failed to process id info: {e}"))?;
 
     process_modules(
-        &out_path,
+        options,
         machine_type,
         options.base_address,
         &mut pdb,
@@ -150,7 +167,7 @@ fn decompile_pdb(options: Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dy
 }
 
 fn process_type_information<'a>(
-    out_path: &Path,
+    options: &Options,
     machine_type: pdb::MachineType,
     type_info: &'a pdb::TypeInformation,
     type_finder: &mut pdb::TypeFinder<'a>,
@@ -194,7 +211,7 @@ fn process_type_information<'a>(
         return Ok(());
     }
 
-    let exported_path = PathBuf::from(format!("{}/exported.h", out_path.to_string_lossy()));
+    let exported_path = PathBuf::from(format!("{}/exported.h", options.out.as_ref().unwrap().to_string_lossy()));
 
     let mut module = cpp::Module::default();
     module.path = exported_path.clone();
@@ -237,7 +254,7 @@ fn process_type_information<'a>(
 }
 
 fn process_id_information<'a>(
-    out_path: &Path,
+    options: &Options,
     machine_type: pdb::MachineType,
     string_table: &pdb::StringTable,
     id_info: &'a pdb::IdInformation,
@@ -262,7 +279,7 @@ fn process_id_information<'a>(
         match id_data {
             pdb::IdData::BuildInfo(build_info) => {
                 let mut module = cpp::Module::default();
-                module.add_build_info(out_path, id_finder, build_info)?;
+                module.add_build_info(options.out.as_ref().unwrap(), id_finder, build_info)?;
 
                 let module_path = module.path.to_string_lossy().to_lowercase().to_string();
                 if module_path.is_empty() {
@@ -392,7 +409,7 @@ fn load_module_global_symbols<'a>(
 }
 
 fn process_modules<'a>(
-    out_path: &Path,
+    options: &Options,
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
     pdb: &mut pdb::PDB<File>,
@@ -421,7 +438,7 @@ fn process_modules<'a>(
         };
 
         if let Err(e) = process_module(
-            out_path,
+            options,
             machine_type,
             base_address,
             address_map,
@@ -495,7 +512,11 @@ fn process_modules<'a>(
     //
 
     for (module_path, module) in modules {
-        let path = PathBuf::from(sanitize_path(format!("{}/{}", out_path.to_string_lossy(), module_path.trim_start_matches('/'))));
+        let path = PathBuf::from(sanitize_path(format!(
+            "{}/{}",
+            options.out.as_ref().unwrap().to_string_lossy(),
+            module_path.trim_start_matches('/'),
+        )));
 
         if let Some(parent_path) = path.parent() {
             fs::create_dir_all(parent_path)?;
@@ -514,7 +535,7 @@ fn process_modules<'a>(
 }
 
 fn process_module(
-    out_path: &Path,
+    options: &Options,
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
     address_map: &pdb::AddressMap,
@@ -528,11 +549,9 @@ fn process_module(
     module: &pdb::Module,
     module_info: &pdb::ModuleInfo,
 ) -> pdb::Result<()> {
-    let mut headers = vec![];
-    let mut line_offsets = HashMap::new();
-    let mut module_file_path = None;
-
-    let line_program = module_info.line_program()?;
+    //
+    // 1. Get the path of the object file
+    //
 
     let mut obj_path = PathBuf::from(sanitize_path(module.module_name()));
 
@@ -563,18 +582,29 @@ fn process_module(
         }
     }
 
-    let mut lines = line_program.lines();
+    //
+    // 2. Get the line offsets from the line program
+    //
 
-    while let Some(line) = lines.next()? {
+    let line_program = module_info.line_program()?;
+
+    let mut line_offsets = HashMap::new();
+
+    for line in line_program.lines().collect::<Vec<_>>()? {
         let file = line_program.get_file_info(line.file_index)?;
         let offsets = line_offsets.entry(file.name).or_insert_with(HashMap::new);
 
         offsets.entry(line.offset).or_insert(line);
     }
 
-    let files = line_program.files().collect::<Vec<_>>()?;
+    //
+    // 3. Get the file path of the module and any header file paths it includes
+    //
 
-    for file in &files {
+    let mut module_file_path = None;
+    let mut headers = vec![];
+
+    for file in line_program.files().collect::<Vec<_>>()? {
         let path = PathBuf::from(sanitize_path(&file.name.to_string_lossy(string_table)?));
 
         match path.extension() {
@@ -588,8 +618,8 @@ fn process_module(
         }
     }
 
+    // HACK: Attempt to find a build info symbol
     if module_file_path.is_none() {
-        // Attempt to find a build info symbol
         let mut module_symbols = module_info.symbols()?;
 
         while let Some(symbol_item) = module_symbols.next()? {
@@ -598,7 +628,7 @@ fn process_module(
             let Ok(pdb::IdData::BuildInfo(build_info)) = id_item.parse() else { continue };
             
             let mut module = cpp::Module::default();
-            module.add_build_info(out_path, id_finder, build_info)?;
+            module.add_build_info(options.out.as_ref().unwrap(), id_finder, build_info)?;
 
             if !module.path.as_os_str().is_empty() {
                 module_file_path = Some(module.path.clone());
@@ -607,6 +637,7 @@ fn process_module(
         }
     }
 
+    // HACK: Skip compiler generated files or print a warning and skip
     if module_file_path.is_none() {
         match module.module_name().to_string().as_str() {
             "* CIL *" | "* Linker *" | "* Linker Generated Manifest RES *" => (),
@@ -621,13 +652,19 @@ fn process_module(
 
     let module_file_path = module_file_path.unwrap().to_string_lossy().replace('\\', "\\\\");
 
+    //
+    // 4. Process the global symbols of the module
+    //
+
     if let Some(global_symbols) = module_global_symbols.get(&module.module_name().to_string()) {
         for symbol_data in global_symbols {
             process_module_symbol_data(
+                options,
                 machine_type,
                 base_address,
                 address_map,
                 string_table,
+                id_finder,
                 type_info,
                 type_finder,
                 script_file,
@@ -639,6 +676,10 @@ fn process_module(
             )?;
         }
     }
+    
+    //
+    // 5. Process the local symbols of the module
+    //
 
     let mut module_symbols = module_info.symbols()?;
 
@@ -652,10 +693,12 @@ fn process_module(
         };
 
         process_module_symbol_data(
+            options,
             machine_type,
             base_address,
             address_map,
             string_table,
+            id_finder,
             type_info,
             type_finder,
             script_file,
@@ -666,6 +709,10 @@ fn process_module(
             &symbol_data
         )?;
     }
+
+    //
+    // 6. Construct the cpp module
+    //
 
     let path = PathBuf::from(module_file_path);
     let source_file = path.to_string_lossy().to_lowercase();
@@ -694,10 +741,12 @@ fn process_module(
 }
 
 fn process_module_symbol_data(
+    options: &Options,
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
     address_map: &pdb::AddressMap,
     string_table: &pdb::StringTable,
+    id_finder: &mut pdb::IdFinder,
     type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder,
     script_file: &mut File,
@@ -915,7 +964,47 @@ fn process_module_symbol_data(
                 }
             };
 
-            let parameters = parse_procedure_symbols(module_symbols);
+            let (
+                register_variable_names,
+                register_relative_names,
+                body
+            ) = parse_procedure_symbols(
+                options,
+                machine_type,
+                base_address.clone(),
+                address_map,
+                id_finder,
+                type_info,
+                type_finder,
+                module_symbols,
+                procedure_symbol,
+            )?;
+            
+            //
+            // NOTE:
+            //
+            // Some PDBs have all the function parameter names in RegisterVariable symbols,
+            // but still have extra RegisterRelative symbols.
+            //
+            // Other PDBs don't have any RegisterVariable symbols at all, and store all
+            // the function parameter names in RegisterRelative symbols, but can have more
+            // symbols than parameter names.
+            //
+            // In all cases observed so far, the parameter name symbols come first,
+            // then the extra RegisterRelative symbols follow.
+            //
+            // Are these extra RegisterRelative symbols local variable names?
+            //
+            // HACK:
+            //
+            // If we don't have any RegisterVariable symbols, use RegisterRelative symbols.
+            //
+
+            let parameters = if register_variable_names.is_empty() {
+                register_relative_names
+            } else {
+                register_variable_names
+            };
 
             let mut file_name_ref = None;
             let mut line_info = None;
@@ -971,11 +1060,13 @@ fn process_module_symbol_data(
             }
 
             module.members.push(
-                cpp::ModuleMember::Procedure(
-                    format!("{procedure}; // 0x{address:X}"),
+                cpp::ModuleMember::Procedure(cpp::Procedure {
                     address,
-                    line_info.map(|x| x.line_start),
-                ),
+                    line: line_info.map(|x| x.line_start),
+                    type_index: procedure_symbol.type_index,
+                    signature: procedure,
+                    body,
+                }),
             );
 
             writeln!(
@@ -1008,139 +1099,188 @@ fn process_module_symbol_data(
             parse_separated_code_symbols(module_symbols)
         }
 
-        pdb::SymbolData::Public(_)
-        | pdb::SymbolData::ProcedureReference(_)
-        | pdb::SymbolData::ObjName(_)
-        | pdb::SymbolData::BuildInfo(_)
-        | pdb::SymbolData::CompileFlags(_)
-        | pdb::SymbolData::Export(_)
-        | pdb::SymbolData::Label(_) => {}
+        pdb::SymbolData::Public(x) => println!("WARNING: Unused {x:#?}"),
+        pdb::SymbolData::ProcedureReference(x) => println!("WARNING: Unused {x:#?}"),
+        pdb::SymbolData::ObjName(x) => println!("WARNING: Unused {x:#?}"),
+        pdb::SymbolData::BuildInfo(x) => println!("WARNING: Unused {x:#?}"),
+        pdb::SymbolData::CompileFlags(x) => println!("WARNING: Unused {x:#?}"),
+        pdb::SymbolData::Export(x) => println!("WARNING: Unused {x:#?}"),
+        pdb::SymbolData::Label(x) => println!("WARNING: Unused {x:#?}"),
 
-        ref data => panic!("Unhandled module symbol: {:#?}", data),
+        ref data => panic!("Unhandled symbol data in process_module_symbol_data - {data:#?}"),
     }
 
     Ok(())
 }
 
-fn parse_procedure_symbols(symbols: &mut pdb::SymbolIter) -> Vec<String> {
-    let mut register_variable_names = vec![];
-    let mut register_relative_names = vec![];
-
-    loop {
-        let symbol = match symbols.next() {
-            Ok(symbol) => match symbol {
-                Some(symbol) => symbol,
-                None => break,
+fn parse_procedure_symbols(
+    options: &Options,
+    machine_type: pdb::MachineType,
+    base_address: Option<u64>,
+    address_map: &pdb::AddressMap,
+    id_finder: &mut pdb::IdFinder,
+    type_info: &pdb::TypeInformation,
+    type_finder: &pdb::TypeFinder,
+    symbols: &mut pdb::SymbolIter,
+    procedure_symbol: &pdb::ProcedureSymbol,
+) -> pdb::Result<(Vec<String>, Vec<String>, Option<cpp::Block>)> {
+    use std::{cell::RefCell, rc::Rc};
+    let register_variable_names = Rc::new(RefCell::new(vec![]));
+    let register_relative_names = Rc::new(RefCell::new(vec![]));
+    
+    let mut block = cpp::Block {
+        address: None,
+        statements: parse_statement_symbols(
+            machine_type,
+            base_address,
+            address_map,
+            id_finder,
+            type_info,
+            type_finder,
+            symbols,
+            |symbol_data| {
+                match symbol_data {
+                    pdb::SymbolData::RegisterVariable(x) => {
+                        register_variable_names.borrow_mut().push(x.name.to_string().to_string());
+                    }
+        
+                    pdb::SymbolData::RegisterRelative(x) => {
+                        register_relative_names.borrow_mut().push(x.name.to_string().to_string());
+                    }
+        
+                    _ => {}
+                }
+        
+                Ok(())
             },
-            _ => continue,
-        };
+        )?,
+    };
 
-        let symbol_data = match symbol.parse() {
-            Ok(symbol_data) => symbol_data,
-            _ => continue,
-        };
+    let mut flags = vec![];
+    if procedure_symbol.flags.nofpo {
+        flags.push("nofpo");
+    }
+    if procedure_symbol.flags.int {
+        flags.push("int");
+    }
+    if procedure_symbol.flags.far {
+        flags.push("far");
+    }
+    if procedure_symbol.flags.never {
+        flags.push("never");
+    }
+    if procedure_symbol.flags.notreached {
+        flags.push("notreached");
+    }
+    if procedure_symbol.flags.cust_call {
+        flags.push("cust_call");
+    }
+    if procedure_symbol.flags.noinline {
+        flags.push("noinline");
+    }
+    if procedure_symbol.flags.optdbginfo {
+        flags.push("optdbginfo");
+    }
+    if !flags.is_empty() {
+        block.statements.insert(0, cpp::Statement::Comment(format!(
+            "procedure flags: {}",
+            flags.join(", "),
+        )));
+    }
 
-        match symbol_data {
-            pdb::SymbolData::ScopeEnd => break,
+    let register_variable_names = register_variable_names.borrow().to_vec();
+    let register_relative_names = register_relative_names.borrow().to_vec();
 
-            pdb::SymbolData::RegisterVariable(x) => {
-                println!("Storing {x:#?}");
-                register_variable_names.push(x.name.to_string().to_string());
-            }
-
-            pdb::SymbolData::RegisterRelative(x) => {
-                println!("Storing {x:#?}");
-                register_relative_names.push(x.name.to_string().to_string());
-            }
-
-            pdb::SymbolData::Block(x) => {
-                println!("Parsing Block: {x:#?}");
-                parse_block_symbols(symbols)
-            }
-
-            pdb::SymbolData::InlineSite(x) => {
-                println!("Parsing InlineSite: {x:#?}");
-                parse_inline_site_symbols(symbols)
-            }
-
-            pdb::SymbolData::SeparatedCode(x) => {
-                println!("Parsing SeparatedCode: {x:#?}");
-                parse_separated_code_symbols(symbols)
-            }
-
-            pdb::SymbolData::Constant(x) => println!("WARNING: Unused {x:#?}"),
-            pdb::SymbolData::Data(x) => println!("WARNING: Unused {x:#?}"),
-            pdb::SymbolData::Local(x) => println!("WARNING: Unused {x:#?}"),
-            pdb::SymbolData::Label(x) => println!("WARNING: Unused {x:#?}"),
-            pdb::SymbolData::UserDefinedType(x) => println!("WARNING: Unused {x:#?}"),
-            pdb::SymbolData::ThreadStorage(x) => println!("WARNING: Unused {x:#?}"),
-
-            data => panic!("Unhandled symbol data in parse_procedure_symbols - {data:?}"),
+    Ok((
+        register_variable_names,
+        register_relative_names,
+        if block.statements.is_empty() || !options.unroll_functions {
+            None
+        } else {
+            Some(block)
         }
-    }
-
-    //
-    // NOTE:
-    //
-    // Some PDBs have all the function parameter names in RegisterVariable symbols,
-    // but still have extra RegisterRelative symbols.
-    //
-    // Other PDBs don't have any RegisterVariable symbols at all, and store all
-    // the function parameter names in RegisterRelative symbols, but can have more
-    // symbols than parameter names.
-    //
-    // In all cases observed so far, the parameter name symbols come first,
-    // then the extra RegisterRelative symbols follow.
-    //
-    // Are these extra RegisterRelative symbols local variable names?
-    //
-    // HACK:
-    //
-    // If we don't have any RegisterVariable symbols, use RegisterRelative symbols.
-    //
-
-    if register_variable_names.is_empty() {
-        return register_relative_names;
-    }
-
-    register_variable_names
+    ))
 }
 
-fn parse_block_symbols(symbols: &mut pdb::SymbolIter) {
-    loop {
-        let symbol = match symbols.next() {
-            Ok(symbol) => match symbol {
-                Some(symbol) => symbol,
-                None => break,
-            },
-            _ => continue,
-        };
-
-        let symbol_data = match symbol.parse() {
-            Ok(symbol_data) => symbol_data,
-            _ => continue,
-        };
-
-        match symbol_data {
-            pdb::SymbolData::ScopeEnd => break,
-
-            pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
-            pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
-            pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
-
-            pdb::SymbolData::Constant(_)
-            | pdb::SymbolData::Data(_)
-            | pdb::SymbolData::Local(_) 
-            | pdb::SymbolData::RegisterRelative(_) 
-            | pdb::SymbolData::Label(_) 
-            | pdb::SymbolData::UserDefinedType(_) => {}
-
-            data => panic!("Unhandled symbol data in parse_block_symbols - {data:?}"),
-        }
-    }
+fn parse_block_symbols(
+    machine_type: pdb::MachineType,
+    base_address: Option<u64>,
+    address_map: &pdb::AddressMap,
+    id_finder: &mut pdb::IdFinder,
+    type_info: &pdb::TypeInformation,
+    type_finder: &pdb::TypeFinder,
+    symbols: &mut pdb::SymbolIter,
+    address: Option<u64>,
+) -> pdb::Result<cpp::Block> {
+    Ok(cpp::Block {
+        address,
+        statements: parse_statement_symbols(
+            machine_type,
+            base_address,
+            address_map,
+            id_finder,
+            type_info,
+            type_finder,
+            symbols,
+            |_| Ok(()),
+        )?,
+    })
 }
 
-fn parse_inline_site_symbols(symbols: &mut pdb::SymbolIter) {
+fn parse_inline_site_symbols(
+    machine_type: pdb::MachineType,
+    base_address: Option<u64>,
+    address_map: &pdb::AddressMap,
+    id_finder: &mut pdb::IdFinder,
+    type_info: &pdb::TypeInformation,
+    type_finder: &pdb::TypeFinder,
+    symbols: &mut pdb::SymbolIter,
+    inline_site: &pdb::InlineSiteSymbol,
+) -> pdb::Result<Vec<cpp::Statement>> {
+    let id_item = id_finder.find(inline_site.inlinee)?;
+    let id_data = id_item.parse()?;
+    
+    let name = match id_data {
+        pdb::IdData::Function(x) => x.name.to_string().to_string(),
+        pdb::IdData::MemberFunction(x) => x.name.to_string().to_string(),
+        _ => todo!(),
+    };
+
+    // for annotation in inline_site.annotations.iter().collect::<Vec<_>>()? {
+    //     if annotation.emits_line_info() {
+    //         todo!("{annotation:#?}");
+    //     }
+    // }
+
+    let mut statements = parse_statement_symbols(
+        machine_type,
+        base_address,
+        address_map,
+        id_finder,
+        type_info,
+        type_finder,
+        symbols,
+        |_| Ok(()),
+    )?;
+
+    statements.insert(0, cpp::Statement::Comment(format!("inline site start: {name}")));
+    statements.push(cpp::Statement::Comment(format!("inline site end: {name}")));
+
+    Ok(statements)
+}
+
+fn parse_statement_symbols<F: Clone + FnMut(&pdb::SymbolData) -> pdb::Result<()>>(
+    machine_type: pdb::MachineType,
+    base_address: Option<u64>,
+    address_map: &pdb::AddressMap,
+    id_finder: &mut pdb::IdFinder,
+    type_info: &pdb::TypeInformation,
+    type_finder: &pdb::TypeFinder,
+    symbols: &mut pdb::SymbolIter,
+    f: F,
+) -> pdb::Result<Vec<cpp::Statement>> {
+    let mut statements = vec![];
+
     loop {
         let symbol = match symbols.next() {
             Ok(symbol) => match symbol {
@@ -1155,23 +1295,192 @@ fn parse_inline_site_symbols(symbols: &mut pdb::SymbolIter) {
             _ => continue,
         };
 
+        f.clone()(&symbol_data)?;
+
         match symbol_data {
-            pdb::SymbolData::InlineSiteEnd => break,
+            pdb::SymbolData::ScopeEnd | pdb::SymbolData::InlineSiteEnd => break,
 
-            pdb::SymbolData::Block(_) => parse_block_symbols(symbols),
-            pdb::SymbolData::InlineSite(_) => parse_inline_site_symbols(symbols),
-            pdb::SymbolData::SeparatedCode(_) => parse_separated_code_symbols(symbols),
+            pdb::SymbolData::RegisterVariable(register_variable_symbol) => {
+                statements.push(cpp::Statement::Variable(cpp::Variable {
+                    signature: cpp::type_name(
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        register_variable_symbol.type_index,
+                        Some(register_variable_symbol.name.to_string().to_string()),
+                        None,
+                        false,
+                    )?,
+                    value: None,
+                    comment: Some(format!("r{}", register_variable_symbol.register.0))
+                }));
+            }
 
-            pdb::SymbolData::Constant(_)
-            | pdb::SymbolData::Data(_)
-            | pdb::SymbolData::Local(_) 
-            | pdb::SymbolData::RegisterRelative(_) 
-            | pdb::SymbolData::Label(_) 
-            | pdb::SymbolData::UserDefinedType(_) => {}
+            pdb::SymbolData::RegisterRelative(register_relative_symbol) => {
+                statements.push(cpp::Statement::Variable(cpp::Variable {
+                    signature: cpp::type_name(
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        register_relative_symbol.type_index,
+                        Some(register_relative_symbol.name.to_string().to_string()),
+                        None,
+                        false,
+                    )?,
+                    value: None,
+                    comment: Some(format!("r{} offset {}", register_relative_symbol.register.0, register_relative_symbol.offset))
+                }));
+            }
 
-            _ => panic!("Unhandled symbol data in parse_inline_site_symbols - {symbol_data:?}"),
+            pdb::SymbolData::Block(block_symbol) => {
+                statements.push(cpp::Statement::Block(parse_block_symbols(
+                    machine_type,
+                    base_address.clone(),
+                    address_map,
+                    id_finder,
+                    type_info,
+                    type_finder,
+                    symbols,
+                    block_symbol.offset.to_rva(address_map).map(|rva| base_address.unwrap_or(0) + rva.0 as u64),
+                )?));
+            }
+
+            pdb::SymbolData::InlineSite(inline_site_symbol) => {
+                statements.extend(parse_inline_site_symbols(
+                    machine_type,
+                    base_address.clone(),
+                    address_map,
+                    id_finder,
+                    type_info,
+                    type_finder,
+                    symbols,
+                    &inline_site_symbol,
+                )?);
+            }
+
+            pdb::SymbolData::SeparatedCode(separated_code_symbol) => {
+                let address = separated_code_symbol.offset
+                    .to_rva(address_map)
+                    .map(|rva| base_address.unwrap_or(0) + rva.0 as u64);
+
+                if let Some(address) = address {
+                    statements.push(cpp::Statement::Comment(format!(
+                        "separated code start @ 0x{address:X}",
+                    )));
+                }
+
+                parse_separated_code_symbols(symbols);
+            }
+
+            pdb::SymbolData::Constant(constant_symbol) => {
+                statements.push(cpp::Statement::Variable(cpp::Variable {
+                    signature: cpp::type_name(
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        constant_symbol.type_index,
+                        Some(constant_symbol.name.to_string().to_string()),
+                        None,
+                        false,
+                    )?,
+                    value: None,
+                    comment: Some(format!(
+                        "constant == {}",
+                        match &constant_symbol.value {
+                            pdb::Variant::U8(x) => format!("{x}"),
+                            pdb::Variant::U16(x) => format!("{x}"),
+                            pdb::Variant::U32(x) => format!("{x}"),
+                            pdb::Variant::U64(x) => format!("{x}"),
+                            pdb::Variant::I8(x) => format!("{x}"),
+                            pdb::Variant::I16(x) => format!("{x}"),
+                            pdb::Variant::I32(x) => format!("{x}"),
+                            pdb::Variant::I64(x) => format!("{x}"),
+                        },
+                    ))
+                }));
+            }
+
+            pdb::SymbolData::Data(data_symbol) => {
+                statements.push(cpp::Statement::Variable(cpp::Variable {
+                    signature: cpp::type_name(
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        data_symbol.type_index,
+                        Some(data_symbol.name.to_string().to_string()),
+                        None,
+                        false,
+                    )?,
+                    value: None,
+                    comment: data_symbol.offset.to_rva(address_map).map(|rva| {
+                        format!("data @ 0x{:X}", base_address.unwrap_or(0) + rva.0 as u64)
+                    }),
+                }));
+            }
+
+            pdb::SymbolData::Local(local_symbol) => {
+                statements.push(cpp::Statement::Variable(cpp::Variable {
+                    signature: cpp::type_name(
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        local_symbol.type_index,
+                        Some(local_symbol.name.to_string().to_string()),
+                        None,
+                        false,
+                    )?,
+                    value: None,
+                    comment: Some("local".into()),
+                }));
+            }
+
+            pdb::SymbolData::Label(label_symbol) => {
+                match label_symbol.offset.to_rva(address_map) {
+                    Some(rva) => {
+                        let address = base_address.unwrap_or(0) + rva.0 as u64;
+                        
+                        statements.push(cpp::Statement::Label(cpp::Label {
+                            name: label_symbol.name.to_string().to_string(),
+                            address,
+                        }));
+                    }
+
+                    None => {
+                        println!("WARNING: no RVA found for label symbol: {symbol_data:?}");
+                    }
+                }
+            }
+            
+            pdb::SymbolData::UserDefinedType(_) => {
+                println!("WARNING: Unused {symbol_data:#?}");
+            }
+
+            pdb::SymbolData::ThreadStorage(tls_symbol) => {
+                statements.push(cpp::Statement::Variable(cpp::Variable {
+                    signature: format!(
+                        "thread_local {}",
+                        cpp::type_name(
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            tls_symbol.type_index,
+                            Some(tls_symbol.name.to_string().to_string()),
+                            None,
+                            false,
+                        )?,
+                    ),
+                    value: None,
+                    comment: tls_symbol.offset.to_rva(address_map).map(|rva| {
+                        format!("thread storage @ 0x{:X}", base_address.unwrap_or(0) + rva.0 as u64)
+                    }),
+                }));
+            }
+
+            _ => panic!("Unhandled symbol data in parse_statement_symbols - {symbol_data:?}"),
         }
     }
+
+    Ok(statements)
 }
 
 fn parse_thunk_symbols(symbols: &mut pdb::SymbolIter) {
@@ -1190,7 +1499,11 @@ fn parse_thunk_symbols(symbols: &mut pdb::SymbolIter) {
         };
 
         match symbol_data {
-            pdb::SymbolData::ScopeEnd => break,
+            pdb::SymbolData::ScopeEnd => {
+                println!("End thunk");
+                break;
+            }
+
             _ => panic!("Unhandled symbol data in parse_thunk_symbols - {symbol_data:?}"),
         }
     }
@@ -1212,7 +1525,11 @@ fn parse_separated_code_symbols(symbols: &mut pdb::SymbolIter) {
         };
 
         match symbol_data {
-            pdb::SymbolData::ScopeEnd => break,
+            pdb::SymbolData::ScopeEnd => {
+                println!("End separated code");
+                break;
+            }
+
             _ => panic!("Unhandled symbol data in parse_separated_code_symbols - {symbol_data:?}"),
         }
     }

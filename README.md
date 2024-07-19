@@ -16,11 +16,21 @@ This tool is a work in progress and will most likely crash, have duplicate outpu
 cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-address=0x180000000 > file.pdb.log
 ```
 
+### Flags
+
 | Short | Long | Description |
 |-|-|-|
-| `-o` | `--out` | The output directory to dump all C++ code to. |
-| `-p` | `--pdb` | The file path to the MSVC PDB file to decompile. |
-| `-b` | `--base-address` | The base address to add when resolving an RVA (optional). |
+| `-h` | `--help` | Prints help information. |
+| `-u` | `--unroll-functions` | Whether to include scope information in decompiled function stubs. |
+| `-V` | `--version` | Prints version information. |
+
+### Options
+
+| Short | Long | Description |
+|-|-|-|
+| `-b` | `--base-address <base-address> | The base address to add when resolving an RVA (optional). |
+| `-o` | `--out <out> | The output directory to dump all C++ code to. |
+| `-p` | `--pdb <pdb> | The file path to the MSVC PDB file to decompile. |
 
 ## Contributing
 

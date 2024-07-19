@@ -1,10 +1,11 @@
 mod class;
 mod r#enum;
 mod module;
+mod procedure;
 mod typedef;
 
 pub use self::{
-    class::*, r#enum::*, module::*, typedef::*
+    class::*, r#enum::*, module::*, procedure::*, typedef::*
 };
 
 use pdb::{FallibleIterator, PrimitiveKind};
@@ -42,27 +43,39 @@ pub fn primitive_name(kind: PrimitiveKind) -> &'static str {
 
         pdb::PrimitiveKind::Void => "void",
 
-        pdb::PrimitiveKind::I8 | pdb::PrimitiveKind::Char | pdb::PrimitiveKind::RChar => "char",
-        pdb::PrimitiveKind::U8 | pdb::PrimitiveKind::UChar => "unsigned char",
+        pdb::PrimitiveKind::Char | pdb::PrimitiveKind::RChar => "char",
+        pdb::PrimitiveKind::UChar => "unsigned char",
         
-        pdb::PrimitiveKind::WChar => "wchar_t",
-        pdb::PrimitiveKind::RChar16 => "char16_t",
-        pdb::PrimitiveKind::RChar32 => "char32_t",
+        pdb::PrimitiveKind::Short => "short",
+        pdb::PrimitiveKind::UShort => "unsigned short",
         
-        pdb::PrimitiveKind::I16 | pdb::PrimitiveKind::Short => "short",
-        pdb::PrimitiveKind::U16 | pdb::PrimitiveKind::UShort => "unsigned short",
-        
-        pdb::PrimitiveKind::I32 | pdb::PrimitiveKind::Long => "long",
-        pdb::PrimitiveKind::U32 | pdb::PrimitiveKind::ULong => "unsigned long",
+        pdb::PrimitiveKind::Long => "long",
+        pdb::PrimitiveKind::ULong => "unsigned long",
 
-        pdb::PrimitiveKind::I64 | pdb::PrimitiveKind::Quad => "long long",
-        pdb::PrimitiveKind::U64 | pdb::PrimitiveKind::UQuad => "unsigned long long",
+        pdb::PrimitiveKind::Quad => "long long",
+        pdb::PrimitiveKind::UQuad => "unsigned long long",
 
         pdb::PrimitiveKind::F32 => "float",
         pdb::PrimitiveKind::F64 => "double",
         pdb::PrimitiveKind::F80 => "long double",
 
         pdb::PrimitiveKind::Bool8 => "bool",
+
+        pdb::PrimitiveKind::I8 => "int8_t",
+        pdb::PrimitiveKind::U8 => "uint8_t",
+
+        pdb::PrimitiveKind::I16 => "int16_t",
+        pdb::PrimitiveKind::U16 => "uint16_t",
+
+        pdb::PrimitiveKind::I32 => "int32_t",
+        pdb::PrimitiveKind::U32 => "uint32_t",
+
+        pdb::PrimitiveKind::I64 => "int64_t",
+        pdb::PrimitiveKind::U64 => "uint64_t",
+
+        pdb::PrimitiveKind::WChar => "wchar_t",
+        pdb::PrimitiveKind::RChar16 => "char16_t",
+        pdb::PrimitiveKind::RChar32 => "char32_t",
 
         pdb::PrimitiveKind::HRESULT => "HRESULT",
 

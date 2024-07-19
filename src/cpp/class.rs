@@ -53,7 +53,9 @@ impl fmt::Display for Field {
             write!(f, " = 0")?;
         }
 
-        write!(f, "; // 0x{:X}", self.offset.unwrap_or(std::u64::MAX))
+        write!(f, ";")?;
+        write!(f, " // 0x{:X}", self.offset.unwrap_or(std::u64::MAX))?;
+        Ok(())
     }
 }
 
@@ -512,7 +514,7 @@ impl Class {
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
                             type_name,
                             underlying_type: data.underlying_type,
-                            field_attributes: nested_data.attributes,
+                            field_attributes: Some(nested_data.attributes),
                             pointer_attributes: Some(data.attributes),
                             containing_class: data.containing_class,
                         }));
@@ -534,7 +536,7 @@ impl Class {
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
                             type_name,
                             underlying_type: data.underlying_type,
-                            field_attributes: nested_data.attributes,
+                            field_attributes: Some(nested_data.attributes),
                             pointer_attributes: None,
                             containing_class: None,
                         }));
@@ -554,7 +556,7 @@ impl Class {
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
                             type_name,
                             underlying_type: nested_data.nested_type,
-                            field_attributes: nested_data.attributes,
+                            field_attributes: Some(nested_data.attributes),
                             pointer_attributes: None,
                             containing_class: None,
                         }));
@@ -625,7 +627,7 @@ impl Class {
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
                             type_name,
                             underlying_type: nested_data.nested_type,
-                            field_attributes: nested_data.attributes,
+                            field_attributes: Some(nested_data.attributes),
                             pointer_attributes: None,
                             containing_class: None,
                         }));
@@ -721,7 +723,7 @@ impl fmt::Display for Class {
                 ClassMember::Enum(data) => data.field_attributes,
                 ClassMember::Field(data) => Some(data.attributes),
                 ClassMember::Method(data) => data.field_attributes,
-                ClassMember::TypeDefinition(data) => Some(data.field_attributes),
+                ClassMember::TypeDefinition(data) => data.field_attributes,
             };
 
             let member_access = match field_attributes.map(|a| a.access()) {
