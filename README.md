@@ -28,9 +28,9 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 
 | Short | Long | Description |
 |-|-|-|
-| `-b` | `--base-address <base-address> | The base address to add when resolving an RVA (optional). |
-| `-o` | `--out <out> | The output directory to dump all C++ code to. |
-| `-p` | `--pdb <pdb> | The file path to the MSVC PDB file to decompile. |
+| `-b` | `--base-address <base-address>` | The base address to add when resolving an RVA (optional). |
+| `-o` | `--out <out>` | The output directory to dump all C++ code to. |
+| `-p` | `--pdb <pdb>` | The file path to the MSVC PDB file to decompile. |
 
 ## Contributing
 
