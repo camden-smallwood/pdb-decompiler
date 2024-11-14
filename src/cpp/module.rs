@@ -224,6 +224,7 @@ impl Module {
         }
     }
 
+    #[allow(dead_code)]
     pub fn test_primary_flag(&self, flag: ModulePrimaryFlags) -> bool {
         (self.flags_primary & (flag as u64)) != 0
     }
@@ -236,6 +237,7 @@ impl Module {
         }
     }
 
+    #[allow(dead_code)]
     pub fn test_secondary_flag(&self, flag: ModuleSecondaryFlags) -> bool {
         (self.flags_secondary & (flag as u64)) != 0
     }

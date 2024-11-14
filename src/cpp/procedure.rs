@@ -1,6 +1,5 @@
 use std::fmt::Display;
 use crate::tabbed::{TabbedDisplay, TabbedDisplayer};
-use super::TypeDefinition;
 
 //
 // TODO: Separate signature into separate return_type, name, and parameters fields
