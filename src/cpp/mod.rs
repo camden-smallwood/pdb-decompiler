@@ -33,7 +33,7 @@ pub fn argument_list<'p>(
             Ok(args)
         }
 
-        _ => Err(pdb::Error::UnimplementedFeature("argument list of non-argument-list type"))
+        _ => Err(pdb::Error::UnimplementedFeature("argument list of non-argument-list type".into()))
     }
 }
 

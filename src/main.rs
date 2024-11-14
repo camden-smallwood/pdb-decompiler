@@ -8,7 +8,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     num,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use structopt::StructOpt;
 
@@ -36,6 +36,7 @@ fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
     u64::from_str_radix(src.trim_start_matches("0x"), 16)
 }
 
+#[inline(always)]
 fn sanitize_path<S: AsRef<str>>(path: S) -> String {
     let mut result = path.as_ref().to_string().replace('\\', "/");
 
@@ -46,6 +47,7 @@ fn sanitize_path<S: AsRef<str>>(path: S) -> String {
     result
 }
 
+#[inline(always)]
 pub fn canonicalize_path(out_path: &str, root_path: &str, path: &str, is_directory: bool) -> PathBuf {
     let path = PathBuf::from(format!(
         "{}/{}{}",
@@ -105,13 +107,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[inline(always)]
 fn decompile_pdb(options: &Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<dyn Error>> {
     let debug_info = pdb.debug_information().map_err(|e| format!("does not contain debug information: {e}"))?;
     let machine_type = debug_info.machine_type().unwrap_or(pdb::MachineType::Unknown);
 
     let address_map = pdb.address_map().map_err(|e| format!("does not contain an address map: {e}"))?;
     
-    let string_table = pdb.string_table().map_err(|e| format!("does not contain a string table: {e}"))?;
+    let string_table = pdb.string_table().ok(); // this isn't present in older versions, so we make it optional
 
     let type_info = pdb.type_information().map_err(|e| format!("does not contain type information: {e}"))?;
     let mut type_finder = type_info.finder();
@@ -140,7 +143,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<d
     process_id_information(
         options,
         machine_type,
-        &string_table,
+        string_table.as_ref(),
         &id_info,
         &mut id_finder,
         &type_info,
@@ -155,7 +158,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<d
         options.base_address,
         &mut pdb,
         &address_map,
-        &string_table,
+        string_table.as_ref(),
         &debug_info,
         &global_symbols,
         &mut id_finder,
@@ -166,6 +169,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb::PDB<File>) -> Result<(), Box<d
     )
 }
 
+#[inline(always)]
 fn process_type_information<'a>(
     options: &Options,
     machine_type: pdb::MachineType,
@@ -253,10 +257,11 @@ fn process_type_information<'a>(
     Ok(())
 }
 
+#[inline(always)]
 fn process_id_information<'a>(
     options: &Options,
     machine_type: pdb::MachineType,
-    string_table: &pdb::StringTable,
+    string_table: Option<&pdb::StringTable>,
     id_info: &'a pdb::IdInformation,
     id_finder: &mut pdb::IdFinder<'a>,
     type_info: &'a pdb::TypeInformation,
@@ -281,13 +286,13 @@ fn process_id_information<'a>(
                 let mut module = cpp::Module::default();
                 module.add_build_info(options.out.as_ref().unwrap(), id_finder, build_info)?;
 
-                let module_path = module.path.to_string_lossy().to_lowercase().to_string();
-                if module_path.is_empty() {
+                let module_key = module.path.to_string_lossy().to_lowercase().to_string();
+                if module_key.is_empty() {
                     continue;
                 }
                 
-                if let Some(old_module) = modules.insert(module_path.clone(), module) {
-                    let module = modules.get_mut(&module_path).unwrap();
+                if let Some(old_module) = modules.insert(module_key.clone(), module) {
+                    let module = modules.get_mut(&module_key).unwrap();
                     module.headers = old_module.headers;
                     module.members = old_module.members;
                 }
@@ -306,7 +311,7 @@ fn process_id_information<'a>(
                     },
 
                     pdb::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
-                        sanitize_path(&source_line_ref.to_string_lossy(string_table)?)
+                        sanitize_path(&source_line_ref.to_string_lossy(string_table.unwrap())?)
                     }
                 };
 
@@ -323,6 +328,7 @@ fn process_id_information<'a>(
     Ok(())
 }
 
+#[inline(always)]
 fn load_section_contributions(
     debug_info: &pdb::DebugInformation,
 ) -> pdb::Result<Vec<pdb::DBISectionContribution>> {
@@ -336,20 +342,31 @@ fn load_section_contributions(
     Ok(result)
 }
 
+#[inline(always)]
 fn load_module_global_symbols<'a>(
     debug_info: &pdb::DebugInformation,
     global_symbols: &'a pdb::SymbolTable,
 ) -> Result<HashMap<String, Vec<pdb::SymbolData<'a>>>, Box<dyn Error>> {
     let section_contributions = load_section_contributions(debug_info)?;
-
+    
     let modules = debug_info.modules()?.collect::<Vec<_>>()?;
+
     let mut prev_module_name = None;
 
     let mut module_global_symbols = HashMap::new();
 
     let mut global_symbols_iter = global_symbols.iter();
 
-    while let Some(symbol) = global_symbols_iter.next()? {
+    loop {
+        let symbol = match global_symbols_iter.next() {
+            Ok(Some(symbol)) => symbol,
+            Ok(None) => break,
+            Err(e) => {
+                println!("WARNING: failed to get next symbol: {e}");
+                break;
+            }
+        };
+
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
             Err(error) => {
@@ -408,13 +425,14 @@ fn load_module_global_symbols<'a>(
     Ok(module_global_symbols)
 }
 
+#[inline(always)]
 fn process_modules<'a>(
     options: &Options,
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
     pdb: &mut pdb::PDB<File>,
     address_map: &pdb::AddressMap,
-    string_table: &pdb::StringTable,
+    string_table: Option<&pdb::StringTable>,
     debug_info: &pdb::DebugInformation,
     global_symbols: &'a pdb::SymbolTable,
     id_finder: &mut pdb::IdFinder,
@@ -468,15 +486,15 @@ fn process_modules<'a>(
         let mut headers = vec![];
 
         for (header_path, is_global) in module.headers.iter() {
-            let path = header_path.to_string_lossy().to_lowercase().to_string();
+            let header_module_key = header_path.to_string_lossy().to_lowercase().to_string();
 
-            if !module_paths.contains(&path) && !new_modules.contains_key(&path) {
-                new_modules.insert(path.clone(), cpp::Module::default().with_path(header_path.clone()));
+            if !module_paths.contains(&header_module_key) && !new_modules.contains_key(&header_module_key) {
+                new_modules.insert(header_module_key.clone(), cpp::Module::default().with_path(header_path.clone()));
             }
 
             if let Some(pch_file_name) = module.pch_file_name.as_ref() {
-                let pch_file_name = pch_file_name.to_string_lossy().to_lowercase().to_string();
-                if path == pch_file_name {
+                let pch_module_key = pch_file_name.to_string_lossy().to_lowercase().to_string();
+                if header_module_key == pch_module_key {
                     continue;
                 }
             }
@@ -487,8 +505,8 @@ fn process_modules<'a>(
                 let dir_path = dir_path.to_string_lossy().to_lowercase().to_string();
                 let dir_path_len = dir_path.len();
 
-                if dir_path_len < path.len() && path.starts_with(dir_path.as_str()) {
-                    modified_path = Some((path[dir_path_len..].to_string().into(), true));
+                if dir_path_len < header_module_key.len() && header_module_key.starts_with(dir_path.as_str()) {
+                    modified_path = Some((header_module_key[dir_path_len..].to_string().into(), true));
                     break;
                 }
             }
@@ -511,11 +529,11 @@ fn process_modules<'a>(
     // Write modules to file
     //
 
-    for (module_path, module) in modules {
+    for module in modules.values() {
         let path = PathBuf::from(sanitize_path(format!(
             "{}/{}",
             options.out.as_ref().unwrap().to_string_lossy(),
-            module_path.trim_start_matches('/'),
+            module.path.to_string_lossy().trim_start_matches('/'),
         )));
 
         if let Some(parent_path) = path.parent() {
@@ -534,12 +552,13 @@ fn process_modules<'a>(
     Ok(())
 }
 
+#[inline(always)]
 fn process_module(
     options: &Options,
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
     address_map: &pdb::AddressMap,
-    string_table: &pdb::StringTable,
+    string_table: Option<&pdb::StringTable>,
     id_finder: &mut pdb::IdFinder,
     type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder,
@@ -549,10 +568,83 @@ fn process_module(
     module: &pdb::Module,
     module_info: &pdb::ModuleInfo,
 ) -> pdb::Result<()> {
-    //
-    // 1. Get the path of the object file
-    //
+    let obj_path = get_module_object_file_path(module)?;
+    
+    let line_program = module_info.line_program()?;
+    let line_offsets = get_module_line_program_offsets(&line_program)?;
+    
+    let (Some(module_file_path), headers) = get_module_file_path_and_header_paths(
+        options,
+        id_finder,
+        module_info,
+        &line_program,
+        string_table,
+        &obj_path,
+    )? else { return Ok(()) };
 
+    process_module_global_symbols(
+        options,
+        machine_type,
+        base_address,
+        address_map,
+        string_table,
+        id_finder,
+        type_info,
+        type_finder,
+        module_global_symbols,
+        &line_offsets,
+        modules,
+        script_file,
+        module,
+        &module_file_path,
+    )?;
+
+    process_module_local_symbols(
+        options,
+        machine_type,
+        base_address,
+        address_map,
+        string_table,
+        id_finder,
+        type_info,
+        type_finder,
+        &line_offsets,
+        modules,
+        script_file,
+        module_info,
+        &module_file_path,
+    )?;
+
+    let module_path = PathBuf::from(module_file_path);
+    let module_key = module_path.to_string_lossy().to_lowercase();
+
+    let mut module_headers = vec![];
+
+    for header_path in headers.iter() {
+        let header_key = header_path.to_string_lossy().to_lowercase().to_string();
+
+        if !modules.contains_key(&header_key) {
+            modules.insert(header_key.clone(), cpp::Module::default().with_path(header_path.clone()));
+        }
+
+        module_headers.push((header_path.clone(), false));
+    }
+
+    let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_path));
+    
+    for header in module_headers {
+        if !module.headers.contains(&header) {
+            module.headers.push(header);
+        }
+    }
+
+    Ok(())
+}
+
+#[inline(always)]
+fn get_module_object_file_path(
+    module: &pdb::Module,
+) -> pdb::Result<PathBuf> {
     let mut obj_path = PathBuf::from(sanitize_path(module.module_name()));
 
     if let Some(file_name) = obj_path.file_name() {
@@ -582,12 +674,13 @@ fn process_module(
         }
     }
 
-    //
-    // 2. Get the line offsets from the line program
-    //
+    Ok(obj_path)
+}
 
-    let line_program = module_info.line_program()?;
-
+#[inline(always)]
+fn get_module_line_program_offsets(
+    line_program: &pdb::LineProgram,
+) -> pdb::Result<HashMap<pdb::StringRef, HashMap<pdb::PdbInternalSectionOffset, pdb::LineInfo>>> {
     let mut line_offsets = HashMap::new();
 
     for line in line_program.lines().collect::<Vec<_>>()? {
@@ -597,15 +690,23 @@ fn process_module(
         offsets.entry(line.offset).or_insert(line);
     }
 
-    //
-    // 3. Get the file path of the module and any header file paths it includes
-    //
+    Ok(line_offsets)
+}
 
+#[inline(always)]
+fn get_module_file_path_and_header_paths(
+    options: &Options,
+    id_finder: &mut pdb::IdFinder,
+    module_info: &pdb::ModuleInfo,
+    line_program: &pdb::LineProgram,
+    string_table: Option<&pdb::StringTable>,
+    obj_path: &Path,
+) -> pdb::Result<(Option<PathBuf>, Vec<PathBuf>)> {
     let mut module_file_path = None;
     let mut headers = vec![];
 
     for file in line_program.files().collect::<Vec<_>>()? {
-        let path = PathBuf::from(sanitize_path(&file.name.to_string_lossy(string_table)?));
+        let path = PathBuf::from(sanitize_path(&file.name.to_string_lossy(string_table.unwrap())?));
 
         match path.extension() {
             Some(extension) if cpp::SOURCE_FILE_EXTS.contains(&extension.to_str().unwrap_or(""))
@@ -637,25 +738,40 @@ fn process_module(
         }
     }
 
+    // TODO:
     // HACK: Skip compiler generated files or print a warning and skip
-    if module_file_path.is_none() {
-        match module.module_name().to_string().as_str() {
-            "* CIL *" | "* Linker *" | "* Linker Generated Manifest RES *" => (),
+    // if module_file_path.is_none() {
+    //     match module.module_name().to_string().as_str() {
+    //         "* CIL *" | "* Linker *" | "* Linker Generated Manifest RES *" => (),
             
-            x if x.to_lowercase().ends_with(".dll") => (),
+    //         x if x.to_lowercase().ends_with(".dll") => (),
             
-            _ => println!("WARNING: module has no source file, skipping: {module:#?}")
-        }
+    //         _ => println!("WARNING: module has no source file, skipping: {module:#?}")
+    //     }
 
-        return Ok(());
-    }
+    //     return Ok(());
+    // }
 
-    let module_file_path = module_file_path.unwrap().to_string_lossy().replace('\\', "\\\\");
+    Ok((module_file_path, headers))
+}
 
-    //
-    // 4. Process the global symbols of the module
-    //
-
+#[inline(always)]
+fn process_module_global_symbols(
+    options: &Options,
+    machine_type: pdb::MachineType,
+    base_address: Option<u64>,
+    address_map: &pdb::AddressMap,
+    string_table: Option<&pdb::StringTable>,
+    id_finder: &mut pdb::IdFinder,
+    type_info: &pdb::TypeInformation,
+    type_finder: &pdb::TypeFinder,
+    module_global_symbols: &HashMap<String, Vec<pdb::SymbolData>>,
+    line_offsets: &HashMap<pdb::StringRef, HashMap<pdb::PdbInternalSectionOffset, pdb::LineInfo>>,
+    modules: &mut HashMap<String, cpp::Module>,
+    script_file: &mut File,
+    module: &pdb::Module,
+    module_file_path: &PathBuf,
+) -> pdb::Result<()> {
     if let Some(global_symbols) = module_global_symbols.get(&module.module_name().to_string()) {
         for symbol_data in global_symbols {
             process_module_symbol_data(
@@ -668,19 +784,34 @@ fn process_module(
                 type_info,
                 type_finder,
                 script_file,
-                &line_offsets,
+                line_offsets,
                 modules,
-                module_file_path.as_str(),
+                module_file_path,
                 None,
                 symbol_data
             )?;
         }
     }
     
-    //
-    // 5. Process the local symbols of the module
-    //
+    Ok(())
+}
 
+#[inline(always)]
+fn process_module_local_symbols(
+    options: &Options,
+    machine_type: pdb::MachineType,
+    base_address: Option<u64>,
+    address_map: &pdb::AddressMap,
+    string_table: Option<&pdb::StringTable>,
+    id_finder: &mut pdb::IdFinder,
+    type_info: &pdb::TypeInformation,
+    type_finder: &pdb::TypeFinder,
+    line_offsets: &HashMap<pdb::StringRef, HashMap<pdb::PdbInternalSectionOffset, pdb::LineInfo>>,
+    modules: &mut HashMap<String, cpp::Module>,
+    script_file: &mut File,
+    module_info: &pdb::ModuleInfo,
+    module_file_path: &PathBuf,
+) -> pdb::Result<()> {
     let mut module_symbols = module_info.symbols()?;
 
     while let Some(symbol) = module_symbols.next()? {
@@ -702,65 +833,38 @@ fn process_module(
             type_info,
             type_finder,
             script_file,
-            &line_offsets,
+            line_offsets,
             modules,
-            module_file_path.as_str(),
+            module_file_path,
             Some(&mut module_symbols),
             &symbol_data
         )?;
     }
-
-    //
-    // 6. Construct the cpp module
-    //
-
-    let path = PathBuf::from(module_file_path);
-    let source_file = path.to_string_lossy().to_lowercase();
-
-    let mut module_headers = vec![];
-
-    for path in headers.iter() {
-        let source_file = path.to_string_lossy().to_lowercase().to_string();
-
-        if !modules.contains_key(&source_file) {
-            modules.insert(source_file.clone(), cpp::Module::default().with_path(path.clone()));
-        }
-
-        module_headers.push((path.clone(), false));
-    }
-
-    let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
     
-    for header in module_headers {
-        if !module.headers.contains(&header) {
-            module.headers.push(header);
-        }
-    }
-
     Ok(())
 }
 
+#[inline(always)]
 fn process_module_symbol_data(
     options: &Options,
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
     address_map: &pdb::AddressMap,
-    string_table: &pdb::StringTable,
+    string_table: Option<&pdb::StringTable>,
     id_finder: &mut pdb::IdFinder,
     type_info: &pdb::TypeInformation,
     type_finder: &pdb::TypeFinder,
     script_file: &mut File,
     line_offsets: &HashMap<pdb::StringRef, HashMap<pdb::PdbInternalSectionOffset, pdb::LineInfo>>,
     modules: &mut HashMap<String, cpp::Module>,
-    module_file_path: &str,
+    module_file_path: &PathBuf,
     module_symbols: Option<&mut pdb::SymbolIter>,
     symbol_data: &pdb::SymbolData,
 ) -> pdb::Result<()> {
     match symbol_data {
         pdb::SymbolData::UsingNamespace(symbol) => {
-            let path = PathBuf::from(sanitize_path(module_file_path));
-            let source_file = path.to_string_lossy().to_lowercase().to_string();
-            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+            let module_key = module_file_path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_file_path.clone()));
             let using_namespace = cpp::ModuleMember::UsingNamespace(symbol.name.to_string().to_string());
 
             if !module.members.contains(&using_namespace) {
@@ -769,9 +873,8 @@ fn process_module_symbol_data(
         }
 
         pdb::SymbolData::UserDefinedType(udt_symbol) => {
-            let path = PathBuf::from(sanitize_path(module_file_path));
-            let source_file = path.to_string_lossy().to_lowercase().to_string();
-            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+            let module_key = module_file_path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_file_path.clone()));
 
             let user_defined_type = cpp::ModuleMember::UserDefinedType(format!(
                 "typedef {};",
@@ -792,9 +895,8 @@ fn process_module_symbol_data(
         }
 
         pdb::SymbolData::Constant(constant_symbol) => {
-            let path = PathBuf::from(sanitize_path(module_file_path));
-            let source_file = path.to_string_lossy().to_lowercase().to_string();
-            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+            let module_key = module_file_path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_file_path.clone()));
 
             let type_name = cpp::type_name(
                 machine_type,
@@ -807,7 +909,7 @@ fn process_module_symbol_data(
             )?;
 
             if type_name.starts_with("const float ") {
-                println!("WARNING: failed to decompile constant float in \"{module_file_path}\": {symbol_data:#?}");
+                println!("WARNING: failed to decompile constant float in \"{}\": {symbol_data:#?}", module_file_path.to_string_lossy());
                 return Ok(());
             }
 
@@ -842,16 +944,14 @@ fn process_module_symbol_data(
                 }
             }
 
-            let path = PathBuf::from(sanitize_path(
-                if let Some(file_name_ref) = file_name_ref {
-                    file_name_ref.to_string_lossy(string_table)?.to_string()
-                } else {
-                    module_file_path.to_string()
-                }
-            ));
+            let path = if let Some(file_name_ref) = file_name_ref {
+                PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table.unwrap())?.to_string()))
+            } else {
+                module_file_path.clone()
+            };
 
-            let source_file = path.to_string_lossy().to_lowercase().to_string();
-            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+            let module_key = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(path));
 
             let rva = match data_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
@@ -887,7 +987,7 @@ fn process_module_symbol_data(
                 line_info.map(|x| x.line_start),
             ));
 
-            writeln!(script_file, "decompile_to_file(0x{address:X}, \"{module_file_path}\")")?;
+            writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module_file_path.to_string_lossy())?;
         }
 
         pdb::SymbolData::ThreadStorage(thread_storage_symbol) => {
@@ -902,16 +1002,14 @@ fn process_module_symbol_data(
                 }
             }
 
-            let path = PathBuf::from(sanitize_path(
-                if let Some(file_name_ref) = file_name_ref {
-                    file_name_ref.to_string_lossy(string_table)?.to_string()
-                } else {
-                    module_file_path.to_string()
-                }
-            ));
+            let path = if let Some(file_name_ref) = file_name_ref {
+                PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table.unwrap())?.to_string()))
+            } else {
+                module_file_path.clone()
+            };
 
-            let source_file = path.to_string_lossy().to_lowercase().to_string();
-            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+            let module_key = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(path));
 
             let rva = match thread_storage_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
@@ -949,12 +1047,13 @@ fn process_module_symbol_data(
 
             writeln!(
                 script_file,
-                "decompile_to_file(0x{address:X}, \"{module_file_path}\")"
+                "decompile_to_file(0x{address:X}, \"{}\")",
+                module_file_path.to_string_lossy(),
             )?;
         }
 
         pdb::SymbolData::Procedure(procedure_symbol) => {
-            println!("Procedure symbol: {}", procedure_symbol.name.to_string());
+            // println!("Procedure symbol: {}", procedure_symbol.name.to_string());
 
             let module_symbols = match module_symbols {
                 Some(x) => x,
@@ -1017,16 +1116,14 @@ fn process_module_symbol_data(
                 }
             }
 
-            let path = PathBuf::from(sanitize_path(
-                if let Some(file_name_ref) = file_name_ref {
-                    file_name_ref.to_string_lossy(string_table)?.to_string()
-                } else {
-                    module_file_path.to_string()
-                }
-            ));
+            let path = if let Some(file_name_ref) = file_name_ref {
+                PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table.unwrap())?.to_string()))
+            } else {
+                module_file_path.clone()
+            };
 
-            let source_file = path.to_string_lossy().to_lowercase().to_string();
-            let module = modules.entry(source_file).or_insert_with(|| cpp::Module::default().with_path(path));
+            let module_key = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(path));
 
             let rva = match procedure_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
@@ -1071,7 +1168,8 @@ fn process_module_symbol_data(
 
             writeln!(
                 script_file,
-                "decompile_to_file(0x{address:X}, \"{module_file_path}\")",
+                "decompile_to_file(0x{address:X}, \"{}\")",
+                module_file_path.to_string_lossy(),
             )?;
         }
 
@@ -1113,6 +1211,7 @@ fn process_module_symbol_data(
     Ok(())
 }
 
+#[inline(always)]
 fn parse_procedure_symbols(
     options: &Options,
     machine_type: pdb::MachineType,
@@ -1202,6 +1301,7 @@ fn parse_procedure_symbols(
     ))
 }
 
+#[inline(always)]
 fn parse_block_symbols(
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
@@ -1227,6 +1327,7 @@ fn parse_block_symbols(
     })
 }
 
+#[inline(always)]
 fn parse_inline_site_symbols(
     machine_type: pdb::MachineType,
     base_address: Option<u64>,
@@ -1483,6 +1584,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb::SymbolData) -> pdb::Result<()>
     Ok(statements)
 }
 
+#[inline(always)]
 fn parse_thunk_symbols(symbols: &mut pdb::SymbolIter) {
     loop {
         let symbol = match symbols.next() {
@@ -1509,6 +1611,7 @@ fn parse_thunk_symbols(symbols: &mut pdb::SymbolIter) {
     }
 }
 
+#[inline(always)]
 fn parse_separated_code_symbols(symbols: &mut pdb::SymbolIter) {
     loop {
         let symbol = match symbols.next() {
