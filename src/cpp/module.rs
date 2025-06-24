@@ -197,6 +197,7 @@ pub struct Module {
     pub preprocessor_definitions: Vec<(String, Option<String>)>,
     pub preprocess_include_files: Vec<String>,
     pub disabled_warnings: Vec<String>,
+    pub logged_warnings: Vec<String>,
     pub warnings_as_errors: Vec<String>,
     pub warnings_level1: Vec<String>,
     pub warnings_level2: Vec<String>,
@@ -1363,6 +1364,11 @@ impl Module {
                     Some('d') => match parse_arg_string(chars_iter) {
                         Some(s) => self.disabled_warnings.push(s),
                         None => panic!("Unhandled characters in build info arg: 'wd'; Data: \"{args_string}\""),
+                    }
+
+                    Some('l') => match parse_arg_string(chars_iter) {
+                        Some(s) => self.logged_warnings.push(s),
+                        None => panic!("Unhandled characters in build info arg: 'wl'; Data: \"{args_string}\""),
                     }
 
                     Some('e') => match parse_arg_string(chars_iter) {
