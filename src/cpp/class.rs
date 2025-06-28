@@ -4,7 +4,7 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaseClass {
     pub type_name: String,
-    pub index: pdb::TypeIndex,
+    pub index: pdb2::TypeIndex,
     pub offset: u32,
 }
 
@@ -34,7 +34,7 @@ pub struct Field {
     pub type_name: String,
     pub name: String,
     pub offset: Option<u64>,
-    pub attributes: pdb::FieldAttributes
+    pub attributes: pdb2::FieldAttributes
 }
 
 impl fmt::Display for Field {
@@ -64,8 +64,8 @@ pub struct Method {
     pub name: String,
     pub return_type_name: String,
     pub arguments: Vec<String>,
-    pub field_attributes: Option<pdb::FieldAttributes>,
-    pub function_attributes: pdb::FunctionAttributes
+    pub field_attributes: Option<pdb2::FieldAttributes>,
+    pub function_attributes: pdb2::FunctionAttributes
 }
 
 impl fmt::Display for Method {
@@ -111,54 +111,54 @@ impl fmt::Display for Method {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Class {
-    pub kind: Option<pdb::ClassKind>,
+    pub kind: Option<pdb2::ClassKind>,
     pub is_union: bool,
     pub is_declaration: bool,
     pub name: String,
-    pub index: pdb::TypeIndex,
+    pub index: pdb2::TypeIndex,
     pub depth: u32,
     pub line: u32,
     pub size: u64,
     pub base_classes: Vec<BaseClass>,
     pub members: Vec<ClassMember>,
-    pub field_attributes: Option<pdb::FieldAttributes>,
+    pub field_attributes: Option<pdb2::FieldAttributes>,
 }
 
 impl Class {
     pub fn add_derived_from(
         &mut self,
-        _: &pdb::TypeFinder,
-        _: pdb::TypeIndex
-    ) -> pdb::Result<()> {
+        _: &pdb2::TypeFinder,
+        _: pdb2::TypeIndex
+    ) -> pdb2::Result<()> {
         // TODO
         Ok(())
     }
 
     pub fn add_members(
         &mut self,
-        machine_type: pdb::MachineType,
-        type_info: &pdb::TypeInformation,
-        type_finder: &pdb::TypeFinder,
-        type_index: pdb::TypeIndex,
+        machine_type: pdb2::MachineType,
+        type_info: &pdb2::TypeInformation,
+        type_finder: &pdb2::TypeFinder,
+        type_index: pdb2::TypeIndex,
         offset: Option<u64>,
-    ) -> pdb::Result<()> {
+    ) -> pdb2::Result<()> {
         match type_finder.find(type_index)?.parse() {
-            Ok(pdb::TypeData::FieldList(data)) => {
+            Ok(pdb2::TypeData::FieldList(data)) => {
                 let mut members: Vec<ClassMember> = vec![];
                 let mut prev_offset = offset.unwrap_or(0);
 
                 for field in &data.fields {
                     match field {
-                        pdb::TypeData::Member(data) if self.is_union => {
+                        pdb2::TypeData::Member(data) if self.is_union => {
                             if !members.is_empty() && data.offset <= prev_offset {
                                 self.members.push(match members.len() {
                                     1 => members[0].clone(),
                                     _ => ClassMember::Class(Class {
-                                        kind: Some(pdb::ClassKind::Struct),
+                                        kind: Some(pdb2::ClassKind::Struct),
                                         is_union: true,
                                         is_declaration: false,
                                         name: String::new(),
-                                        index: pdb::TypeIndex(0),
+                                        index: pdb2::TypeIndex(0),
                                         depth: 1,
                                         line: self.line,
                                         size: 0,
@@ -197,11 +197,11 @@ impl Class {
                     self.members.push(match members.len() {
                         1 => members[0].clone(),
                         _ => ClassMember::Class(Class {
-                            kind: Some(pdb::ClassKind::Struct),
+                            kind: Some(pdb2::ClassKind::Struct),
                             is_union: true,
                             is_declaration: false,
                             name: String::new(),
-                            index: pdb::TypeIndex(0),
+                            index: pdb2::TypeIndex(0),
                             depth: 1,
                             line: self.line,
                             size: 0,
@@ -217,7 +217,7 @@ impl Class {
                 }
             }
 
-            Ok(pdb::TypeData::Primitive(pdb::PrimitiveType { kind: pdb::PrimitiveKind::NoType, indirection: None })) => {
+            Ok(pdb2::TypeData::Primitive(pdb2::PrimitiveType { kind: pdb2::PrimitiveKind::NoType, indirection: None })) => {
                 self.is_declaration = true;
             }
 
@@ -231,13 +231,13 @@ impl Class {
 
     fn add_member(
         &mut self,
-        machine_type: pdb::MachineType,
-        type_info: &pdb::TypeInformation,
-        type_finder: &pdb::TypeFinder,
-        field: &pdb::TypeData
-    ) -> pdb::Result<()> {
+        machine_type: pdb2::MachineType,
+        type_info: &pdb2::TypeInformation,
+        type_finder: &pdb2::TypeFinder,
+        field: &pdb2::TypeData
+    ) -> pdb2::Result<()> {
         match *field {
-            pdb::TypeData::Member(ref data) => {
+            pdb2::TypeData::Member(ref data) => {
                 //
                 // TODO: calculate union layout
                 //
@@ -258,7 +258,7 @@ impl Class {
                 }));
             }
 
-            pdb::TypeData::StaticMember(ref data) => {
+            pdb2::TypeData::StaticMember(ref data) => {
                 //
                 // TODO: determine if we need to calculate union layout?
                 //
@@ -282,7 +282,7 @@ impl Class {
                 }));
             }
 
-            pdb::TypeData::BaseClass(ref data) => {
+            pdb2::TypeData::BaseClass(ref data) => {
                 self.base_classes.push(BaseClass {
                     type_name: format!(
                         "{}{}",
@@ -299,7 +299,7 @@ impl Class {
                 });
             }
 
-            pdb::TypeData::VirtualBaseClass(ref data) => {
+            pdb2::TypeData::VirtualBaseClass(ref data) => {
                 self.base_classes.push(BaseClass {
                     type_name: format!(
                         "{}virtual {}",
@@ -316,15 +316,15 @@ impl Class {
                 });
             }
 
-            pdb::TypeData::VirtualFunctionTablePointer(_) => (), // TODO: does this need handling?
+            pdb2::TypeData::VirtualFunctionTablePointer(_) => (), // TODO: does this need handling?
 
-            pdb::TypeData::Method(ref data) => match data.name.to_string().to_string().as_str() {
+            pdb2::TypeData::Method(ref data) => match data.name.to_string().to_string().as_str() {
                 // Ignore compiler-generated functions:
                 "__vecDelDtor" | "__local_vftable_ctor_closure" | "__autoclassinit" => (),
                 
                 _ => {
                     let method = match type_finder.find(data.method_type)?.parse() {
-                        Ok(pdb::TypeData::MemberFunction(function_data)) => Method {
+                        Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
                             name: data.name.to_string().to_string(),
                             return_type_name: type_name(machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
                             arguments: argument_list(machine_type, type_info, type_finder, function_data.argument_list, None)?,
@@ -340,10 +340,10 @@ impl Class {
                 }
             }
 
-            pdb::TypeData::OverloadedMethod(ref data) => {
+            pdb2::TypeData::OverloadedMethod(ref data) => {
                 match type_finder.find(data.method_list)?.parse() {
-                    Ok(pdb::TypeData::MethodList(method_list)) => {
-                        for pdb::MethodListEntry {
+                    Ok(pdb2::TypeData::MethodList(method_list)) => {
+                        for pdb2::MethodListEntry {
                             attributes,
                             method_type,
                             ..
@@ -353,7 +353,7 @@ impl Class {
 
                                 _ => {
                                     let method = match type_finder.find(method_type)?.parse() {
-                                        Ok(pdb::TypeData::MemberFunction(function_data)) => Method {
+                                        Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
                                             name: data.name.to_string().to_string(),
                                             return_type_name: type_name(machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
                                             arguments: argument_list(machine_type, type_info, type_finder, function_data.argument_list, None)?,
@@ -382,12 +382,12 @@ impl Class {
                 }
             }
 
-            pdb::TypeData::Nested(ref nested_data) => {
+            pdb2::TypeData::Nested(ref nested_data) => {
                 let nested_type_item = type_finder.find(nested_data.nested_type)?;
                 let nested_type_data = nested_type_item.parse()?;
                 
                 match &nested_type_data {
-                    pdb::TypeData::Class(data) => {
+                    pdb2::TypeData::Class(data) => {
                         let mut definition = Class {
                             kind: Some(data.kind),
                             is_union: false,
@@ -415,15 +415,15 @@ impl Class {
                         let mut exists = false;
                         
                         for member in self.members.iter() {
-                            if let ClassMember::Class(other_definition) = member {
-                                if definition.kind == other_definition.kind
+                            if let ClassMember::Class(other_definition) = member
+                                && definition.kind == other_definition.kind
                                 && definition.name == other_definition.name
                                 && definition.size == other_definition.size
                                 && definition.base_classes.eq(&other_definition.base_classes)
-                                && definition.members.eq(&other_definition.members) {
-                                    exists = true;
-                                    break;
-                                }
+                                && definition.members.eq(&other_definition.members)
+                            {
+                                exists = true;
+                                break;
                             }
                         }
                         
@@ -432,7 +432,7 @@ impl Class {
                         }
                     }
         
-                    pdb::TypeData::Enumeration(data) => {
+                    pdb2::TypeData::Enumeration(data) => {
                         let mut definition = Enum {
                             name: nested_data.name.to_string().to_string(),
                             index: nested_data.nested_type,
@@ -453,12 +453,12 @@ impl Class {
                         let mut exists = false;
         
                         for member in self.members.iter() {
-                            if let ClassMember::Enum(other_definition) = member {
-                                if definition.name == other_definition.name
-                                && definition.values.eq(&other_definition.values) {
-                                    exists = true;
-                                    break;
-                                }
+                            if let ClassMember::Enum(other_definition) = member
+                                && definition.name == other_definition.name
+                                && definition.values.eq(&other_definition.values)
+                            {
+                                exists = true;
+                                break;
                             }
                         }
         
@@ -467,7 +467,7 @@ impl Class {
                         }
                     }
         
-                    pdb::TypeData::Union(data) => {
+                    pdb2::TypeData::Union(data) => {
                         let mut definition = Class {
                             kind: None,
                             is_union: true,
@@ -491,15 +491,15 @@ impl Class {
                         let mut exists = false;
                         
                         for member in self.members.iter() {
-                            if let ClassMember::Class(other_definition) = member {
-                                if definition.kind == other_definition.kind
+                            if let ClassMember::Class(other_definition) = member
+                                && definition.kind == other_definition.kind
                                 && definition.name == other_definition.name
                                 && definition.size == other_definition.size
                                 && definition.base_classes.eq(&other_definition.base_classes)
-                                && definition.members.eq(&other_definition.members) {
-                                    exists = true;
-                                    break;
-                                }
+                                && definition.members.eq(&other_definition.members)
+                            {
+                                exists = true;
+                                break;
                             }
                         }
                         
@@ -508,7 +508,7 @@ impl Class {
                         }
                     }
         
-                    pdb::TypeData::Pointer(data) => {
+                    pdb2::TypeData::Pointer(data) => {
                         let type_name = type_name(machine_type, type_info, type_finder, data.underlying_type, Some(nested_data.name.to_string().to_string()), None, true)?;
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
@@ -520,7 +520,7 @@ impl Class {
                         }));
                     }
 
-                    pdb::TypeData::Modifier(data) => {
+                    pdb2::TypeData::Modifier(data) => {
                         let mut type_name = String::new();
 
                         if data.constant {
@@ -542,7 +542,7 @@ impl Class {
                         }));
                     }
 
-                    pdb::TypeData::Primitive(data) => {
+                    pdb2::TypeData::Primitive(data) => {
                         let mut type_name = primitive_name(data.kind).to_string();
 
                         if data.indirection.is_some() {
@@ -562,7 +562,7 @@ impl Class {
                         }));
                     }
 
-                    pdb::TypeData::Array(data) => {
+                    pdb2::TypeData::Array(data) => {
                         let mut type_name = type_name(machine_type, type_info, type_finder, data.element_type, Some(nested_data.name.to_string().to_string()), None, true)?;
                         let mut element_size = type_size(machine_type, type_info, type_finder, data.element_type)?;
             
@@ -583,38 +583,37 @@ impl Class {
                                 };
             
                                 match &current_type_data {
-                                    pdb::TypeData::Primitive(_) if matches!(element_type_data, pdb::TypeData::Primitive(_)) => (),
-                                    pdb::TypeData::Class(_) if matches!(element_type_data, pdb::TypeData::Class(_)) => (),
-                                    pdb::TypeData::Member(_) if matches!(element_type_data, pdb::TypeData::Member(_)) => (),
-                                    pdb::TypeData::MemberFunction(_) if matches!(element_type_data, pdb::TypeData::MemberFunction(_)) => (),
-                                    pdb::TypeData::OverloadedMethod(_) if matches!(element_type_data, pdb::TypeData::OverloadedMethod(_)) => (),
-                                    pdb::TypeData::Method(_) if matches!(element_type_data, pdb::TypeData::Method(_)) => (),
-                                    pdb::TypeData::StaticMember(_) if matches!(element_type_data, pdb::TypeData::StaticMember(_)) => (),
-                                    pdb::TypeData::Nested(_) if matches!(element_type_data, pdb::TypeData::Nested(_)) => (),
-                                    pdb::TypeData::BaseClass(_) if matches!(element_type_data, pdb::TypeData::BaseClass(_)) => (),
-                                    pdb::TypeData::VirtualBaseClass(_) if matches!(element_type_data, pdb::TypeData::VirtualBaseClass(_)) => (),
-                                    pdb::TypeData::VirtualFunctionTablePointer(_) if matches!(element_type_data, pdb::TypeData::VirtualFunctionTablePointer(_)) => (),
-                                    pdb::TypeData::Procedure(_) if matches!(element_type_data, pdb::TypeData::Procedure(_)) => (),
-                                    pdb::TypeData::Pointer(_) if matches!(element_type_data, pdb::TypeData::Pointer(_)) => (),
-                                    pdb::TypeData::Modifier(_) if matches!(element_type_data, pdb::TypeData::Modifier(_)) => (),
-                                    pdb::TypeData::Enumeration(_) if matches!(element_type_data, pdb::TypeData::Enumeration(_)) => (),
-                                    pdb::TypeData::Enumerate(_) if matches!(element_type_data, pdb::TypeData::Enumerate(_)) => (),
-                                    pdb::TypeData::Array(_) if matches!(element_type_data, pdb::TypeData::Array(_)) => (),
-                                    pdb::TypeData::Union(_) if matches!(element_type_data, pdb::TypeData::Union(_)) => (),
-                                    pdb::TypeData::Bitfield(_) if matches!(element_type_data, pdb::TypeData::Bitfield(_)) => (),
-                                    pdb::TypeData::FieldList(_) if matches!(element_type_data, pdb::TypeData::FieldList(_)) => (),
-                                    pdb::TypeData::ArgumentList(_) if matches!(element_type_data, pdb::TypeData::ArgumentList(_)) => (),
-                                    pdb::TypeData::MethodList(_) if matches!(element_type_data, pdb::TypeData::MethodList(_)) => (),
+                                    pdb2::TypeData::Primitive(_) if matches!(element_type_data, pdb2::TypeData::Primitive(_)) => (),
+                                    pdb2::TypeData::Class(_) if matches!(element_type_data, pdb2::TypeData::Class(_)) => (),
+                                    pdb2::TypeData::Member(_) if matches!(element_type_data, pdb2::TypeData::Member(_)) => (),
+                                    pdb2::TypeData::MemberFunction(_) if matches!(element_type_data, pdb2::TypeData::MemberFunction(_)) => (),
+                                    pdb2::TypeData::OverloadedMethod(_) if matches!(element_type_data, pdb2::TypeData::OverloadedMethod(_)) => (),
+                                    pdb2::TypeData::Method(_) if matches!(element_type_data, pdb2::TypeData::Method(_)) => (),
+                                    pdb2::TypeData::StaticMember(_) if matches!(element_type_data, pdb2::TypeData::StaticMember(_)) => (),
+                                    pdb2::TypeData::Nested(_) if matches!(element_type_data, pdb2::TypeData::Nested(_)) => (),
+                                    pdb2::TypeData::BaseClass(_) if matches!(element_type_data, pdb2::TypeData::BaseClass(_)) => (),
+                                    pdb2::TypeData::VirtualBaseClass(_) if matches!(element_type_data, pdb2::TypeData::VirtualBaseClass(_)) => (),
+                                    pdb2::TypeData::VirtualFunctionTablePointer(_) if matches!(element_type_data, pdb2::TypeData::VirtualFunctionTablePointer(_)) => (),
+                                    pdb2::TypeData::Procedure(_) if matches!(element_type_data, pdb2::TypeData::Procedure(_)) => (),
+                                    pdb2::TypeData::Pointer(_) if matches!(element_type_data, pdb2::TypeData::Pointer(_)) => (),
+                                    pdb2::TypeData::Modifier(_) if matches!(element_type_data, pdb2::TypeData::Modifier(_)) => (),
+                                    pdb2::TypeData::Enumeration(_) if matches!(element_type_data, pdb2::TypeData::Enumeration(_)) => (),
+                                    pdb2::TypeData::Enumerate(_) if matches!(element_type_data, pdb2::TypeData::Enumerate(_)) => (),
+                                    pdb2::TypeData::Array(_) if matches!(element_type_data, pdb2::TypeData::Array(_)) => (),
+                                    pdb2::TypeData::Union(_) if matches!(element_type_data, pdb2::TypeData::Union(_)) => (),
+                                    pdb2::TypeData::Bitfield(_) if matches!(element_type_data, pdb2::TypeData::Bitfield(_)) => (),
+                                    pdb2::TypeData::FieldList(_) if matches!(element_type_data, pdb2::TypeData::FieldList(_)) => (),
+                                    pdb2::TypeData::ArgumentList(_) if matches!(element_type_data, pdb2::TypeData::ArgumentList(_)) => (),
+                                    pdb2::TypeData::MethodList(_) if matches!(element_type_data, pdb2::TypeData::MethodList(_)) => (),
                                     _ => continue
                                 }
                                 
-                                if current_type_data.name() == element_type_data.name() {
-                                    if let Ok(current_type_size) = type_size(machine_type, type_info, type_finder, current_type_item.index()) {
-                                        if current_type_size != 0 {
-                                            element_size = current_type_size;
-                                            break;
-                                        }
-                                    }
+                                if current_type_data.name() == element_type_data.name()
+                                    && let Ok(current_type_size) = type_size(machine_type, type_info, type_finder, current_type_item.index())
+                                    && current_type_size != 0
+                                {
+                                    element_size = current_type_size;
+                                    break;
                                 }
                             }
                         }
@@ -633,14 +632,14 @@ impl Class {
                         }));
                     }
 
-                    pdb::TypeData::Procedure(data) => println!(
+                    pdb2::TypeData::Procedure(data) => println!(
                         "WARNING: unhandled nested procedure at index {} in Class::add_member - {:?}",
                         nested_type_item.index(),
                         data
                     ),
 
                     _ => return Err(
-                        pdb::Error::IoError(
+                        pdb2::Error::IoError(
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidInput,
                                 format!(
@@ -666,9 +665,9 @@ impl fmt::Display for Class {
             f,
             "{}{}",
             match self.kind {
-                Some(pdb::ClassKind::Class) => "class",
-                Some(pdb::ClassKind::Struct) => "struct",
-                Some(pdb::ClassKind::Interface) => "interface",
+                Some(pdb2::ClassKind::Class) => "class",
+                Some(pdb2::ClassKind::Struct) => "struct",
+                Some(pdb2::ClassKind::Interface) => "interface",
                 None => {
                     assert!(self.is_union);
                     "union"
@@ -713,7 +712,7 @@ impl fmt::Display for Class {
         writeln!(f, "{{")?;
 
         let mut prev_access: Option<&str> = match self.kind.as_ref() {
-            Some(pdb::ClassKind::Struct) => Some("public"),
+            Some(pdb2::ClassKind::Struct) => Some("public"),
             _ => None
         };
 

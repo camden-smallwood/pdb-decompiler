@@ -1,10 +1,10 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeDefinition {
     pub type_name: String,
-    pub underlying_type: pdb::TypeIndex,
-    pub field_attributes: Option<pdb::FieldAttributes>,
-    pub pointer_attributes: Option<pdb::PointerAttributes>,
-    pub containing_class: Option<pdb::TypeIndex>,
+    pub underlying_type: pdb2::TypeIndex,
+    pub field_attributes: Option<pdb2::FieldAttributes>,
+    pub pointer_attributes: Option<pdb2::PointerAttributes>,
+    pub containing_class: Option<pdb2::TypeIndex>,
 }
 
 impl std::fmt::Display for TypeDefinition {

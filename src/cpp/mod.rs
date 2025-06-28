@@ -8,17 +8,17 @@ pub use self::{
     class::*, r#enum::*, module::*, procedure::*, typedef::*
 };
 
-use pdb::{FallibleIterator, PrimitiveKind};
+use pdb2::{FallibleIterator, PrimitiveKind};
 
 pub fn argument_list<'p>(
-    machine_type: pdb::MachineType,
-    type_info: &pdb::TypeInformation,
-    type_finder: &pdb::TypeFinder<'p>,
-    type_index: pdb::TypeIndex,
+    machine_type: pdb2::MachineType,
+    type_info: &pdb2::TypeInformation,
+    type_finder: &pdb2::TypeFinder<'p>,
+    type_index: pdb2::TypeIndex,
     names: Option<Vec<String>>,
-) -> pdb::Result<Vec<String>> {
+) -> pdb2::Result<Vec<String>> {
     match type_finder.find(type_index)?.parse()? {
-        pdb::TypeData::ArgumentList(data) => {
+        pdb2::TypeData::ArgumentList(data) => {
             let mut args: Vec<String> = vec![];
 
             for (i, &arg_type) in data.arguments.iter().enumerate() {
@@ -33,87 +33,87 @@ pub fn argument_list<'p>(
             Ok(args)
         }
 
-        _ => Err(pdb::Error::UnimplementedFeature("argument list of non-argument-list type".into()))
+        _ => Err(pdb2::Error::UnimplementedFeature("argument list of non-argument-list type".into()))
     }
 }
 
 pub fn primitive_name(kind: PrimitiveKind) -> &'static str {
     match kind {
-        pdb::PrimitiveKind::NoType => "...",
+        pdb2::PrimitiveKind::NoType => "...",
 
-        pdb::PrimitiveKind::Void => "void",
+        pdb2::PrimitiveKind::Void => "void",
 
-        pdb::PrimitiveKind::Char | pdb::PrimitiveKind::RChar => "char",
-        pdb::PrimitiveKind::UChar => "unsigned char",
+        pdb2::PrimitiveKind::Char | pdb2::PrimitiveKind::RChar => "char",
+        pdb2::PrimitiveKind::UChar => "unsigned char",
         
-        pdb::PrimitiveKind::Short => "short",
-        pdb::PrimitiveKind::UShort => "unsigned short",
+        pdb2::PrimitiveKind::Short => "short",
+        pdb2::PrimitiveKind::UShort => "unsigned short",
         
-        pdb::PrimitiveKind::Long => "long",
-        pdb::PrimitiveKind::ULong => "unsigned long",
+        pdb2::PrimitiveKind::Long => "long",
+        pdb2::PrimitiveKind::ULong => "unsigned long",
 
-        pdb::PrimitiveKind::Quad => "long long",
-        pdb::PrimitiveKind::UQuad => "unsigned long long",
+        pdb2::PrimitiveKind::Quad => "long long",
+        pdb2::PrimitiveKind::UQuad => "unsigned long long",
 
-        pdb::PrimitiveKind::F32 => "float",
-        pdb::PrimitiveKind::F64 => "double",
-        pdb::PrimitiveKind::F80 => "long double",
+        pdb2::PrimitiveKind::F32 => "float",
+        pdb2::PrimitiveKind::F64 => "double",
+        pdb2::PrimitiveKind::F80 => "long double",
 
-        pdb::PrimitiveKind::Bool8 => "bool",
+        pdb2::PrimitiveKind::Bool8 => "bool",
 
-        pdb::PrimitiveKind::I8 => "int8_t",
-        pdb::PrimitiveKind::U8 => "uint8_t",
+        pdb2::PrimitiveKind::I8 => "int8_t",
+        pdb2::PrimitiveKind::U8 => "uint8_t",
 
-        pdb::PrimitiveKind::I16 => "int16_t",
-        pdb::PrimitiveKind::U16 => "uint16_t",
+        pdb2::PrimitiveKind::I16 => "int16_t",
+        pdb2::PrimitiveKind::U16 => "uint16_t",
 
-        pdb::PrimitiveKind::I32 => "int32_t",
-        pdb::PrimitiveKind::U32 => "uint32_t",
+        pdb2::PrimitiveKind::I32 => "int32_t",
+        pdb2::PrimitiveKind::U32 => "uint32_t",
 
-        pdb::PrimitiveKind::I64 => "int64_t",
-        pdb::PrimitiveKind::U64 => "uint64_t",
+        pdb2::PrimitiveKind::I64 => "int64_t",
+        pdb2::PrimitiveKind::U64 => "uint64_t",
 
-        pdb::PrimitiveKind::WChar => "wchar_t",
-        pdb::PrimitiveKind::RChar16 => "char16_t",
-        pdb::PrimitiveKind::RChar32 => "char32_t",
+        pdb2::PrimitiveKind::WChar => "wchar_t",
+        pdb2::PrimitiveKind::RChar16 => "char16_t",
+        pdb2::PrimitiveKind::RChar32 => "char32_t",
 
-        pdb::PrimitiveKind::HRESULT => "HRESULT",
+        pdb2::PrimitiveKind::HRESULT => "HRESULT",
 
         _ => panic!("Unhandled primitive kind: {kind:#?}"),
     }
 }
 
 pub fn type_name<'p>(
-    machine_type: pdb::MachineType,
-    type_info: &pdb::TypeInformation,
-    type_finder: &pdb::TypeFinder<'p>,
-    type_index: pdb::TypeIndex,
+    machine_type: pdb2::MachineType,
+    type_info: &pdb2::TypeInformation,
+    type_finder: &pdb2::TypeFinder<'p>,
+    type_index: pdb2::TypeIndex,
     declaration_name: Option<String>,
     parameter_names: Option<Vec<String>>,
     is_pointer: bool,
-) -> pdb::Result<String> {
+) -> pdb2::Result<String> {
     let type_item = type_finder.find(type_index)?;
     let type_data = type_item.parse()?;
 
     let mut name = match &type_data {
-        pdb::TypeData::Primitive(data) => {
+        pdb2::TypeData::Primitive(data) => {
             let mut name = primitive_name(data.kind).to_string();
 
             if data.indirection.is_some() {
                 name.push_str(" *");
             }
 
-            if name != "..." {
-                if let Some(field_name) = declaration_name {
-                    name.push(' ');
-                    name.push_str(field_name.as_str());
-                }
+            if name != "..."
+                && let Some(field_name) = declaration_name
+            {
+                name.push(' ');
+                name.push_str(field_name.as_str());
             }
 
             name
         }
 
-        pdb::TypeData::Class(data) => {
+        pdb2::TypeData::Class(data) => {
             let mut name = data.name.to_string().to_string();
 
             if let Some(field_name) = declaration_name {
@@ -124,7 +124,7 @@ pub fn type_name<'p>(
             name
         }
 
-        pdb::TypeData::Enumeration(data) => {
+        pdb2::TypeData::Enumeration(data) => {
             let mut name = data.name.to_string().to_string();
 
             if let Some(field_name) = declaration_name {
@@ -135,7 +135,7 @@ pub fn type_name<'p>(
             name
         }
 
-        pdb::TypeData::Union(data) => {
+        pdb2::TypeData::Union(data) => {
             let mut name = data.name.to_string().to_string();
 
             if let Some(field_name) = declaration_name {
@@ -146,8 +146,8 @@ pub fn type_name<'p>(
             name
         }
 
-        pdb::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
-            Ok(pdb::TypeData::Procedure(_)) | Ok(pdb::TypeData::MemberFunction(_)) => {
+        pdb2::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
+            Ok(pdb2::TypeData::Procedure(_)) | Ok(pdb2::TypeData::MemberFunction(_)) => {
                 type_name(machine_type, type_info, type_finder, data.underlying_type, declaration_name, None, true)?
             }
 
@@ -171,7 +171,7 @@ pub fn type_name<'p>(
             }
         },
 
-        pdb::TypeData::Modifier(data) => {
+        pdb2::TypeData::Modifier(data) => {
             if data.constant {
                 format!(
                     "const {}",
@@ -187,7 +187,7 @@ pub fn type_name<'p>(
             }
         }
 
-        pdb::TypeData::Array(data) => {
+        pdb2::TypeData::Array(data) => {
             let mut name = type_name(machine_type, type_info, type_finder, data.element_type, declaration_name, None, true)?;
             let mut element_size = type_size(machine_type, type_info, type_finder, data.element_type)?;
 
@@ -208,38 +208,37 @@ pub fn type_name<'p>(
                     };
 
                     match &current_type_data {
-                        pdb::TypeData::Primitive(_) if matches!(element_type_data, pdb::TypeData::Primitive(_)) => (),
-                        pdb::TypeData::Class(_) if matches!(element_type_data, pdb::TypeData::Class(_)) => (),
-                        pdb::TypeData::Member(_) if matches!(element_type_data, pdb::TypeData::Member(_)) => (),
-                        pdb::TypeData::MemberFunction(_) if matches!(element_type_data, pdb::TypeData::MemberFunction(_)) => (),
-                        pdb::TypeData::OverloadedMethod(_) if matches!(element_type_data, pdb::TypeData::OverloadedMethod(_)) => (),
-                        pdb::TypeData::Method(_) if matches!(element_type_data, pdb::TypeData::Method(_)) => (),
-                        pdb::TypeData::StaticMember(_) if matches!(element_type_data, pdb::TypeData::StaticMember(_)) => (),
-                        pdb::TypeData::Nested(_) if matches!(element_type_data, pdb::TypeData::Nested(_)) => (),
-                        pdb::TypeData::BaseClass(_) if matches!(element_type_data, pdb::TypeData::BaseClass(_)) => (),
-                        pdb::TypeData::VirtualBaseClass(_) if matches!(element_type_data, pdb::TypeData::VirtualBaseClass(_)) => (),
-                        pdb::TypeData::VirtualFunctionTablePointer(_) if matches!(element_type_data, pdb::TypeData::VirtualFunctionTablePointer(_)) => (),
-                        pdb::TypeData::Procedure(_) if matches!(element_type_data, pdb::TypeData::Procedure(_)) => (),
-                        pdb::TypeData::Pointer(_) if matches!(element_type_data, pdb::TypeData::Pointer(_)) => (),
-                        pdb::TypeData::Modifier(_) if matches!(element_type_data, pdb::TypeData::Modifier(_)) => (),
-                        pdb::TypeData::Enumeration(_) if matches!(element_type_data, pdb::TypeData::Enumeration(_)) => (),
-                        pdb::TypeData::Enumerate(_) if matches!(element_type_data, pdb::TypeData::Enumerate(_)) => (),
-                        pdb::TypeData::Array(_) if matches!(element_type_data, pdb::TypeData::Array(_)) => (),
-                        pdb::TypeData::Union(_) if matches!(element_type_data, pdb::TypeData::Union(_)) => (),
-                        pdb::TypeData::Bitfield(_) if matches!(element_type_data, pdb::TypeData::Bitfield(_)) => (),
-                        pdb::TypeData::FieldList(_) if matches!(element_type_data, pdb::TypeData::FieldList(_)) => (),
-                        pdb::TypeData::ArgumentList(_) if matches!(element_type_data, pdb::TypeData::ArgumentList(_)) => (),
-                        pdb::TypeData::MethodList(_) if matches!(element_type_data, pdb::TypeData::MethodList(_)) => (),
+                        pdb2::TypeData::Primitive(_) if matches!(element_type_data, pdb2::TypeData::Primitive(_)) => (),
+                        pdb2::TypeData::Class(_) if matches!(element_type_data, pdb2::TypeData::Class(_)) => (),
+                        pdb2::TypeData::Member(_) if matches!(element_type_data, pdb2::TypeData::Member(_)) => (),
+                        pdb2::TypeData::MemberFunction(_) if matches!(element_type_data, pdb2::TypeData::MemberFunction(_)) => (),
+                        pdb2::TypeData::OverloadedMethod(_) if matches!(element_type_data, pdb2::TypeData::OverloadedMethod(_)) => (),
+                        pdb2::TypeData::Method(_) if matches!(element_type_data, pdb2::TypeData::Method(_)) => (),
+                        pdb2::TypeData::StaticMember(_) if matches!(element_type_data, pdb2::TypeData::StaticMember(_)) => (),
+                        pdb2::TypeData::Nested(_) if matches!(element_type_data, pdb2::TypeData::Nested(_)) => (),
+                        pdb2::TypeData::BaseClass(_) if matches!(element_type_data, pdb2::TypeData::BaseClass(_)) => (),
+                        pdb2::TypeData::VirtualBaseClass(_) if matches!(element_type_data, pdb2::TypeData::VirtualBaseClass(_)) => (),
+                        pdb2::TypeData::VirtualFunctionTablePointer(_) if matches!(element_type_data, pdb2::TypeData::VirtualFunctionTablePointer(_)) => (),
+                        pdb2::TypeData::Procedure(_) if matches!(element_type_data, pdb2::TypeData::Procedure(_)) => (),
+                        pdb2::TypeData::Pointer(_) if matches!(element_type_data, pdb2::TypeData::Pointer(_)) => (),
+                        pdb2::TypeData::Modifier(_) if matches!(element_type_data, pdb2::TypeData::Modifier(_)) => (),
+                        pdb2::TypeData::Enumeration(_) if matches!(element_type_data, pdb2::TypeData::Enumeration(_)) => (),
+                        pdb2::TypeData::Enumerate(_) if matches!(element_type_data, pdb2::TypeData::Enumerate(_)) => (),
+                        pdb2::TypeData::Array(_) if matches!(element_type_data, pdb2::TypeData::Array(_)) => (),
+                        pdb2::TypeData::Union(_) if matches!(element_type_data, pdb2::TypeData::Union(_)) => (),
+                        pdb2::TypeData::Bitfield(_) if matches!(element_type_data, pdb2::TypeData::Bitfield(_)) => (),
+                        pdb2::TypeData::FieldList(_) if matches!(element_type_data, pdb2::TypeData::FieldList(_)) => (),
+                        pdb2::TypeData::ArgumentList(_) if matches!(element_type_data, pdb2::TypeData::ArgumentList(_)) => (),
+                        pdb2::TypeData::MethodList(_) if matches!(element_type_data, pdb2::TypeData::MethodList(_)) => (),
                         _ => continue
                     }
                     
-                    if current_type_data.name() == element_type_data.name() {
-                        if let Ok(current_type_size) = type_size(machine_type, type_info, type_finder, current_type_item.index()) {
-                            if current_type_size != 0 {
-                                element_size = current_type_size;
-                                break;
-                            }
-                        }
+                    if current_type_data.name() == element_type_data.name()
+                        && let Ok(current_type_size) = type_size(machine_type, type_info, type_finder, current_type_item.index())
+                        && current_type_size != 0
+                    {
+                        element_size = current_type_size;
+                        break;
                     }
                 }
             }
@@ -252,12 +251,12 @@ pub fn type_name<'p>(
             name
         }
 
-        pdb::TypeData::Bitfield(data) => {
+        pdb2::TypeData::Bitfield(data) => {
             let name = type_name(machine_type, type_info, type_finder, data.underlying_type, declaration_name, None, true)?;
             format!("{} : {}", name, data.length)
         }
 
-        pdb::TypeData::Procedure(data) => {
+        pdb2::TypeData::Procedure(data) => {
             let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
                 if let Some(field_name) = declaration_name.as_ref() {
                     field_name.clone()
@@ -297,7 +296,7 @@ pub fn type_name<'p>(
             name
         }
 
-        pdb::TypeData::MemberFunction(data) => {
+        pdb2::TypeData::MemberFunction(data) => {
             let name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
                 if let Some(field_name) = declaration_name.as_ref() {
                     field_name.clone()
@@ -326,28 +325,35 @@ pub fn type_name<'p>(
 
             let mut parameter_names = parameter_names;
 
-            if let Some(parameter_names) = parameter_names.as_mut() {
-                if data.this_pointer_type.is_some() && !parameter_names.is_empty() && parameter_names[0] == "this" {
-                    parameter_names.remove(0);
-                }
+            if let Some(parameter_names) = parameter_names.as_mut()
+                && data.this_pointer_type.is_some()
+                && !parameter_names.is_empty()
+                && parameter_names[0] == "this"
+            {
+                parameter_names.remove(0);
             }
 
             format!("{}({})", name, argument_list(machine_type, type_info, type_finder, data.argument_list, parameter_names)?.join(", "))
         }
 
-        pdb::TypeData::MethodList(_) => {
+        pdb2::TypeData::MethodList(_) => {
             println!("WARNING: Encountered method list in type_name, using `...`");
             format!("/* TODO: method list */ ...")
         }
 
-        pdb::TypeData::ArgumentList(_) => {
+        pdb2::TypeData::ArgumentList(_) => {
             println!("WARNING: Encountered argument list in type_name, using `...`");
             format!("/* TODO: argument list */ ...")
         }
 
-        pdb::TypeData::FieldList(_) => {
+        pdb2::TypeData::FieldList(_) => {
             println!("WARNING: Encountered field list in type_name, using `...`");
             format!("/* TODO: field list */ ...")
+        }
+
+        pdb2::TypeData::VirtualTableShape(_) => {
+            println!("WARNING: Encountered virtual table shape in type_name, using `...`");
+            format!("/* TODO: virtual table shape */ ...")
         }
 
         _ => panic!(
@@ -365,181 +371,181 @@ pub fn type_name<'p>(
 }
 
 pub fn type_size<'p>(
-    machine_type: pdb::MachineType,
-    _type_info: &pdb::TypeInformation,
-    type_finder: &pdb::TypeFinder<'p>,
-    type_index: pdb::TypeIndex,
-) -> pdb::Result<usize> {
+    machine_type: pdb2::MachineType,
+    _type_info: &pdb2::TypeInformation,
+    type_finder: &pdb2::TypeFinder<'p>,
+    type_index: pdb2::TypeIndex,
+) -> pdb2::Result<usize> {
     let type_item = type_finder.find(type_index)?;
     let type_data = type_item.parse()?;
 
     match &type_data {
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
             indirection: Some(_),
             ..
         })
-        | pdb::TypeData::Pointer(_)
-        | pdb::TypeData::Procedure(_) => match machine_type {
-            pdb::MachineType::Unknown | pdb::MachineType::X86 => Ok(4),
-            pdb::MachineType::Amd64 => Ok(8),
+        | pdb2::TypeData::Pointer(_)
+        | pdb2::TypeData::Procedure(_) => match machine_type {
+            pdb2::MachineType::Unknown | pdb2::MachineType::X86 => Ok(4),
+            pdb2::MachineType::Amd64 => Ok(8),
             _ => panic!("Unhandled machine type: {machine_type}")
         }
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::NoType,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::NoType,
             indirection: None,
         }) => Ok(0),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::Void,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Void,
             indirection: None,
         }) => Ok(0),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::Bool8,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Bool8,
             indirection: None,
         }) => Ok(1),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::Bool16,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Bool16,
             indirection: None,
         }) => Ok(2),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::Bool32,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Bool32,
             indirection: None,
         }) => Ok(4),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::Char,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Char,
             indirection: None,
         }) => Ok(1),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::UChar,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::UChar,
             indirection: None,
         }) => Ok(1),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::WChar,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::WChar,
             indirection: None,
         }) => Ok(2),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::RChar,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::RChar,
             indirection: None,
         }) => Ok(1),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::RChar16,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::RChar16,
             indirection: None,
         }) => Ok(2),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::RChar32,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::RChar32,
             indirection: None,
         }) => Ok(4),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::I8,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::I8,
             indirection: None,
         }) => Ok(1),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::U8,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::U8,
             indirection: None,
         }) => Ok(1),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::Short,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Short,
             indirection: None,
         }) => Ok(2),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::UShort,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::UShort,
             indirection: None,
         }) => Ok(2),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::I16,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::I16,
             indirection: None,
         }) => Ok(2),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::U16,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::U16,
             indirection: None,
         }) => Ok(2),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::Long,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Long,
             indirection: None,
         }) => Ok(4),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::ULong,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::ULong,
             indirection: None,
         }) => Ok(4),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::I32,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::I32,
             indirection: None,
         }) => Ok(4),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::U32,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::U32,
             indirection: None,
         }) => Ok(4),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::HRESULT,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::HRESULT,
             indirection: None,
         }) => Ok(4),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::Quad,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Quad,
             indirection: None,
         }) => Ok(8),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::UQuad,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::UQuad,
             indirection: None,
         }) => Ok(8),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::I64,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::I64,
             indirection: None,
         }) => Ok(8),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::U64,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::U64,
             indirection: None,
         }) => Ok(8),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::F32,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::F32,
             indirection: None,
         }) => Ok(4),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::F64,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::F64,
             indirection: None,
         }) => Ok(8),
 
-        pdb::TypeData::Primitive(pdb::PrimitiveType {
-            kind: pdb::PrimitiveKind::F80,
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::F80,
             indirection: None,
         }) => Ok(16),
 
-        pdb::TypeData::Primitive(primitive_type) => {
+        pdb2::TypeData::Primitive(primitive_type) => {
             unimplemented!("primitive type size: {:?}", primitive_type)
         }
 
-        pdb::TypeData::Class(data) => Ok(data.size as usize),
-        pdb::TypeData::Enumeration(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
-        pdb::TypeData::Union(data) => Ok(data.size as usize),
-        pdb::TypeData::Modifier(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
-        pdb::TypeData::Bitfield(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
-        pdb::TypeData::Array(data) => Ok(*data.dimensions.last().unwrap() as usize),
+        pdb2::TypeData::Class(data) => Ok(data.size as usize),
+        pdb2::TypeData::Enumeration(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
+        pdb2::TypeData::Union(data) => Ok(data.size as usize),
+        pdb2::TypeData::Modifier(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
+        pdb2::TypeData::Bitfield(data) => type_size(machine_type, _type_info, type_finder, data.underlying_type),
+        pdb2::TypeData::Array(data) => Ok(*data.dimensions.last().unwrap() as usize),
 
         _ => panic!(
             "Unhandled type data for type_size at index {}: {:#?}",

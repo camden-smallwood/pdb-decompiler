@@ -3,32 +3,32 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumValue {
     pub name: String,
-    pub value: pdb::Variant,
+    pub value: pdb2::Variant,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Enum {
     pub name: String,
-    pub index: pdb::TypeIndex,
+    pub index: pdb2::TypeIndex,
     pub depth: u32,
     pub line: u32,
     pub underlying_type_name: String,
     pub is_declaration: bool,
     pub values: Vec<EnumValue>,
-    pub field_attributes: Option<pdb::FieldAttributes>,
+    pub field_attributes: Option<pdb2::FieldAttributes>,
 }
 
 impl Enum {
     pub fn add_members(
         &mut self,
-        type_finder: &pdb::TypeFinder,
-        type_index: pdb::TypeIndex
-    ) -> pdb::Result<()> {
+        type_finder: &pdb2::TypeFinder,
+        type_index: pdb2::TypeIndex
+    ) -> pdb2::Result<()> {
         match type_finder.find(type_index)?.parse() {
-            Ok(pdb::TypeData::FieldList(data)) => {
+            Ok(pdb2::TypeData::FieldList(data)) => {
                 for field in &data.fields {
                     match field {
-                        pdb::TypeData::Enumerate(ref data) => {
+                        pdb2::TypeData::Enumerate(data) => {
                             self.values.push(EnumValue {
                                 name: data.name.to_string().to_string(),
                                 value: data.value,
@@ -44,7 +44,7 @@ impl Enum {
                 }
             }
 
-            Ok(pdb::TypeData::Primitive(pdb::PrimitiveType { kind: pdb::PrimitiveKind::NoType, indirection: None })) => {
+            Ok(pdb2::TypeData::Primitive(pdb2::PrimitiveType { kind: pdb2::PrimitiveKind::NoType, indirection: None })) => {
                 self.is_declaration = true;
             }
 
@@ -94,14 +94,14 @@ impl fmt::Display for Enum {
                 "\t{} = {},",
                 value.name,
                 match value.value {
-                    pdb::Variant::U8(v) => format!("{}", v),
-                    pdb::Variant::U16(v) => format!("{}", v),
-                    pdb::Variant::U32(v) => format!("{}", v),
-                    pdb::Variant::U64(v) => format!("{}", v),
-                    pdb::Variant::I8(v) => format!("{}", v),
-                    pdb::Variant::I16(v) => format!("{}", v),
-                    pdb::Variant::I32(v) => format!("{}", v),
-                    pdb::Variant::I64(v) => format!("{}", v),
+                    pdb2::Variant::U8(v) => format!("{}", v),
+                    pdb2::Variant::U16(v) => format!("{}", v),
+                    pdb2::Variant::U32(v) => format!("{}", v),
+                    pdb2::Variant::U64(v) => format!("{}", v),
+                    pdb2::Variant::I8(v) => format!("{}", v),
+                    pdb2::Variant::I16(v) => format!("{}", v),
+                    pdb2::Variant::I32(v) => format!("{}", v),
+                    pdb2::Variant::I64(v) => format!("{}", v),
                 }
             )?;
         }

@@ -245,12 +245,12 @@ impl Module {
 
     pub fn add_type_definition(
         &mut self,
-        machine_type: pdb::MachineType,
-        type_info: &pdb::TypeInformation,
-        type_finder: &pdb::TypeFinder,
-        type_index: pdb::TypeIndex,
+        machine_type: pdb2::MachineType,
+        type_info: &pdb2::TypeInformation,
+        type_finder: &pdb2::TypeFinder,
+        type_index: pdb2::TypeIndex,
         line: u32,
-    ) -> pdb::Result<()> {
+    ) -> pdb2::Result<()> {
         if self.members.iter().any(|x| match x {
             ModuleMember::Class(c) => c.index == type_index,
             ModuleMember::Enum(e) => e.index == type_index,
@@ -268,7 +268,7 @@ impl Module {
         };
 
         match type_item.parse() {
-            Ok(pdb::TypeData::Class(data)) => {
+            Ok(pdb2::TypeData::Class(data)) => {
                 let mut definition = Class {
                     kind: Some(data.kind),
                     is_union: false,
@@ -283,33 +283,32 @@ impl Module {
                     field_attributes: None,
                 };
 
-                if let Some(derived_from) = data.derived_from {
-                    if let Err(e) = definition.add_derived_from(type_finder, derived_from) {
-                        eprintln!("WARNING: failed to add class derived from: {e}");
-                    }
+                if let Some(derived_from) = data.derived_from
+                    && let Err(e) = definition.add_derived_from(type_finder, derived_from)
+                {
+                    eprintln!("WARNING: failed to add class derived from: {e}");
                 }
 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
-                } else if let Some(fields) = data.fields {
-                    if let Err(e) = definition.add_members(machine_type, type_info, type_finder, fields, None) {
-                        eprintln!("WARNING: failed to add class members: {e}");
-                    }
+                } else if let Some(fields) = data.fields
+                    && let Err(e) = definition.add_members(machine_type, type_info, type_finder, fields, None)
+                {
+                    eprintln!("WARNING: failed to add class members: {e}");
                 }
 
                 let mut exists = false;
 
                 for member in self.members.iter() {
-                    if let ModuleMember::Class(other_definition) = member {
-                        if definition.kind == other_definition.kind
-                            && definition.name == other_definition.name
-                            && definition.size == other_definition.size
-                            && definition.base_classes.eq(&other_definition.base_classes)
-                            && definition.members.eq(&other_definition.members)
-                        {
-                            exists = true;
-                            break;
-                        }
+                    if let ModuleMember::Class(other_definition) = member
+                        && definition.kind == other_definition.kind
+                        && definition.name == other_definition.name
+                        && definition.size == other_definition.size
+                        && definition.base_classes.eq(&other_definition.base_classes)
+                        && definition.members.eq(&other_definition.members)
+                    {
+                        exists = true;
+                        break;
                     }
                 }
 
@@ -318,7 +317,7 @@ impl Module {
                 }
             }
 
-            Ok(pdb::TypeData::Union(data)) => {
+            Ok(pdb2::TypeData::Union(data)) => {
                 let mut definition = Class {
                     kind: None,
                     is_union: true,
@@ -342,16 +341,15 @@ impl Module {
                 let mut exists = false;
 
                 for member in self.members.iter() {
-                    if let ModuleMember::Class(other_definition) = member {
-                        if definition.kind == other_definition.kind
-                            && definition.name == other_definition.name
-                            && definition.size == other_definition.size
-                            && definition.base_classes.eq(&other_definition.base_classes)
-                            && definition.members.eq(&other_definition.members)
-                        {
-                            exists = true;
-                            break;
-                        }
+                    if let ModuleMember::Class(other_definition) = member
+                        && definition.kind == other_definition.kind
+                        && definition.name == other_definition.name
+                        && definition.size == other_definition.size
+                        && definition.base_classes.eq(&other_definition.base_classes)
+                        && definition.members.eq(&other_definition.members)
+                    {
+                        exists = true;
+                        break;
                     }
                 }
 
@@ -360,7 +358,7 @@ impl Module {
                 }
             }
 
-            Ok(pdb::TypeData::Enumeration(data)) => {
+            Ok(pdb2::TypeData::Enumeration(data)) => {
                 let underlying_type_name = match type_name(
                     machine_type,
                     type_info,
@@ -397,13 +395,12 @@ impl Module {
                 let mut exists = false;
 
                 for member in self.members.iter() {
-                    if let ModuleMember::Enum(other_definition) = member {
-                        if definition.name == other_definition.name
-                            && definition.values.eq(&other_definition.values)
-                        {
-                            exists = true;
-                            break;
-                        }
+                    if let ModuleMember::Enum(other_definition) = member
+                        && definition.name == other_definition.name
+                        && definition.values.eq(&other_definition.values)
+                    {
+                        exists = true;
+                        break;
                     }
                 }
 
@@ -429,9 +426,9 @@ impl Module {
     pub fn add_build_info(
         &mut self,
         out_path: &std::path::Path,
-        id_finder: &pdb::IdFinder,
-        build_info: pdb::BuildInfoId,
-    ) -> pdb::Result<()> {
+        id_finder: &pdb2::IdFinder,
+        build_info: pdb2::BuildInfoId,
+    ) -> pdb2::Result<()> {
         let mut args = vec![];
 
         for id_index in build_info.arguments {
@@ -444,7 +441,7 @@ impl Module {
             };
 
             let id_data = match id_item.parse() {
-                Ok(pdb::IdData::String(id_data)) => id_data,
+                Ok(pdb2::IdData::String(id_data)) => id_data,
                 Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
                 Err(e) => {
                     eprintln!("WARNING: failed to parse id {id_index}: {e}");
@@ -464,7 +461,7 @@ impl Module {
                 };
 
                 let id_data = match id_item.parse() {
-                    Ok(pdb::IdData::StringList(id_data)) => id_data,
+                    Ok(pdb2::IdData::StringList(id_data)) => id_data,
 
                     Ok(id_data) => panic!("Failed to parse id {id_index}: Expected StringList, got {id_data:?}"),
 
@@ -476,7 +473,7 @@ impl Module {
 
                 for type_index in id_data.substrings {
                     // TODO: remove this hack when pdb crate fixes type
-                    let id_index = pdb::IdIndex(type_index.0);
+                    let id_index = pdb2::IdIndex(type_index.0);
 
                     let id_item = match id_finder.find(id_index) {
                         Ok(id_item) => id_item,
@@ -487,7 +484,7 @@ impl Module {
                     };
 
                     match id_item.parse() {
-                        Ok(pdb::IdData::String(id_data)) => {
+                        Ok(pdb2::IdData::String(id_data)) => {
                             arg = format!("{}{}", arg, id_data.name.to_string());
                         }
 

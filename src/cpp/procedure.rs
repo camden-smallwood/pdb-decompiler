@@ -109,7 +109,7 @@ impl TabbedDisplay for Block {
 pub struct Procedure {
     pub address: u64,
     pub line: Option<u32>,
-    pub type_index: pdb::TypeIndex,
+    pub type_index: pdb2::TypeIndex,
     pub signature: String,
     pub body: Option<Block>,
 }
