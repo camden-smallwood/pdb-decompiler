@@ -74,6 +74,7 @@ pub fn primitive_name(kind: PrimitiveKind) -> &'static str {
         pdb2::PrimitiveKind::U64 => "uint64_t",
 
         pdb2::PrimitiveKind::WChar => "wchar_t",
+        pdb2::PrimitiveKind::Char8 => "char8_t",
         pdb2::PrimitiveKind::RChar16 => "char16_t",
         pdb2::PrimitiveKind::RChar32 => "char32_t",
 
@@ -433,6 +434,11 @@ pub fn type_size<'p>(
 
         pdb2::TypeData::Primitive(pdb2::PrimitiveType {
             kind: pdb2::PrimitiveKind::RChar,
+            indirection: None,
+        }) => Ok(1),
+
+        pdb2::TypeData::Primitive(pdb2::PrimitiveType {
+            kind: pdb2::PrimitiveKind::Char8,
             indirection: None,
         }) => Ok(1),
 

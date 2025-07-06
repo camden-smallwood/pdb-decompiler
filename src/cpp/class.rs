@@ -632,11 +632,25 @@ impl Class {
                         }));
                     }
 
-                    pdb2::TypeData::Procedure(data) => println!(
-                        "WARNING: unhandled nested procedure at index {} in Class::add_member - {:?}",
-                        nested_type_item.index(),
-                        data
-                    ),
+                    pdb2::TypeData::Procedure(_) => {
+                        let type_name = type_name(
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            nested_data.nested_type,
+                            Some(nested_data.name.to_string().to_string()),
+                            None,
+                            true,
+                        )?;
+
+                        self.members.push(ClassMember::TypeDefinition(TypeDefinition {
+                            type_name,
+                            underlying_type: nested_data.nested_type,
+                            field_attributes: Some(nested_data.attributes),
+                            pointer_attributes: None,
+                            containing_class: None,
+                        }));
+                    }
 
                     _ => return Err(
                         pdb2::Error::IoError(
