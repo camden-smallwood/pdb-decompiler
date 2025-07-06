@@ -141,6 +141,10 @@ pub enum ModuleSecondaryFlags {
     JustMyCode = 1 << 35,
     GenerateXmlDocumentation = 1 << 36,
     IdeMinimalRebuild = 1 << 37,
+    ListingFileAssemblerOnly = 1 << 38,
+    ListingFileMachineCode = 1 << 39,
+    ListingFileSourceCode = 1 << 40,
+    ListingFileUtf8 = 1 << 41,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -190,6 +194,7 @@ pub struct Module {
     pub constexpr_depth: Option<usize>,
     pub constexpr_steps: Option<usize>,
     pub doc_file: Option<String>,
+    pub listing_file: Option<PathBuf>,
 
     pub additional_include_dirs: Vec<PathBuf>,
     pub using_directive_dirs: Vec<PathBuf>,
@@ -907,6 +912,28 @@ impl Module {
                 }
 
                 Some('F') => match chars_iter.next() {
+                    Some('a') => match parse_arg_string(chars_iter) {
+                        None => self.listing_file = Some("source.asm".into()),
+                        Some(s) => self.listing_file = Some(s.into()),
+                    }
+
+                    Some('A') => match chars_iter.next() {
+                        None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::ListingFileAssemblerOnly, true),
+                        Some('c') => match chars_iter.next() {
+                            None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::ListingFileMachineCode, true),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'FAc{c}...'; Data: \"{args_string}\""),
+                        }
+                        Some('s') => match chars_iter.next() {
+                            None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::ListingFileSourceCode, true),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'FAs{c}...'; Data: \"{args_string}\""),
+                        }
+                        Some('u') => match chars_iter.next() {
+                            None | Some(' ') => self.set_secondary_flag(ModuleSecondaryFlags::ListingFileUtf8, true),
+                            Some(c) => panic!("Unhandled characters in build info arg: 'FAu{c}...'; Data: \"{args_string}\""),
+                        }
+                        Some(c) => panic!("Unhandled characters in build info arg: 'FA{c}...'; Data: \"{args_string}\""),
+                    }
+
                     Some('C') => match chars_iter.next() {
                         None | Some(' ') => self.set_primary_flag(ModulePrimaryFlags::FullSourcePathInDiagnostics, true),
                         Some(c) => panic!("Unhandled characters in build info arg: 'FC{c}...'; Data: \"{args_string}\""),
