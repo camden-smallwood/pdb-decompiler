@@ -192,8 +192,8 @@ fn process_type_information<'a>(
         
         let type_data = match type_item.parse() {
             Ok(x) => x,
-            Err(e) => {
-                println!("WARNING: Failed to parse type: {e} - {type_item:#?}");
+            Err(_) => {
+                // println!("WARNING: Failed to parse type: {e} - {type_item:#?}");
                 continue;
             }
         };
@@ -276,8 +276,8 @@ fn process_id_information<'a>(
 
         let id_data = match id.parse() {
             Ok(id_data) => id_data,
-            Err(e) => {
-                eprintln!("WARNING: failed to parse id: {e}");
+            Err(_) => {
+                // println!("WARNING: failed to parse id: {e}");
                 continue;
             }
         };
@@ -362,16 +362,16 @@ fn load_module_global_symbols<'a>(
         let symbol = match global_symbols_iter.next() {
             Ok(Some(symbol)) => symbol,
             Ok(None) => break,
-            Err(e) => {
-                println!("WARNING: failed to get next symbol: {e}");
+            Err(_) => {
+                // println!("WARNING: failed to get next symbol: {e}");
                 break;
             }
         };
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            Err(error) => {
-                println!("WARNING: failed to parse symbol data, skipping: {error}");
+            Err(_) => {
+                // println!("WARNING: failed to parse symbol data, skipping: {error}");
                 continue;
             }
         };
@@ -456,7 +456,7 @@ fn process_modules<'a>(
             }
         };
 
-        if let Err(e) = process_module(
+        if let Err(_) = process_module(
             options,
             machine_type,
             base_address,
@@ -471,7 +471,7 @@ fn process_modules<'a>(
             module,
             &module_info,
         ) {
-            println!("WARNING: failed to parse module, skipping: {e} - {module:#?}");
+            // println!("WARNING: failed to parse module, skipping: {e} - {module:#?}");
             continue;
         }
     }
@@ -818,8 +818,8 @@ fn process_module_local_symbols(
     while let Some(symbol) = module_symbols.next()? {
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            Err(err) => {
-                println!("WARNING: failed to parse symbol data, skipping: {err}");
+            Err(_) => {
+                // println!("WARNING: failed to parse symbol data, skipping: {err}");
                 continue;
             }
         };
@@ -910,7 +910,7 @@ fn process_module_symbol_data(
             )?;
 
             if type_name.starts_with("const float ") {
-                println!("WARNING: failed to decompile constant float in \"{}\": {symbol_data:#?}", module_file_path.to_string_lossy());
+                // println!("WARNING: failed to decompile constant float in \"{}\": {symbol_data:#?}", module_file_path.to_string_lossy());
                 return Ok(());
             }
 
@@ -957,7 +957,7 @@ fn process_module_symbol_data(
             let rva = match data_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
                 None => {
-                    println!("WARNING: no RVA found for data symbol: {data_symbol:?}");
+                    // println!("WARNING: no RVA found for data symbol: {data_symbol:?}");
                     return Ok(());
                 }
             };
@@ -1015,7 +1015,7 @@ fn process_module_symbol_data(
             let rva = match thread_storage_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
                 None => {
-                    println!("WARNING: no RVA found for thread storage symbol: {thread_storage_symbol:?}");
+                    // println!("WARNING: no RVA found for thread storage symbol: {thread_storage_symbol:?}");
                     return Ok(());
                 }
             };
@@ -1059,7 +1059,7 @@ fn process_module_symbol_data(
             let module_symbols = match module_symbols {
                 Some(x) => x,
                 None => {
-                    println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                    // println!("WARNING: unhandled global symbol: {symbol_data:?}");
                     return Ok(());
                 }
             };
@@ -1129,7 +1129,7 @@ fn process_module_symbol_data(
             let rva = match procedure_symbol.offset.to_rva(address_map) {
                 Some(rva) => rva,
                 None => {
-                    println!("WARNING: no RVA found for procedure symbol: {procedure_symbol:?}");
+                    // println!("WARNING: no RVA found for procedure symbol: {procedure_symbol:?}");
                     return Ok(());
                 }
             };
@@ -1178,7 +1178,7 @@ fn process_module_symbol_data(
             let module_symbols = match module_symbols {
                 Some(x) => x,
                 None => {
-                    println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                    // println!("WARNING: unhandled global symbol: {symbol_data:?}");
                     return Ok(());
                 }
             };
@@ -1190,7 +1190,7 @@ fn process_module_symbol_data(
             let module_symbols = match module_symbols {
                 Some(x) => x,
                 None => {
-                    println!("WARNING: unhandled global symbol: {symbol_data:?}");
+                    // println!("WARNING: unhandled global symbol: {symbol_data:?}");
                     return Ok(());
                 }
             };
@@ -1198,14 +1198,16 @@ fn process_module_symbol_data(
             parse_separated_code_symbols(module_symbols)
         }
 
-        pdb2::SymbolData::Public(x) => println!("WARNING: Unused {x:#?}"),
-        pdb2::SymbolData::ProcedureReference(x) => println!("WARNING: Unused {x:#?}"),
-        pdb2::SymbolData::ObjName(x) => println!("WARNING: Unused {x:#?}"),
-        pdb2::SymbolData::BuildInfo(x) => println!("WARNING: Unused {x:#?}"),
-        pdb2::SymbolData::CompileFlags(x) => println!("WARNING: Unused {x:#?}"),
-        pdb2::SymbolData::Export(x) => println!("WARNING: Unused {x:#?}"),
-        pdb2::SymbolData::Label(x) => println!("WARNING: Unused {x:#?}"),
-        pdb2::SymbolData::EnvBlock(x) => println!("WARNING: Unused {x:#?}"),
+        pdb2::SymbolData::Public(_)
+        | pdb2::SymbolData::ProcedureReference(_)
+        | pdb2::SymbolData::ObjName(_)
+        | pdb2::SymbolData::BuildInfo(_)
+        | pdb2::SymbolData::CompileFlags(_)
+        | pdb2::SymbolData::Export(_)
+        | pdb2::SymbolData::Label(_)
+        | pdb2::SymbolData::EnvBlock(_) => {
+            // println!("WARNING: Unused {symbol_data:#?}");
+        }
 
         ref data => panic!("Unhandled symbol data in process_module_symbol_data - {data:#?}"),
     }
@@ -1549,15 +1551,11 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     }
 
                     None => {
-                        println!("WARNING: no RVA found for label symbol: {symbol_data:?}");
+                        // println!("WARNING: no RVA found for label symbol: {symbol_data:?}");
                     }
                 }
             }
             
-            pdb2::SymbolData::UserDefinedType(_) => {
-                println!("WARNING: Unused {symbol_data:#?}");
-            }
-
             pdb2::SymbolData::ThreadStorage(tls_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
                     signature: format!(
@@ -1577,6 +1575,10 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         format!("thread storage @ 0x{:X}", base_address.unwrap_or(0) + rva.0 as u64)
                     }),
                 }));
+            }
+
+            pdb2::SymbolData::UserDefinedType(_) => {
+                // println!("WARNING: Unused {symbol_data:#?}");
             }
 
             _ => panic!("Unhandled symbol data in parse_statement_symbols - {symbol_data:?}"),
@@ -1604,7 +1606,6 @@ fn parse_thunk_symbols(symbols: &mut pdb2::SymbolIter) {
 
         match symbol_data {
             pdb2::SymbolData::ScopeEnd => {
-                println!("End thunk");
                 break;
             }
 
@@ -1631,7 +1632,6 @@ fn parse_separated_code_symbols(symbols: &mut pdb2::SymbolIter) {
 
         match symbol_data {
             pdb2::SymbolData::ScopeEnd => {
-                println!("End separated code");
                 break;
             }
 

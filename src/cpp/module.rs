@@ -266,8 +266,8 @@ impl Module {
 
         let type_item = match type_finder.find(type_index) {
             Ok(type_item) => type_item,
-            Err(e) => {
-                eprintln!("WARNING: failed to find type: {e}");
+            Err(_) => {
+                // println!("WARNING: failed to find type: {e}");
                 return Ok(());
             }
         };
@@ -289,17 +289,17 @@ impl Module {
                 };
 
                 if let Some(derived_from) = data.derived_from
-                    && let Err(e) = definition.add_derived_from(type_finder, derived_from)
+                    && let Err(_) = definition.add_derived_from(type_finder, derived_from)
                 {
-                    eprintln!("WARNING: failed to add class derived from: {e}");
+                    // println!("WARNING: failed to add class derived from: {e}");
                 }
 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
                 } else if let Some(fields) = data.fields
-                    && let Err(e) = definition.add_members(machine_type, type_info, type_finder, fields, None)
+                    && let Err(_) = definition.add_members(machine_type, type_info, type_finder, fields, None)
                 {
-                    eprintln!("WARNING: failed to add class members: {e}");
+                    // println!("WARNING: failed to add class members: {e}");
                 }
 
                 let mut exists = false;
@@ -339,8 +339,8 @@ impl Module {
 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
-                } else if let Err(e) = definition.add_members(machine_type, type_info, type_finder, data.fields, None) {
-                    eprintln!("WARNING: failed to add union members: {e}");
+                } else if let Err(_) = definition.add_members(machine_type, type_info, type_finder, data.fields, None) {
+                    // println!("WARNING: failed to add union members: {e}");
                 }
 
                 let mut exists = false;
@@ -374,8 +374,8 @@ impl Module {
                     true,
                 ) {
                     Ok(name) => name,
-                    Err(e) => {
-                        eprintln!("WARNING: failed to get enum type name: {e}");
+                    Err(_) => {
+                        // println!("WARNING: failed to get enum type name: {e}");
                         return Ok(());
                     }
                 };
@@ -393,8 +393,8 @@ impl Module {
 
                 if data.properties.forward_reference() {
                     definition.is_declaration = true;
-                } else if let Err(e) = definition.add_members(type_finder, data.fields) {
-                    eprintln!("WARNING: failed to add enum members: {e}");
+                } else if let Err(_) = definition.add_members(type_finder, data.fields) {
+                    // println!("WARNING: failed to add enum members: {e}");
                 }
 
                 let mut exists = false;
@@ -439,8 +439,8 @@ impl Module {
         for id_index in build_info.arguments {
             let id_item = match id_finder.find(id_index) {
                 Ok(id_item) => id_item,
-                Err(e) => {
-                    eprintln!("WARNING: failed to find id {id_index}: {e}");
+                Err(_) => {
+                    // println!("WARNING: failed to find id {id_index}: {e}");
                     continue;
                 }
             };
@@ -448,8 +448,8 @@ impl Module {
             let id_data = match id_item.parse() {
                 Ok(pdb2::IdData::String(id_data)) => id_data,
                 Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
-                Err(e) => {
-                    eprintln!("WARNING: failed to parse id {id_index}: {e}");
+                Err(_) => {
+                    // println!("WARNING: failed to parse id {id_index}: {e}");
                     continue;
                 }
             };
@@ -459,8 +459,8 @@ impl Module {
             if let Some(id_index) = id_data.substrings {
                 let id_item = match id_finder.find(id_index) {
                     Ok(id_item) => id_item,
-                    Err(e) => {
-                        eprintln!("WARNING: failed to find id {id_index}: {e}");
+                    Err(_) => {
+                        // println!("WARNING: failed to find id {id_index}: {e}");
                         continue;
                     }
                 };
@@ -470,8 +470,8 @@ impl Module {
 
                     Ok(id_data) => panic!("Failed to parse id {id_index}: Expected StringList, got {id_data:?}"),
 
-                    Err(e) => {
-                        eprintln!("WARNING: failed to parse id {id_index}: {e}");
+                    Err(_) => {
+                        // println!("WARNING: failed to parse id {id_index}: {e}");
                         continue;
                     }
                 };
@@ -482,8 +482,8 @@ impl Module {
 
                     let id_item = match id_finder.find(id_index) {
                         Ok(id_item) => id_item,
-                        Err(e) => {
-                            eprintln!("WARNING: failed to find id {id_index}: {e}");
+                        Err(_) => {
+                            // println!("WARNING: failed to find id {id_index}: {e}");
                             continue;
                         }
                     };
@@ -495,8 +495,8 @@ impl Module {
 
                         Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
                         
-                        Err(e) => {
-                            eprintln!("WARNING: failed to parse id {id_index}: {e}");
+                        Err(_) => {
+                            // println!("WARNING: failed to parse id {id_index}: {e}");
                             continue;
                         }
                     }

@@ -223,7 +223,9 @@ impl Class {
 
             Ok(other) => panic!("Unexpected type in Class::add_members, got {} -> {:?}", type_index, other),
 
-            Err(err) => println!("WARNING: failed to find type in Class::add_members, skipping: {err}")
+            Err(_) => {
+                // println!("WARNING: failed to find type in Class::add_members, skipping: {err}");
+            }
         }
 
         Ok(())

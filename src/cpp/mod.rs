@@ -338,22 +338,22 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::MethodList(_) => {
-            println!("WARNING: Encountered method list in type_name, using `...`");
+            // println!("WARNING: Encountered method list in type_name, using `...`");
             format!("/* TODO: method list */ ...")
         }
 
         pdb2::TypeData::ArgumentList(_) => {
-            println!("WARNING: Encountered argument list in type_name, using `...`");
+            // println!("WARNING: Encountered argument list in type_name, using `...`");
             format!("/* TODO: argument list */ ...")
         }
 
         pdb2::TypeData::FieldList(_) => {
-            println!("WARNING: Encountered field list in type_name, using `...`");
+            // println!("WARNING: Encountered field list in type_name, using `...`");
             format!("/* TODO: field list */ ...")
         }
 
         pdb2::TypeData::VirtualTableShape(_) => {
-            println!("WARNING: Encountered virtual table shape in type_name, using `...`");
+            // println!("WARNING: Encountered virtual table shape in type_name, using `...`");
             format!("/* TODO: virtual table shape */ ...")
         }
 
