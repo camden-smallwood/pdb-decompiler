@@ -566,9 +566,18 @@ impl Module {
 
             while let Some(c) = chars_iter.next() {
                 match c {
+                    '\\' if quoted => match chars_iter.next() {
+                        Some(c) => {
+                            string.push('\\');
+                            string.push(c);
+                        }
+                        
+                        None => panic!("Expected character after quoted escape sequence"),
+                    }
+
                     '"' if quoted => match chars_iter.next() {
                         None | Some(' ') => break,
-                        Some(c) => panic!("Unexpected character after string: '{c}'"),
+                        Some(c) => panic!("Unexpected character after string \"{string}\": '{c}'"),
                     },
 
                     c if c.is_whitespace() && !quoted => break,
@@ -601,6 +610,16 @@ impl Module {
                     Some(c) if c.is_whitespace() && !quoted => break,
                     Some('"') if quoted => (),
                     Some('=') => return Some((name, parse_arg_string(chars_iter))),
+
+                    Some('\\') if quoted => match chars_iter.next() {
+                        Some(c) => {
+                            name.push('\\');
+                            name.push(c);
+                        }
+                        
+                        None => panic!("Expected character after quoted escape sequence"),
+                    }
+
                     Some(c) => name.push(c),
                 }
             }
