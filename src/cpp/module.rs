@@ -1,5 +1,5 @@
 use super::{type_name, Class, Enum, Procedure};
-use std::{fmt, iter::Peekable, path::PathBuf, str::Chars};
+use std::{cell::RefCell, fmt, iter::Peekable, path::PathBuf, rc::Rc, str::Chars};
 
 pub static SOURCE_FILE_EXTS: &[&str] = &[
     "c", "cc", "cpp", "cxx", "pch", "asm", "fasm", "masm", "res", "exp",
@@ -7,7 +7,7 @@ pub static SOURCE_FILE_EXTS: &[&str] = &[
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleMember {
-    Class(Class),
+    Class(Rc<RefCell<Class>>),
     Enum(Enum),
     UserDefinedType(String),
     UsingNamespace(String),
@@ -21,7 +21,7 @@ impl fmt::Display for ModuleMember {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Class(c) => c.fmt(f),
+            Self::Class(c) => c.borrow().fmt(f),
             Self::Enum(e) => e.fmt(f),
             Self::UserDefinedType(u) => u.fmt(f),
             Self::UsingNamespace(n) => f.write_fmt(format_args!("using namespace {n};")),
@@ -250,6 +250,7 @@ impl Module {
 
     pub fn add_type_definition(
         &mut self,
+        class_table: &mut Vec<Rc<RefCell<Class>>>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -257,7 +258,7 @@ impl Module {
         line: u32,
     ) -> pdb2::Result<()> {
         if self.members.iter().any(|x| match x {
-            ModuleMember::Class(c) => c.index == type_index,
+            ModuleMember::Class(c) => c.borrow().index == type_index,
             ModuleMember::Enum(e) => e.index == type_index,
             _ => false,
         }) {
@@ -274,7 +275,7 @@ impl Module {
 
         match type_item.parse() {
             Ok(pdb2::TypeData::Class(data)) => {
-                let mut definition = Class {
+                let definition = Rc::new(RefCell::new(Class {
                     kind: Some(data.kind),
                     is_union: false,
                     is_declaration: false,
@@ -286,31 +287,35 @@ impl Module {
                     base_classes: vec![],
                     members: vec![],
                     field_attributes: None,
-                };
+                }));
+
+                if !class_table.iter().any(|c| c.borrow().index == type_index) {
+                    class_table.push(definition.clone());
+                }
 
                 if let Some(derived_from) = data.derived_from
-                    && let Err(_) = definition.add_derived_from(type_finder, derived_from)
+                    && let Err(_) = definition.borrow_mut().add_derived_from(type_finder, derived_from)
                 {
                     // println!("WARNING: failed to add class derived from: {e}");
                 }
 
                 if data.properties.forward_reference() {
-                    definition.is_declaration = true;
-                } else if let Some(fields) = data.fields
-                    && let Err(_) = definition.add_members(machine_type, type_info, type_finder, fields, None)
-                {
-                    // println!("WARNING: failed to add class members: {e}");
+                    definition.borrow_mut().is_declaration = true;
+                } else if let Some(fields) = data.fields {
+                    let mut temp = definition.borrow().clone();
+                    temp.add_members(class_table, machine_type, type_info, type_finder, fields, None)?;
+                    *definition.borrow_mut() = temp;
                 }
 
                 let mut exists = false;
 
                 for member in self.members.iter() {
                     if let ModuleMember::Class(other_definition) = member
-                        && definition.kind == other_definition.kind
-                        && definition.name == other_definition.name
-                        && definition.size == other_definition.size
-                        && definition.base_classes.eq(&other_definition.base_classes)
-                        && definition.members.eq(&other_definition.members)
+                        && definition.borrow().kind == other_definition.borrow().kind
+                        && definition.borrow().name == other_definition.borrow().name
+                        && definition.borrow().size == other_definition.borrow().size
+                        && definition.borrow().base_classes.eq(&other_definition.borrow().base_classes)
+                        && definition.borrow().members.eq(&other_definition.borrow().members)
                     {
                         exists = true;
                         break;
@@ -318,12 +323,12 @@ impl Module {
                 }
 
                 if !exists {
-                    self.members.push(ModuleMember::Class(definition));
+                    self.members.push(ModuleMember::Class(definition.clone()));
                 }
             }
 
             Ok(pdb2::TypeData::Union(data)) => {
-                let mut definition = Class {
+                let definition = Rc::new(RefCell::new(Class {
                     kind: None,
                     is_union: true,
                     is_declaration: false,
@@ -335,23 +340,29 @@ impl Module {
                     base_classes: vec![],
                     members: vec![],
                     field_attributes: None,
-                };
+                }));
+
+                if !class_table.iter().any(|c| c.borrow().index == type_index) {
+                    class_table.push(definition.clone());
+                }
 
                 if data.properties.forward_reference() {
-                    definition.is_declaration = true;
-                } else if let Err(_) = definition.add_members(machine_type, type_info, type_finder, data.fields, None) {
-                    // println!("WARNING: failed to add union members: {e}");
+                    definition.borrow_mut().is_declaration = true;
+                } else {
+                    let mut temp = definition.borrow().clone();
+                    temp.add_members(class_table, machine_type, type_info, type_finder, data.fields, None)?;
+                    *definition.borrow_mut() = temp;
                 }
 
                 let mut exists = false;
 
                 for member in self.members.iter() {
                     if let ModuleMember::Class(other_definition) = member
-                        && definition.kind == other_definition.kind
-                        && definition.name == other_definition.name
-                        && definition.size == other_definition.size
-                        && definition.base_classes.eq(&other_definition.base_classes)
-                        && definition.members.eq(&other_definition.members)
+                        && definition.borrow().kind == other_definition.borrow().kind
+                        && definition.borrow().name == other_definition.borrow().name
+                        && definition.borrow().size == other_definition.borrow().size
+                        && definition.borrow().base_classes.eq(&other_definition.borrow().base_classes)
+                        && definition.borrow().members.eq(&other_definition.borrow().members)
                     {
                         exists = true;
                         break;
@@ -1646,8 +1657,8 @@ impl fmt::Display for Module {
         for u in &self.members {
             match u {
                 ModuleMember::Class(x) => {
-                    storage.push((x.line, u.clone()));
-                    prev_line = x.line;
+                    storage.push((x.borrow().line, u.clone()));
+                    prev_line = x.borrow().line;
                 }
 
                 ModuleMember::Enum(x) => {

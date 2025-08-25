@@ -3,12 +3,7 @@ mod tabbed;
 
 use pdb2::FallibleIterator;
 use std::{
-    collections::HashMap,
-    error::Error,
-    fs::{self, File, OpenOptions},
-    io::Write,
-    num,
-    path::{Path, PathBuf},
+    cell::RefCell, collections::HashMap, error::Error, fs::{self, File, OpenOptions}, io::Write, num, path::{Path, PathBuf}, rc::Rc
 };
 use structopt::StructOpt;
 
@@ -112,6 +107,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<dyn Error>> {
     let debug_info = pdb.debug_information().map_err(|e| format!("does not contain debug information: {e}"))?;
     let machine_type = debug_info.machine_type().unwrap_or(pdb2::MachineType::Unknown);
+    let mut class_table = vec![];
 
     let address_map = pdb.address_map().map_err(|e| format!("does not contain an address map: {e}"))?;
     
@@ -135,6 +131,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
 
     process_type_information(
         options,
+        &mut class_table,
         machine_type,
         &type_info,
         &mut type_finder,
@@ -143,6 +140,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
     
     process_id_information(
         options,
+        &mut class_table,
         machine_type,
         string_table.as_ref(),
         &id_info,
@@ -155,6 +153,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
 
     process_modules(
         options,
+        &mut class_table,
         machine_type,
         options.base_address,
         &mut pdb,
@@ -173,6 +172,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
 #[inline(always)]
 fn process_type_information<'a>(
     options: &Options,
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     machine_type: pdb2::MachineType,
     type_info: &'a pdb2::TypeInformation,
     type_finder: &mut pdb2::TypeFinder<'a>,
@@ -222,13 +222,13 @@ fn process_type_information<'a>(
     module.path = exported_path.clone();
 
     for type_index in exported_forward_reference_indices {
-        if let Err(e) = module.add_type_definition(machine_type, type_info, type_finder, type_index, 0) {
+        if let Err(e) = module.add_type_definition(class_table, machine_type, type_info, type_finder, type_index, 0) {
             panic!("{e}");
         }
     }
 
     for type_index in exported_type_indices {
-        if let Err(e) = module.add_type_definition(machine_type, type_info, type_finder, type_index, 0) {
+        if let Err(e) = module.add_type_definition(class_table, machine_type, type_info, type_finder, type_index, 0) {
             panic!("{e}");
         }
     }
@@ -261,6 +261,7 @@ fn process_type_information<'a>(
 #[inline(always)]
 fn process_id_information<'a>(
     options: &Options,
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     machine_type: pdb2::MachineType,
     string_table: Option<&pdb2::StringTable>,
     id_info: &'a pdb2::IdInformation,
@@ -319,7 +320,7 @@ fn process_id_information<'a>(
                 modules
                     .entry(module_path.to_lowercase())
                     .or_insert_with(|| cpp::Module::default().with_path(module_path.into()))
-                    .add_type_definition(machine_type, type_info, type_finder, data.udt, data.line)?;
+                    .add_type_definition(class_table, machine_type, type_info, type_finder, data.udt, data.line)?;
             }
 
             _ => {}
@@ -429,6 +430,7 @@ fn load_module_global_symbols<'a>(
 #[inline(always)]
 fn process_modules<'a>(
     options: &Options,
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     pdb: &mut pdb2::PDB<File>,
@@ -458,6 +460,7 @@ fn process_modules<'a>(
 
         if let Err(_) = process_module(
             options,
+            class_table,
             machine_type,
             base_address,
             address_map,
@@ -556,6 +559,7 @@ fn process_modules<'a>(
 #[inline(always)]
 fn process_module(
     options: &Options,
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -585,6 +589,7 @@ fn process_module(
 
     process_module_global_symbols(
         options,
+        class_table,
         machine_type,
         base_address,
         address_map,
@@ -602,6 +607,7 @@ fn process_module(
 
     process_module_local_symbols(
         options,
+        class_table,
         machine_type,
         base_address,
         address_map,
@@ -759,6 +765,7 @@ fn get_module_file_path_and_header_paths(
 #[inline(always)]
 fn process_module_global_symbols(
     options: &Options,
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -777,6 +784,7 @@ fn process_module_global_symbols(
         for symbol_data in global_symbols {
             process_module_symbol_data(
                 options,
+                class_table,
                 machine_type,
                 base_address,
                 address_map,
@@ -800,6 +808,7 @@ fn process_module_global_symbols(
 #[inline(always)]
 fn process_module_local_symbols(
     options: &Options,
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -826,6 +835,7 @@ fn process_module_local_symbols(
 
         process_module_symbol_data(
             options,
+            class_table,
             machine_type,
             base_address,
             address_map,
@@ -848,6 +858,7 @@ fn process_module_local_symbols(
 #[inline(always)]
 fn process_module_symbol_data(
     options: &Options,
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -1080,6 +1091,179 @@ fn process_module_symbol_data(
                 procedure_symbol,
             )?;
             
+            let parameters = if register_variable_names.is_empty() {
+                register_relative_names
+            } else {
+                register_variable_names
+            };
+
+            let procedure_type = type_finder.find(procedure_symbol.type_index)?.parse()?;
+            
+            if let pdb2::TypeData::MemberFunction(member_function) = procedure_type {
+                fn parse_type_name(name: &str, keep_template: bool) -> (String, usize) {
+                    let mut result = String::new();
+                    let mut depth = 0;
+                    let mut first = true;
+                    let mut offset = 0;
+
+                    for (i, c) in name.chars().enumerate() {
+                        offset = i;
+
+                        match c {
+                            '<' => {
+                                depth += 1;
+                                first = false;
+                                if keep_template {
+                                    result.push(c);
+                                }
+                                continue;
+                            }
+
+                            '>' => {
+                                if depth == 0 {
+                                    result.push(c);
+                                    continue;
+                                }
+
+                                depth -= 1;
+                                
+                                if depth == 0 && !first {
+                                    if keep_template {
+                                        result.push(c);
+                                    }
+                                    break;
+                                }
+                            }
+
+                            _ => {}
+                        }
+
+                        if depth == 0 || keep_template {
+                            result.push(c);
+                        }
+                    }
+
+                    if keep_template {
+                        depth = 0;
+                    }
+
+                    if depth != 0 {
+                        let chunk = name.chars().rev().take_while(|c| *c == '<').collect::<String>();
+                        assert!(!chunk.is_empty());
+                        result.extend(chunk.chars());
+                        depth = 0;
+                    }
+
+                    assert!(depth == 0);
+
+                    // HACK: these are only on the function implementation for some reason
+                    result = result.replace(" __ptr64", "");
+
+                    (result, offset + 1)
+                }
+
+                let procedure_name_full = procedure_symbol.name.to_string().to_string();
+                let (mut procedure_class_name, end_offset) = parse_type_name(&procedure_name_full, true);
+                let (mut procedure_name, _end_offset) = parse_type_name(&procedure_name_full[end_offset..], true);
+
+                if procedure_name.is_empty() && procedure_class_name.contains("::") {
+                    let mut parts = procedure_class_name.split("::").map(|s| s.to_string()).collect::<Vec<_>>();
+                    assert!(parts.len() >= 2);
+                    procedure_name = parts.pop().unwrap();
+                    procedure_class_name = parts.join("::");
+                }
+
+                procedure_name = procedure_name
+                    .trim_start_matches("::")
+                    .replace(" struct ", " ")
+                    .replace(" union ", " ")
+                    .replace(" class ", " ")
+                    .replace(" enum ", " ");
+
+                let full_classes = class_table.iter().filter(|c| {
+                    let c = c.borrow();
+                    c.name == procedure_class_name && !c.is_declaration
+                }).collect::<Vec<_>>();
+
+                // let mut found = false;
+
+                for class in full_classes.iter() {
+                    for member in class.borrow_mut().members.iter_mut() {
+                        let cpp::ClassMember::Method(class_method) = member else {
+                            continue;
+                        };
+
+                        let class_member_function = type_finder.find(class_method.type_index)?.parse()?;
+                        
+                        let pdb2::TypeData::MemberFunction(class_member_function) = class_member_function else {
+                            panic!("Expected member function, got: {:#?}", class_member_function);
+                        };
+
+                        let class_method_name = class_method.name
+                            .chars()
+                            .take_while(|c| *c != '(')
+                            .collect::<String>()
+                            .replace(" struct ", " ")
+                            .replace(" union ", " ")
+                            .replace(" class ", " ")
+                            .replace(" enum ", " ");
+
+                        if class_method_name == procedure_name {
+                            let valid = if class_member_function.argument_list == member_function.argument_list {
+                                true
+                            } else {
+                                let lhs = cpp::argument_list(machine_type, type_info, type_finder, class_member_function.argument_list, None)?;
+                                let rhs = cpp::argument_list(machine_type, type_info, type_finder, member_function.argument_list, None)?;
+                                lhs == rhs
+                            };
+
+                            if valid {
+                                let mut parameters = parameters.clone();
+                                
+                                if !parameters.is_empty() && parameters[0] == "this" {
+                                    parameters.remove(0);
+                                }
+                                
+                                class_method.arguments = cpp::argument_list(
+                                    machine_type,
+                                    type_info,
+                                    type_finder,
+                                    member_function.argument_list,
+                                    Some(parameters.clone()),
+                                )?;
+
+                                // found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // procedure_name = procedure_symbol.name.to_string().to_string();
+                
+                // if !found && !(procedure_name.contains("::[") || procedure_name.contains('`')) {
+                //     println!("----------------");
+                //     println!(
+                //         "WARNING: \"{}\" not found in any \"{}\":",
+                //         procedure_symbol.name,
+                //         procedure_class_name,
+                //         // class.borrow().members.iter()
+                //         //     .filter(|m| matches!(m, cpp::ClassMember::Method(_)))
+                //         //     .map(|m| {
+                //         //         let cpp::ClassMember::Method(method) = m else { unreachable!() };
+                //         //         format!("\"{}\"", method.name)
+                //         //     })
+                //         //     .collect::<Vec<_>>()
+                //         //     .join(", ")
+                //     );
+
+                //     for class in full_classes {
+                //         println!("{}", tabbed::TabbedDisplayer(&*class.borrow()));
+                //     }
+                //     println!("----------------");
+                // }
+            }
+
             //
             // NOTE:
             //
@@ -1099,12 +1283,6 @@ fn process_module_symbol_data(
             //
             // If we don't have any RegisterVariable symbols, use RegisterRelative symbols.
             //
-
-            let parameters = if register_variable_names.is_empty() {
-                register_relative_names
-            } else {
-                register_variable_names
-            };
 
             let mut file_name_ref = None;
             let mut line_info = None;

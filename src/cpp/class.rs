@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cell::RefCell, fmt, rc::Rc};
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,7 +10,7 @@ pub struct BaseClass {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClassMember {
-    Class(Class),
+    Class(Rc<RefCell<Class>>),
     Enum(Enum),
     Field(Field),
     Method(Method),
@@ -20,7 +20,7 @@ pub enum ClassMember {
 impl fmt::Display for ClassMember {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Class(data) => write!(f, "{}", data),
+            Self::Class(data) => write!(f, "{}", data.borrow()),
             Self::Enum(data) => write!(f, "{}", data),
             Self::Field(data) => write!(f, "{}", data),
             Self::Method(data) => write!(f, "{}", data),
@@ -62,6 +62,7 @@ impl fmt::Display for Field {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Method {
     pub name: String,
+    pub type_index: pdb2::TypeIndex,
     pub return_type_name: String,
     pub arguments: Vec<String>,
     pub field_attributes: Option<pdb2::FieldAttributes>,
@@ -136,6 +137,7 @@ impl Class {
 
     pub fn add_members(
         &mut self,
+        class_table: &mut Vec<Rc<RefCell<Class>>>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -153,19 +155,27 @@ impl Class {
                             if !members.is_empty() && data.offset <= prev_offset {
                                 self.members.push(match members.len() {
                                     1 => members[0].clone(),
-                                    _ => ClassMember::Class(Class {
-                                        kind: Some(pdb2::ClassKind::Struct),
-                                        is_union: true,
-                                        is_declaration: false,
-                                        name: String::new(),
-                                        index: pdb2::TypeIndex(0),
-                                        depth: 1,
-                                        line: self.line,
-                                        size: 0,
-                                        base_classes: vec![],
-                                        members,
-                                        field_attributes: None,
-                                    })
+                                    _ => {
+                                        let class = Rc::new(RefCell::new(Class {
+                                            kind: Some(pdb2::ClassKind::Struct),
+                                            is_union: true,
+                                            is_declaration: false,
+                                            name: String::new(),
+                                            index: data.field_type,
+                                            depth: 1,
+                                            line: self.line,
+                                            size: 0,
+                                            base_classes: vec![],
+                                            members,
+                                            field_attributes: None,
+                                        }));
+
+                                        if !class_table.iter().any(|c| c.borrow().index == data.field_type) {
+                                            class_table.push(class.clone());
+                                        }
+
+                                        ClassMember::Class(class)
+                                    }
                                 });
 
                                 members = vec![];
@@ -189,31 +199,39 @@ impl Class {
                             prev_offset = data.offset;
                         }
 
-                        _ => self.add_member(machine_type, type_info, type_finder, field)?,
+                        _ => self.add_member(class_table, machine_type, type_info, type_finder, field)?,
                     }
                 }
 
                 if self.is_union && !members.is_empty() {
                     self.members.push(match members.len() {
                         1 => members[0].clone(),
-                        _ => ClassMember::Class(Class {
-                            kind: Some(pdb2::ClassKind::Struct),
-                            is_union: true,
-                            is_declaration: false,
-                            name: String::new(),
-                            index: pdb2::TypeIndex(0),
-                            depth: 1,
-                            line: self.line,
-                            size: 0,
-                            base_classes: vec![],
-                            members,
-                            field_attributes: None,
-                        })
+                        _ => {
+                            let class = Rc::new(RefCell::new(Class {
+                                kind: Some(pdb2::ClassKind::Struct),
+                                is_union: true,
+                                is_declaration: false,
+                                name: String::new(),
+                                index: type_index,
+                                depth: 1,
+                                line: self.line,
+                                size: 0,
+                                base_classes: vec![],
+                                members,
+                                field_attributes: None,
+                            }));
+
+                            if !class_table.iter().any(|c| c.borrow().index == type_index) {
+                                class_table.push(class.clone());
+                            }
+                            
+                            ClassMember::Class(class)
+                        }
                     });
                 }
 
                 if let Some(continuation) = data.continuation {
-                    self.add_members(machine_type, type_info, type_finder, continuation, Some(prev_offset))?;
+                    self.add_members(class_table, machine_type, type_info, type_finder, continuation, Some(prev_offset))?;
                 }
             }
 
@@ -233,6 +251,7 @@ impl Class {
 
     fn add_member(
         &mut self,
+        class_table: &mut Vec<Rc<RefCell<Class>>>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -328,6 +347,7 @@ impl Class {
                     let method = match type_finder.find(data.method_type)?.parse() {
                         Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
                             name: data.name.to_string().to_string(),
+                            type_index: data.method_type,
                             return_type_name: type_name(machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
                             arguments: argument_list(machine_type, type_info, type_finder, function_data.argument_list, None)?,
                             field_attributes: Some(data.attributes),
@@ -357,6 +377,7 @@ impl Class {
                                     let method = match type_finder.find(method_type)?.parse() {
                                         Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
                                             name: data.name.to_string().to_string(),
+                                            type_index: method_type,
                                             return_type_name: type_name(machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
                                             arguments: argument_list(machine_type, type_info, type_finder, function_data.argument_list, None)?,
                                             field_attributes: Some(attributes),
@@ -390,7 +411,7 @@ impl Class {
                 
                 match &nested_type_data {
                     pdb2::TypeData::Class(data) => {
-                        let mut definition = Class {
+                        let definition = Rc::new(RefCell::new(Class {
                             kind: Some(data.kind),
                             is_union: false,
                             is_declaration: false,
@@ -402,27 +423,31 @@ impl Class {
                             base_classes: vec![],
                             members: vec![],
                             field_attributes: Some(nested_data.attributes),
-                        };
+                        }));
+
+                        if !class_table.iter().any(|c| c.borrow().index == nested_data.nested_type) {
+                            class_table.push(definition.clone());
+                        }
         
                         if let Some(derived_from) = data.derived_from {
-                            definition.add_derived_from(type_finder, derived_from)?;
+                            definition.borrow_mut().add_derived_from(type_finder, derived_from)?;
                         }
         
                         if data.properties.forward_reference() {
-                            definition.is_declaration = true;
+                            definition.borrow_mut().is_declaration = true;
                         } else if let Some(fields) = data.fields {
-                            definition.add_members(machine_type, type_info, type_finder, fields, None)?;
+                            definition.borrow_mut().add_members(class_table, machine_type, type_info, type_finder, fields, None)?;
                         }
                         
                         let mut exists = false;
                         
                         for member in self.members.iter() {
                             if let ClassMember::Class(other_definition) = member
-                                && definition.kind == other_definition.kind
-                                && definition.name == other_definition.name
-                                && definition.size == other_definition.size
-                                && definition.base_classes.eq(&other_definition.base_classes)
-                                && definition.members.eq(&other_definition.members)
+                                && definition.borrow().kind == other_definition.borrow().kind
+                                && definition.borrow().name == other_definition.borrow().name
+                                && definition.borrow().size == other_definition.borrow().size
+                                && definition.borrow().base_classes.eq(&other_definition.borrow().base_classes)
+                                && definition.borrow().members.eq(&other_definition.borrow().members)
                             {
                                 exists = true;
                                 break;
@@ -470,7 +495,7 @@ impl Class {
                     }
         
                     pdb2::TypeData::Union(data) => {
-                        let mut definition = Class {
+                        let definition = Rc::new(RefCell::new(Class {
                             kind: None,
                             is_union: true,
                             is_declaration: false,
@@ -482,23 +507,27 @@ impl Class {
                             base_classes: vec![],
                             members: vec![],
                             field_attributes: Some(nested_data.attributes),
-                        };
+                        }));
                         
+                        if !class_table.iter().any(|c| c.borrow().index == nested_data.nested_type) {
+                            class_table.push(definition.clone());
+                        }
+
                         if data.properties.forward_reference() {
-                            definition.is_declaration = true;
+                            definition.borrow_mut().is_declaration = true;
                         } else {
-                            definition.add_members(machine_type, type_info, type_finder, data.fields, None)?;
+                            definition.borrow_mut().add_members(class_table, machine_type, type_info, type_finder, data.fields, None)?;
                         }
                         
                         let mut exists = false;
                         
                         for member in self.members.iter() {
                             if let ClassMember::Class(other_definition) = member
-                                && definition.kind == other_definition.kind
-                                && definition.name == other_definition.name
-                                && definition.size == other_definition.size
-                                && definition.base_classes.eq(&other_definition.base_classes)
-                                && definition.members.eq(&other_definition.members)
+                                && definition.borrow().kind == other_definition.borrow().kind
+                                && definition.borrow().name == other_definition.borrow().name
+                                && definition.borrow().size == other_definition.borrow().size
+                                && definition.borrow().base_classes.eq(&other_definition.borrow().base_classes)
+                                && definition.borrow().members.eq(&other_definition.borrow().members)
                             {
                                 exists = true;
                                 break;
@@ -734,7 +763,7 @@ impl fmt::Display for Class {
 
         for member in self.members.iter() {
             let field_attributes = match member {
-                ClassMember::Class(data) => data.field_attributes,
+                ClassMember::Class(data) => data.borrow().field_attributes,
                 ClassMember::Enum(data) => data.field_attributes,
                 ClassMember::Field(data) => Some(data.attributes),
                 ClassMember::Method(data) => data.field_attributes,
