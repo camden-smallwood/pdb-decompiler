@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, fmt, ops::Range, rc::Rc};
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +33,9 @@ impl fmt::Display for ClassMember {
 pub struct Field {
     pub type_name: String,
     pub name: String,
-    pub offset: Option<u64>,
+    pub offset: u64,
+    pub size: usize,
+    pub bitfield_info: Option<(u8, u8)>,
     pub attributes: pdb2::FieldAttributes
 }
 
@@ -49,12 +51,16 @@ impl fmt::Display for Field {
 
         write!(f, "{}", self.type_name)?;
 
+        if let Some((_, bitfield_length)) = self.bitfield_info.as_ref() {
+            write!(f, " : {}", bitfield_length)?;
+        }
+
         if self.attributes.is_pure_virtual() {
             write!(f, " = 0")?;
         }
 
         write!(f, ";")?;
-        write!(f, " // 0x{:X}", self.offset.unwrap_or(std::u64::MAX))?;
+        write!(f, " // 0x{:X}", self.offset)?;
         Ok(())
     }
 }
@@ -125,6 +131,263 @@ pub struct Class {
     pub field_attributes: Option<pdb2::FieldAttributes>,
 }
 
+fn find_unnamed_unions_in_struct(name: &str, fields: &[&Field]) -> Vec<Range<usize>> {
+    let mut unions_found: Vec<Range<usize>> = vec![];
+    // Temporary map of unions and fields that'll be used to compute the list
+    // of unnamed unions which are in the struct.
+    let mut unions_found_temp: BTreeMap<(u64, u8), (Range<usize>, u64)> = BTreeMap::new();
+
+    // Discover unions
+    let mut curr_union_offset_range: Range<u64> = Range::default();
+    for (i, field) in fields.iter().enumerate() {
+        if field.offset == std::u64::MAX {
+            continue;
+        }
+        
+        // Check if the field is located inside of the union we're processing
+        if curr_union_offset_range.contains(&field.offset) {
+            // Third step of the "state machine", add new fields to the union.
+            let union_info = unions_found_temp
+                .get_mut(&(curr_union_offset_range.start, 0))
+                .expect("key should exist in map");
+            union_info.0.end = i + 1;
+            // Update the union's size
+            union_info.1 = std::cmp::max(
+                union_info.1,
+                field.offset - curr_union_offset_range.start + field.size as u64,
+            );
+            curr_union_offset_range.end = std::cmp::max(
+                curr_union_offset_range.end,
+                field.offset + field.size as u64,
+            );
+            // (Re)visit previous fields to compute the union's size
+            // as well as the current union's end
+            for previous_field in &fields[union_info.0.clone()] {
+                if previous_field.offset == std::u64::MAX {
+                    continue;
+                }
+
+                // Update the union's size
+                if previous_field.offset > field.offset {
+                    union_info.1 = std::cmp::max(
+                        union_info.1,
+                        previous_field.offset - field.offset + previous_field.size as u64,
+                    );
+                } else {
+                    union_info.1 = std::cmp::max(union_info.1, previous_field.size as u64);
+                }
+                curr_union_offset_range.end = std::cmp::max(
+                    curr_union_offset_range.end,
+                    previous_field.offset + previous_field.size as u64,
+                );
+            }
+        } else {
+            match unions_found_temp
+                .get_mut(&(field.offset, field.bitfield_info.unwrap_or_default().0))
+            {
+                Some(union_info) => {
+                    // Second step of the "state machine", two fields share the
+                    // same offset (taking bitfields into account). This becomes
+                    // a union (the current one).
+                    union_info.0.end = i + 1;
+                    curr_union_offset_range.start = field.offset;
+                    // (Re)visit previous fields to compute the union's size
+                    // as well as the current union's end
+                    for previous_field in &fields[union_info.0.clone()] {
+                        if previous_field.offset == std::u64::MAX {
+                            continue;
+                        }
+
+                        // Update the union's size
+                        if previous_field.offset > field.offset {
+                            union_info.1 = std::cmp::max(
+                                union_info.1,
+                                previous_field.offset - field.offset + previous_field.size as u64,
+                            );
+                        } else {
+                            union_info.1 = std::cmp::max(union_info.1, previous_field.size as u64);
+                        }
+                        curr_union_offset_range.end = std::cmp::max(
+                            curr_union_offset_range.end,
+                            previous_field.offset + previous_field.size as u64,
+                        );
+                    }
+                }
+                None => {
+                    // First step of the "state machine".
+                    // Each field is a potential new union
+                    unions_found_temp.insert(
+                        (field.offset, field.bitfield_info.unwrap_or_default().0),
+                        (Range { start: i, end: i }, field.size as u64),
+                    );
+                }
+            }
+        }
+    }
+
+    // Remove nested unions, they will be processed when we'll go deeper
+    for (offset1, range1) in unions_found_temp.iter() {
+        let mut is_top_level = true;
+        for (offset2, range2) in unions_found_temp.iter() {
+            if offset1 == offset2 {
+                // Comparing a union with itself, ignore
+                continue;
+            }
+            if range1.0.start >= range2.0.start && range1.0.end < range2.0.end {
+                // Union #1 is contained by Union #2, no need to continue.
+                // Union #1 isn't a "top-level" union.
+                is_top_level = false;
+                break;
+            }
+        }
+        if is_top_level {
+            // Only keep "top-level" union
+            unions_found.push(range1.0.clone());
+        }
+    }
+    
+    unions_found
+}
+
+fn reconstruct_struct_fields(name: &str, depth: u32, fields: &[&Field]) -> Vec<ClassMember> {
+    let unions_found = find_unnamed_unions_in_struct(name, fields);
+    
+    let mut new_fields = vec![];
+
+    for union_range in unions_found {
+        if union_range.is_empty() {
+            let field = &fields[union_range.start];
+            new_fields.push(ClassMember::Field((*field).clone()));
+        } else {
+            let fields = reconstruct_union_fields(name, depth + 1, &fields[union_range]);
+
+            let fields_size: usize = fields.iter().map(|m| {
+                let ClassMember::Field(f) = m else { return 0 };
+                if f.offset == std::u64::MAX {
+                    0
+                } else {
+                    f.size
+                }
+            }).sum();
+
+            new_fields.push(ClassMember::Class(Rc::new(RefCell::new(Class {
+                kind: None,
+                is_union: true,
+                is_declaration: false,
+                name: String::new(),
+                index: pdb2::TypeIndex(0),
+                depth: depth + 1,
+                line: 0,
+                size: fields_size as u64,
+                base_classes: vec![],
+                members: fields,
+                field_attributes: None,
+            }))));
+        }
+    }
+
+    new_fields
+}
+
+fn find_unnamed_structs_in_unions(name: &str, fields: &[&Field]) -> Vec<Range<usize>> {
+    let mut structs_found: Vec<Range<usize>> = vec![];
+
+    let field_count = fields.len();
+    let union_offset = fields[0].offset;
+    let mut previous_field_offset = fields[0].offset;
+    let mut previous_field_bit_offset = fields[0].bitfield_info.unwrap_or_default().0;
+
+    for (i, field) in fields.iter().enumerate() {
+        if field.offset == std::u64::MAX {
+            continue;
+        }
+
+        // The field offset is lower than the offset of the previous field
+        // -> "close" the struct
+        if previous_field_offset > field.offset
+            || (field.offset == previous_field_offset
+                && previous_field_bit_offset > field.bitfield_info.unwrap_or_default().0)
+        {
+            if let Some(last_found_struct_range) = structs_found.pop() {
+                // "Merge" previous field with the struct
+                structs_found.push(Range {
+                    start: last_found_struct_range.start,
+                    end: i,
+                });
+            }
+        }
+        // Last element, check if we need to "close" a struct
+        else if i == field_count - 1 {
+            if let Some(last_found_struct_range) = structs_found.pop() {
+                // Declare a new struct only if its length is greater than 1.
+                if i > last_found_struct_range.start
+                    && (field.offset != previous_field_offset
+                        || field.bitfield_info.unwrap_or_default().0 != previous_field_bit_offset)
+                {
+                    // "Merge" previous field with the struct
+                    structs_found.push(Range {
+                        start: last_found_struct_range.start,
+                        end: i + 1,
+                    });
+                } else {
+                    structs_found.push(last_found_struct_range);
+                }
+            }
+        }
+
+        // Regular field, may be the beginning of a struct
+        if field.offset == union_offset && field.bitfield_info.unwrap_or_default().0 == 0 {
+            structs_found.push(Range { start: i, end: i });
+        }
+
+        previous_field_offset = field.offset;
+        previous_field_bit_offset = field.bitfield_info.unwrap_or_default().0;
+    }
+
+    structs_found
+}
+
+fn reconstruct_union_fields(name: &str, depth: u32, fields: &[&Field]) -> Vec<ClassMember> {
+    let mut new_fields = vec![];
+
+    let structs_found = find_unnamed_structs_in_unions(name, fields);
+
+    for struct_range in structs_found {
+        // Fields out of unnamed structs are represented by "empty" structs
+        if struct_range.is_empty() {
+            let field = fields[struct_range.start];
+            new_fields.push(ClassMember::Field(field.clone()));
+        } else {
+            let fields = reconstruct_struct_fields(name, depth + 1, &fields[struct_range]);
+
+            let fields_size: usize = fields.iter().map(|m| {
+                let ClassMember::Field(f) = m else { return 0 };
+                if f.offset == std::u64::MAX {
+                    0
+                } else {
+                    f.size
+                }
+            }).sum();
+
+            new_fields.push(ClassMember::Class(Rc::new(RefCell::new(Class {
+                kind: Some(pdb2::ClassKind::Struct),
+                is_union: false,
+                is_declaration: false,
+                name: String::new(),
+                index: pdb2::TypeIndex(0),
+                depth: depth + 1,
+                line: 0,
+                size: fields_size as u64,
+                base_classes: vec![],
+                members: fields,
+                field_attributes: None,
+            }))));
+        }
+    }
+
+    new_fields
+}
+
 impl Class {
     pub fn add_derived_from(
         &mut self,
@@ -138,100 +401,51 @@ impl Class {
     pub fn add_members(
         &mut self,
         class_table: &mut Vec<Rc<RefCell<Class>>>,
+        type_sizes: &mut HashMap<String, u64>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
         type_index: pdb2::TypeIndex,
-        offset: Option<u64>,
     ) -> pdb2::Result<()> {
         match type_finder.find(type_index)?.parse() {
             Ok(pdb2::TypeData::FieldList(data)) => {
-                let mut members: Vec<ClassMember> = vec![];
-                let mut prev_offset = offset.unwrap_or(0);
-
                 for field in &data.fields {
-                    match field {
-                        pdb2::TypeData::Member(data) if self.is_union => {
-                            if !members.is_empty() && data.offset <= prev_offset {
-                                self.members.push(match members.len() {
-                                    1 => members[0].clone(),
-                                    _ => {
-                                        let class = Rc::new(RefCell::new(Class {
-                                            kind: Some(pdb2::ClassKind::Struct),
-                                            is_union: true,
-                                            is_declaration: false,
-                                            name: String::new(),
-                                            index: data.field_type,
-                                            depth: 1,
-                                            line: self.line,
-                                            size: 0,
-                                            base_classes: vec![],
-                                            members,
-                                            field_attributes: None,
-                                        }));
-
-                                        if !class_table.iter().any(|c| c.borrow().index == data.field_type) {
-                                            class_table.push(class.clone());
-                                        }
-
-                                        ClassMember::Class(class)
-                                    }
-                                });
-
-                                members = vec![];
-                            }
-
-                            members.push(ClassMember::Field(Field {
-                                type_name: type_name(
-                                    machine_type,
-                                    type_info,
-                                    type_finder,
-                                    data.field_type,
-                                    Some(data.name.to_string().to_string()),
-                                    None,
-                                    true,
-                                )?,
-                                name: data.name.to_string().to_string(),
-                                offset: Some(data.offset),
-                                attributes: data.attributes
-                            }));
-
-                            prev_offset = data.offset;
-                        }
-
-                        _ => self.add_member(class_table, machine_type, type_info, type_finder, field)?,
-                    }
-                }
-
-                if self.is_union && !members.is_empty() {
-                    self.members.push(match members.len() {
-                        1 => members[0].clone(),
-                        _ => {
-                            let class = Rc::new(RefCell::new(Class {
-                                kind: Some(pdb2::ClassKind::Struct),
-                                is_union: true,
-                                is_declaration: false,
-                                name: String::new(),
-                                index: type_index,
-                                depth: 1,
-                                line: self.line,
-                                size: 0,
-                                base_classes: vec![],
-                                members,
-                                field_attributes: None,
-                            }));
-
-                            if !class_table.iter().any(|c| c.borrow().index == type_index) {
-                                class_table.push(class.clone());
-                            }
-                            
-                            ClassMember::Class(class)
-                        }
-                    });
+                    self.add_member(class_table, type_sizes, machine_type, type_info, type_finder, field)?;
                 }
 
                 if let Some(continuation) = data.continuation {
-                    self.add_members(class_table, machine_type, type_info, type_finder, continuation, Some(prev_offset))?;
+                    self.add_members(class_table, type_sizes, machine_type, type_info, type_finder, continuation)?;
+                }
+
+                let fields = self.members.iter()
+                    .filter(|m| matches!(m, ClassMember::Field(_)))
+                    .map(|m| {
+                        let ClassMember::Field(f) = m else { unreachable!() };
+                        f
+                    }).collect::<Vec<_>>();
+
+                let new_fields = if self.is_union {
+                    reconstruct_union_fields(self.name.as_str(), self.depth, fields.as_slice())
+                } else {
+                    reconstruct_struct_fields(self.name.as_str(), self.depth, fields.as_slice())
+                };
+
+                let mut remove_indices = vec![];
+
+                for (i, member) in self.members.iter().enumerate() {
+                    if let ClassMember::Field(Field { offset, .. }) = member
+                        && *offset != std::u64::MAX
+                    {
+                        remove_indices.push(i);
+                    }
+                }
+
+                for i in remove_indices.into_iter().rev() {
+                    self.members.remove(i);
+                }
+
+                for member in new_fields.into_iter().rev() {
+                    self.members.insert(0, member);
                 }
             }
 
@@ -252,6 +466,7 @@ impl Class {
     fn add_member(
         &mut self,
         class_table: &mut Vec<Rc<RefCell<Class>>>,
+        type_sizes: &mut HashMap<String, u64>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -259,12 +474,13 @@ impl Class {
     ) -> pdb2::Result<()> {
         match *field {
             pdb2::TypeData::Member(ref data) => {
-                //
-                // TODO: calculate union layout
-                //
-
+                let bitfield_info = match type_finder.find(data.field_type)?.parse()? {
+                    pdb2::TypeData::Bitfield(data) => Some((data.position, data.length)),
+                    _ => None,
+                };
+                
                 self.members.push(ClassMember::Field(Field {
-                    type_name: type_name(
+                    type_name: type_name(class_table, type_sizes, 
                         machine_type,
                         type_info,
                         type_finder,
@@ -274,20 +490,23 @@ impl Class {
                         true,
                     )?,
                     name: data.name.to_string().to_string(),
-                    offset: Some(data.offset),
+                    offset: data.offset,
+                    size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
+                    bitfield_info,
                     attributes: data.attributes
                 }));
             }
 
             pdb2::TypeData::StaticMember(ref data) => {
-                //
-                // TODO: determine if we need to calculate union layout?
-                //
+                let bitfield_info = match type_finder.find(data.field_type)?.parse()? {
+                    pdb2::TypeData::Bitfield(data) => Some((data.position, data.length)),
+                    _ => None,
+                };
 
                 self.members.push(ClassMember::Field(Field {
                     type_name: format!(
                         "static {}",
-                        type_name(
+                        type_name(class_table, type_sizes, 
                             machine_type,
                             type_info,
                             type_finder,
@@ -298,7 +517,9 @@ impl Class {
                         )?
                     ),
                     name: data.name.to_string().to_string(),
-                    offset: None,
+                    offset: std::u64::MAX,
+                    size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
+                    bitfield_info,
                     attributes: data.attributes
                 }));
             }
@@ -313,7 +534,7 @@ impl Class {
                             2 => "public ",
                             _ => ""
                         },
-                        type_name(machine_type, type_info, type_finder, data.base_class, None, None, true)?
+                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, true)?
                     ),
                     offset: data.offset,
                     index: data.base_class
@@ -330,7 +551,7 @@ impl Class {
                             2 => "public ",
                             _ => ""
                         },
-                        type_name(machine_type, type_info, type_finder, data.base_class, None, None, true)?
+                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, true)?
                     ),
                     offset: data.base_pointer_offset,
                     index: data.base_class
@@ -348,8 +569,8 @@ impl Class {
                         Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
                             name: data.name.to_string().to_string(),
                             type_index: data.method_type,
-                            return_type_name: type_name(machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
-                            arguments: argument_list(machine_type, type_info, type_finder, function_data.argument_list, None)?,
+                            return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
+                            arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, function_data.argument_list, None)?,
                             field_attributes: Some(data.attributes),
                             function_attributes: function_data.attributes
                         },
@@ -378,8 +599,8 @@ impl Class {
                                         Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
                                             name: data.name.to_string().to_string(),
                                             type_index: method_type,
-                                            return_type_name: type_name(machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
-                                            arguments: argument_list(machine_type, type_info, type_finder, function_data.argument_list, None)?,
+                                            return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
+                                            arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, function_data.argument_list, None)?,
                                             field_attributes: Some(attributes),
                                             function_attributes: function_data.attributes
                                         },
@@ -436,7 +657,7 @@ impl Class {
                         if data.properties.forward_reference() {
                             definition.borrow_mut().is_declaration = true;
                         } else if let Some(fields) = data.fields {
-                            definition.borrow_mut().add_members(class_table, machine_type, type_info, type_finder, fields, None)?;
+                            definition.borrow_mut().add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
                         }
                         
                         let mut exists = false;
@@ -465,7 +686,7 @@ impl Class {
                             index: nested_data.nested_type,
                             depth: self.depth + 1,
                             line: 0,
-                            underlying_type_name: type_name(machine_type, type_info, type_finder, data.underlying_type, None, None, true)?,
+                            underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, true)?,
                             is_declaration: false,
                             values: vec![],
                             field_attributes: Some(nested_data.attributes),
@@ -516,7 +737,7 @@ impl Class {
                         if data.properties.forward_reference() {
                             definition.borrow_mut().is_declaration = true;
                         } else {
-                            definition.borrow_mut().add_members(class_table, machine_type, type_info, type_finder, data.fields, None)?;
+                            definition.borrow_mut().add_members(class_table, type_sizes, machine_type, type_info, type_finder, data.fields)?;
                         }
                         
                         let mut exists = false;
@@ -540,7 +761,7 @@ impl Class {
                     }
         
                     pdb2::TypeData::Pointer(data) => {
-                        let type_name = type_name(machine_type, type_info, type_finder, data.underlying_type, Some(nested_data.name.to_string().to_string()), None, true)?;
+                        let type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, Some(nested_data.name.to_string().to_string()), None, true)?;
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
                             type_name,
@@ -562,7 +783,7 @@ impl Class {
                             type_name.push_str("volatile ");
                         }
 
-                        type_name.push_str(self::type_name(machine_type, type_info, type_finder, data.underlying_type, Some(nested_data.name.to_string().to_string()), None, true)?.as_str());
+                        type_name.push_str(self::type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, Some(nested_data.name.to_string().to_string()), None, true)?.as_str());
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
                             type_name,
@@ -594,8 +815,8 @@ impl Class {
                     }
 
                     pdb2::TypeData::Array(data) => {
-                        let mut type_name = type_name(machine_type, type_info, type_finder, data.element_type, Some(nested_data.name.to_string().to_string()), None, true)?;
-                        let mut element_size = type_size(machine_type, type_info, type_finder, data.element_type)?;
+                        let mut type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, Some(nested_data.name.to_string().to_string()), None, true)?;
+                        let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             
                         if element_size == 0 {
                             let element_type_data = type_finder.find(data.element_type)?.parse()?;
@@ -640,7 +861,7 @@ impl Class {
                                 }
                                 
                                 if current_type_data.name() == element_type_data.name()
-                                    && let Ok(current_type_size) = type_size(machine_type, type_info, type_finder, current_type_item.index())
+                                    && let Ok(current_type_size) = type_size(class_table, type_sizes, machine_type, type_info, type_finder, current_type_item.index())
                                     && current_type_size != 0
                                 {
                                     element_size = current_type_size;
@@ -664,7 +885,7 @@ impl Class {
                     }
 
                     pdb2::TypeData::Procedure(_) => {
-                        let type_name = type_name(
+                        let type_name = type_name(class_table, type_sizes, 
                             machine_type,
                             type_info,
                             type_finder,
@@ -758,7 +979,13 @@ impl fmt::Display for Class {
 
         let mut prev_access: Option<&str> = match self.kind.as_ref() {
             Some(pdb2::ClassKind::Struct) => Some("public"),
-            _ => None
+            _ => {
+                if self.is_union {
+                    Some("public")
+                } else {
+                    None
+                }
+            }
         };
 
         for member in self.members.iter() {

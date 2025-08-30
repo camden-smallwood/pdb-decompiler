@@ -1,5 +1,5 @@
 use super::{type_name, Class, Enum, Procedure};
-use std::{cell::RefCell, fmt, iter::Peekable, path::PathBuf, rc::Rc, str::Chars};
+use std::{cell::RefCell, collections::HashMap, fmt, iter::Peekable, path::PathBuf, rc::Rc, str::Chars};
 
 pub static SOURCE_FILE_EXTS: &[&str] = &[
     "c", "cc", "cpp", "cxx", "pch", "asm", "fasm", "masm", "res", "exp",
@@ -251,6 +251,7 @@ impl Module {
     pub fn add_type_definition(
         &mut self,
         class_table: &mut Vec<Rc<RefCell<Class>>>,
+        type_sizes: &mut HashMap<String, u64>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -303,7 +304,7 @@ impl Module {
                     definition.borrow_mut().is_declaration = true;
                 } else if let Some(fields) = data.fields {
                     let mut temp = definition.borrow().clone();
-                    temp.add_members(class_table, machine_type, type_info, type_finder, fields, None)?;
+                    temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
                     *definition.borrow_mut() = temp;
                 }
 
@@ -350,7 +351,7 @@ impl Module {
                     definition.borrow_mut().is_declaration = true;
                 } else {
                     let mut temp = definition.borrow().clone();
-                    temp.add_members(class_table, machine_type, type_info, type_finder, data.fields, None)?;
+                    temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, data.fields)?;
                     *definition.borrow_mut() = temp;
                 }
 
@@ -376,6 +377,8 @@ impl Module {
 
             Ok(pdb2::TypeData::Enumeration(data)) => {
                 let underlying_type_name = match type_name(
+                    class_table,
+                    type_sizes, 
                     machine_type,
                     type_info,
                     type_finder,

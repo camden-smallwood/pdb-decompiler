@@ -107,7 +107,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<dyn Error>> {
     let debug_info = pdb.debug_information().map_err(|e| format!("does not contain debug information: {e}"))?;
     let machine_type = debug_info.machine_type().unwrap_or(pdb2::MachineType::Unknown);
+    
     let mut class_table = vec![];
+    let mut type_sizes = HashMap::new();
 
     let address_map = pdb.address_map().map_err(|e| format!("does not contain an address map: {e}"))?;
     
@@ -132,6 +134,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
     process_type_information(
         options,
         &mut class_table,
+        &mut type_sizes,
         machine_type,
         &type_info,
         &mut type_finder,
@@ -141,6 +144,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
     process_id_information(
         options,
         &mut class_table,
+        &mut type_sizes,
         machine_type,
         string_table.as_ref(),
         &id_info,
@@ -154,6 +158,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
     process_modules(
         options,
         &mut class_table,
+        &mut type_sizes,
         machine_type,
         options.base_address,
         &mut pdb,
@@ -173,6 +178,7 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
 fn process_type_information<'a>(
     options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     type_info: &'a pdb2::TypeInformation,
     type_finder: &mut pdb2::TypeFinder<'a>,
@@ -186,10 +192,6 @@ fn process_type_information<'a>(
     while let Ok(Some(type_item)) = type_iter.next() {
         type_finder.update(&type_iter);
         
-        if !export_all {
-            continue;
-        }
-        
         let type_data = match type_item.parse() {
             Ok(x) => x,
             Err(_) => {
@@ -198,6 +200,16 @@ fn process_type_information<'a>(
             }
         };
 
+        if let Some((name, size)) = match type_data.clone() {
+            pdb2::TypeData::Class(class_type) => Some((class_type.name.to_string().to_string(), class_type.size)),
+            pdb2::TypeData::Union(union_type) => Some((union_type.name.to_string().to_string(), union_type.size)),
+            _ => None,
+        } {
+            if size != 0 {
+                *type_sizes.entry(name).or_default() = size;
+            }
+        }
+
         if let Some(forward_reference) = match type_data {
             pdb2::TypeData::Class(class_type) => Some(class_type.properties.forward_reference()),
             pdb2::TypeData::Enumeration(enum_type) => Some(enum_type.properties.forward_reference()),
@@ -205,9 +217,13 @@ fn process_type_information<'a>(
             _ => None,
         } {
             if forward_reference {
-                exported_forward_reference_indices.push(type_item.index());
+                if export_all {
+                    exported_forward_reference_indices.push(type_item.index());
+                }
             } else {
-                exported_type_indices.push(type_item.index());
+                if export_all {
+                    exported_type_indices.push(type_item.index());
+                }
             }
         }
     }
@@ -222,13 +238,13 @@ fn process_type_information<'a>(
     module.path = exported_path.clone();
 
     for type_index in exported_forward_reference_indices {
-        if let Err(e) = module.add_type_definition(class_table, machine_type, type_info, type_finder, type_index, 0) {
+        if let Err(e) = module.add_type_definition(class_table, type_sizes, machine_type, type_info, type_finder, type_index, 0) {
             panic!("{e}");
         }
     }
 
     for type_index in exported_type_indices {
-        if let Err(e) = module.add_type_definition(class_table, machine_type, type_info, type_finder, type_index, 0) {
+        if let Err(e) = module.add_type_definition(class_table, type_sizes, machine_type, type_info, type_finder, type_index, 0) {
             panic!("{e}");
         }
     }
@@ -262,6 +278,7 @@ fn process_type_information<'a>(
 fn process_id_information<'a>(
     options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     string_table: Option<&pdb2::StringTable>,
     id_info: &'a pdb2::IdInformation,
@@ -320,7 +337,7 @@ fn process_id_information<'a>(
                 modules
                     .entry(module_path.to_lowercase())
                     .or_insert_with(|| cpp::Module::default().with_path(module_path.into()))
-                    .add_type_definition(class_table, machine_type, type_info, type_finder, data.udt, data.line)?;
+                    .add_type_definition(class_table, type_sizes, machine_type, type_info, type_finder, data.udt, data.line)?;
             }
 
             _ => {}
@@ -431,6 +448,7 @@ fn load_module_global_symbols<'a>(
 fn process_modules<'a>(
     options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     pdb: &mut pdb2::PDB<File>,
@@ -461,6 +479,7 @@ fn process_modules<'a>(
         if let Err(_) = process_module(
             options,
             class_table,
+            type_sizes,
             machine_type,
             base_address,
             address_map,
@@ -560,6 +579,7 @@ fn process_modules<'a>(
 fn process_module(
     options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -590,6 +610,7 @@ fn process_module(
     process_module_global_symbols(
         options,
         class_table,
+        type_sizes,
         machine_type,
         base_address,
         address_map,
@@ -608,6 +629,7 @@ fn process_module(
     process_module_local_symbols(
         options,
         class_table,
+        type_sizes,
         machine_type,
         base_address,
         address_map,
@@ -766,6 +788,7 @@ fn get_module_file_path_and_header_paths(
 fn process_module_global_symbols(
     options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -785,6 +808,7 @@ fn process_module_global_symbols(
             process_module_symbol_data(
                 options,
                 class_table,
+                type_sizes,
                 machine_type,
                 base_address,
                 address_map,
@@ -809,6 +833,7 @@ fn process_module_global_symbols(
 fn process_module_local_symbols(
     options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -836,6 +861,7 @@ fn process_module_local_symbols(
         process_module_symbol_data(
             options,
             class_table,
+            type_sizes,
             machine_type,
             base_address,
             address_map,
@@ -859,6 +885,7 @@ fn process_module_local_symbols(
 fn process_module_symbol_data(
     options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -890,7 +917,7 @@ fn process_module_symbol_data(
 
             let user_defined_type = cpp::ModuleMember::UserDefinedType(format!(
                 "typedef {};",
-                cpp::type_name(
+                cpp::type_name(class_table, type_sizes, 
                     machine_type,
                     type_info,
                     type_finder,
@@ -910,7 +937,7 @@ fn process_module_symbol_data(
             let module_key = module_file_path.to_string_lossy().to_lowercase().to_string();
             let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_file_path.clone()));
 
-            let type_name = cpp::type_name(
+            let type_name = cpp::type_name(class_table, type_sizes, 
                 machine_type,
                 type_info,
                 type_finder,
@@ -985,7 +1012,7 @@ fn process_module_symbol_data(
             module.members.push(cpp::ModuleMember::Data(
                 format!(
                     "{}; // 0x{address:X}",
-                    cpp::type_name(
+                    cpp::type_name(class_table, type_sizes, 
                         machine_type,
                         type_info,
                         type_finder,
@@ -1043,7 +1070,7 @@ fn process_module_symbol_data(
             module.members.push(cpp::ModuleMember::ThreadStorage(
                 format!(
                     "thread_local {}; // 0x{address:X}",
-                    cpp::type_name(
+                    cpp::type_name(class_table, type_sizes, 
                         machine_type,
                         type_info,
                         type_finder,
@@ -1081,6 +1108,8 @@ fn process_module_symbol_data(
                 body
             ) = parse_procedure_symbols(
                 options,
+                class_table,
+                type_sizes,
                 machine_type,
                 base_address.clone(),
                 address_map,
@@ -1183,7 +1212,7 @@ fn process_module_symbol_data(
                 let full_classes = class_table.iter().filter(|c| {
                     let c = c.borrow();
                     c.name == procedure_class_name && !c.is_declaration
-                }).collect::<Vec<_>>();
+                }).cloned().collect::<Vec<_>>();
 
                 // let mut found = false;
 
@@ -1212,8 +1241,8 @@ fn process_module_symbol_data(
                             let valid = if class_member_function.argument_list == member_function.argument_list {
                                 true
                             } else {
-                                let lhs = cpp::argument_list(machine_type, type_info, type_finder, class_member_function.argument_list, None)?;
-                                let rhs = cpp::argument_list(machine_type, type_info, type_finder, member_function.argument_list, None)?;
+                                let lhs = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.argument_list, None)?;
+                                let rhs = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, member_function.argument_list, None)?;
                                 lhs == rhs
                             };
 
@@ -1225,6 +1254,8 @@ fn process_module_symbol_data(
                                 }
                                 
                                 class_method.arguments = cpp::argument_list(
+                                    class_table, 
+                                    type_sizes,
                                     machine_type,
                                     type_info,
                                     type_finder,
@@ -1321,7 +1352,7 @@ fn process_module_symbol_data(
                 return Ok(());
             }
 
-            let procedure = cpp::type_name(
+            let procedure = cpp::type_name(class_table, type_sizes, 
                 machine_type,
                 type_info,
                 type_finder,
@@ -1396,6 +1427,8 @@ fn process_module_symbol_data(
 #[inline(always)]
 fn parse_procedure_symbols(
     options: &Options,
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -1412,6 +1445,8 @@ fn parse_procedure_symbols(
     let mut block = cpp::Block {
         address: None,
         statements: parse_statement_symbols(
+            class_table,
+            type_sizes,
             machine_type,
             base_address,
             address_map,
@@ -1485,6 +1520,8 @@ fn parse_procedure_symbols(
 
 #[inline(always)]
 fn parse_block_symbols(
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -1497,6 +1534,8 @@ fn parse_block_symbols(
     Ok(cpp::Block {
         address,
         statements: parse_statement_symbols(
+            class_table,
+            type_sizes,
             machine_type,
             base_address,
             address_map,
@@ -1511,6 +1550,8 @@ fn parse_block_symbols(
 
 #[inline(always)]
 fn parse_inline_site_symbols(
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -1536,6 +1577,8 @@ fn parse_inline_site_symbols(
     // }
 
     let mut statements = parse_statement_symbols(
+        class_table,
+        type_sizes,
         machine_type,
         base_address,
         address_map,
@@ -1553,6 +1596,8 @@ fn parse_inline_site_symbols(
 }
 
 fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<()>>(
+    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
@@ -1586,6 +1631,8 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
             pdb2::SymbolData::RegisterVariable(register_variable_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
                     signature: cpp::type_name(
+                        class_table,
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -1602,6 +1649,8 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
             pdb2::SymbolData::RegisterRelative(register_relative_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
                     signature: cpp::type_name(
+                        class_table, 
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -1617,6 +1666,8 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Block(block_symbol) => {
                 statements.push(cpp::Statement::Block(parse_block_symbols(
+                    class_table,
+                    type_sizes,
                     machine_type,
                     base_address.clone(),
                     address_map,
@@ -1630,6 +1681,8 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::InlineSite(inline_site_symbol) => {
                 statements.extend(parse_inline_site_symbols(
+                    class_table,
+                    type_sizes,
                     machine_type,
                     base_address.clone(),
                     address_map,
@@ -1657,7 +1710,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Constant(constant_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(
+                    signature: cpp::type_name(class_table, type_sizes, 
                         machine_type,
                         type_info,
                         type_finder,
@@ -1685,7 +1738,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Data(data_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(
+                    signature: cpp::type_name(class_table, type_sizes, 
                         machine_type,
                         type_info,
                         type_finder,
@@ -1703,7 +1756,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Local(local_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(
+                    signature: cpp::type_name(class_table, type_sizes, 
                         machine_type,
                         type_info,
                         type_finder,
@@ -1738,7 +1791,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                 statements.push(cpp::Statement::Variable(cpp::Variable {
                     signature: format!(
                         "thread_local {}",
-                        cpp::type_name(
+                        cpp::type_name(class_table, type_sizes, 
                             machine_type,
                             type_info,
                             type_finder,
