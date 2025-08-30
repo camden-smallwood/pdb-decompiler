@@ -131,7 +131,7 @@ pub struct Class {
     pub field_attributes: Option<pdb2::FieldAttributes>,
 }
 
-fn find_unnamed_unions_in_struct(name: &str, fields: &[&Field]) -> Vec<Range<usize>> {
+fn find_unnamed_unions_in_struct(fields: &[&Field]) -> Vec<Range<usize>> {
     let mut unions_found: Vec<Range<usize>> = vec![];
     // Temporary map of unions and fields that'll be used to compute the list
     // of unnamed unions which are in the struct.
@@ -249,8 +249,8 @@ fn find_unnamed_unions_in_struct(name: &str, fields: &[&Field]) -> Vec<Range<usi
     unions_found
 }
 
-fn reconstruct_struct_fields(name: &str, depth: u32, fields: &[&Field]) -> Vec<ClassMember> {
-    let unions_found = find_unnamed_unions_in_struct(name, fields);
+fn reconstruct_struct_fields(depth: u32, fields: &[&Field]) -> Vec<ClassMember> {
+    let unions_found = find_unnamed_unions_in_struct(fields);
     
     let mut new_fields = vec![];
 
@@ -259,7 +259,7 @@ fn reconstruct_struct_fields(name: &str, depth: u32, fields: &[&Field]) -> Vec<C
             let field = &fields[union_range.start];
             new_fields.push(ClassMember::Field((*field).clone()));
         } else {
-            let fields = reconstruct_union_fields(name, depth + 1, &fields[union_range]);
+            let fields = reconstruct_union_fields(depth + 1, &fields[union_range]);
 
             let fields_size: usize = fields.iter().map(|m| {
                 let ClassMember::Field(f) = m else { return 0 };
@@ -289,7 +289,7 @@ fn reconstruct_struct_fields(name: &str, depth: u32, fields: &[&Field]) -> Vec<C
     new_fields
 }
 
-fn find_unnamed_structs_in_unions(name: &str, fields: &[&Field]) -> Vec<Range<usize>> {
+fn find_unnamed_structs_in_unions(fields: &[&Field]) -> Vec<Range<usize>> {
     let mut structs_found: Vec<Range<usize>> = vec![];
 
     let field_count = fields.len();
@@ -347,10 +347,10 @@ fn find_unnamed_structs_in_unions(name: &str, fields: &[&Field]) -> Vec<Range<us
     structs_found
 }
 
-fn reconstruct_union_fields(name: &str, depth: u32, fields: &[&Field]) -> Vec<ClassMember> {
+fn reconstruct_union_fields(depth: u32, fields: &[&Field]) -> Vec<ClassMember> {
     let mut new_fields = vec![];
 
-    let structs_found = find_unnamed_structs_in_unions(name, fields);
+    let structs_found = find_unnamed_structs_in_unions(fields);
 
     for struct_range in structs_found {
         // Fields out of unnamed structs are represented by "empty" structs
@@ -358,7 +358,7 @@ fn reconstruct_union_fields(name: &str, depth: u32, fields: &[&Field]) -> Vec<Cl
             let field = fields[struct_range.start];
             new_fields.push(ClassMember::Field(field.clone()));
         } else {
-            let fields = reconstruct_struct_fields(name, depth + 1, &fields[struct_range]);
+            let fields = reconstruct_struct_fields(depth + 1, &fields[struct_range]);
 
             let fields_size: usize = fields.iter().map(|m| {
                 let ClassMember::Field(f) = m else { return 0 };
@@ -425,9 +425,9 @@ impl Class {
                     }).collect::<Vec<_>>();
 
                 let new_fields = if self.is_union {
-                    reconstruct_union_fields(self.name.as_str(), self.depth, fields.as_slice())
+                    reconstruct_union_fields(self.depth, fields.as_slice())
                 } else {
-                    reconstruct_struct_fields(self.name.as_str(), self.depth, fields.as_slice())
+                    reconstruct_struct_fields(self.depth, fields.as_slice())
                 };
 
                 let mut remove_indices = vec![];
@@ -440,12 +440,14 @@ impl Class {
                     }
                 }
 
+                let insert_index = remove_indices.iter().min().cloned().unwrap_or(self.members.len() - new_fields.len());
+
                 for i in remove_indices.into_iter().rev() {
                     self.members.remove(i);
                 }
 
                 for member in new_fields.into_iter().rev() {
-                    self.members.insert(0, member);
+                    self.members.insert(insert_index, member);
                 }
             }
 
