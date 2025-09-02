@@ -21,14 +21,15 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 | Short | Long | Description |
 |-|-|-|
 | `-h` | `--help` | Prints help information. |
-| `-u` | `--unroll-functions` | Whether to include scope information in decompiled function stubs. |
+| `-r` | `--reorganize` | Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental) |
+| `-u` | `--unroll-functions` | Whether to include scope information in decompiled function stubs. (Experimental) |
 | `-V` | `--version` | Prints version information. |
 
 ### Options
 
 | Short | Long | Description |
 |-|-|-|
-| `-b` | `--base-address <base-address>` | The base address to add when resolving an RVA (optional). |
+| `-b` | `--base-address <base-address>` | The base address to add when resolving an RVA. (Optional) |
 | `-o` | `--out <out>` | The output directory to dump all C++ code to. |
 | `-p` | `--pdb <pdb>` | The file path to the MSVC PDB file to decompile. |
 

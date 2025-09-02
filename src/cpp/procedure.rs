@@ -8,6 +8,7 @@ use crate::tabbed::{TabbedDisplay, TabbedDisplayer};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     Comment(String),
+    Commented(Box<Statement>),
     Label(Label),
     Variable(Variable),
     Block(Block),
@@ -18,6 +19,16 @@ impl TabbedDisplay for Statement {
         match self {
             Statement::Comment(x) => {
                 write!(f, "// {x}")?;
+            }
+
+            Statement::Commented(x) => {
+                let s = TabbedDisplayer(x.as_ref()).to_string();
+                
+                if s.lines().count() > 1 {
+                    write!(f, "/* {s} */")?;
+                } else {
+                    write!(f, "// {s}")?;
+                }
             }
 
             Statement::Label(x) => {
@@ -95,6 +106,7 @@ impl TabbedDisplay for Block {
         for statement in self.statements.iter() {
             match statement {
                 Statement::Label(_) => "".tabbed_fmt(depth, f)?,
+                Statement::Commented(x) if matches!(x.as_ref(), Statement::Label(_)) => "".tabbed_fmt(depth, f)?,
                 _ => "".tabbed_fmt(depth + 1, f)?,
             }
             statement.tabbed_fmt(depth + 1, f)?;
@@ -110,23 +122,33 @@ pub struct Procedure {
     pub address: u64,
     pub line: Option<u32>,
     pub type_index: pdb2::TypeIndex,
+    pub is_static: bool,
     pub signature: String,
     pub body: Option<Block>,
 }
 
 impl Display for Procedure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_static {
+            write!(f, "static ")?;
+        }
+        
         write!(f, "{}", self.signature)?;
 
         match self.body.as_ref() {
             Some(body) => {
-                write!(f, "// 0x{:X}", self.address)?;
+                if self.address != 0 {
+                    write!(f, " // 0x{:X}", self.address)?;
+                }
                 writeln!(f)?;
                 write!(f, "{}", TabbedDisplayer(body))?;
             },
 
             None => {
-                write!(f, "; // 0x{:X}", self.address)?;
+                write!(f, ";")?;
+                if self.address != 0 {
+                    write!(f, " // 0x{:X}", self.address)?;
+                }
             }
         }
 

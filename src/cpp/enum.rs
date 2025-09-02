@@ -13,6 +13,7 @@ pub struct Enum {
     pub depth: u32,
     pub line: u32,
     pub underlying_type_name: String,
+    pub size: usize,
     pub is_declaration: bool,
     pub values: Vec<EnumValue>,
     pub field_attributes: Option<pdb2::FieldAttributes>,
@@ -63,13 +64,14 @@ impl fmt::Display for Enum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "enum")?;
 
-        let name = self.name.to_string();
-
-        if name != "<unnamed-tag>" {
-            write!(f, " {}", name)?;
+        if !self.name.split("::").last().unwrap().contains("<unnamed") {
+            write!(f, " {}", self.name)?;
         }
 
-        if self.underlying_type_name != "long" {
+        if self.underlying_type_name != "int"
+            && self.underlying_type_name != "long"
+            && self.underlying_type_name != "int32_t"
+        {
             write!(f, " : {}", self.underlying_type_name)?;
         }
 
@@ -81,35 +83,166 @@ impl fmt::Display for Enum {
         writeln!(f)?;
 
         for _ in 0..self.depth {
-            write!(f, "\t")?;
+            write!(f, "    ")?;
         }
 
         writeln!(f, "{{")?;
 
         for value in &self.values {
             for _ in 0..self.depth {
-                write!(f, "\t")?;
+                write!(f, "    ")?;
             }
     
             writeln!(
                 f,
-                "\t{} = {},",
+                "    {} = {},",
                 value.name,
                 match value.value {
-                    pdb2::Variant::U8(v) => format!("{}", v),
-                    pdb2::Variant::U16(v) => format!("{}", v),
-                    pdb2::Variant::U32(v) => format!("{}", v),
-                    pdb2::Variant::U64(v) => format!("{}", v),
-                    pdb2::Variant::I8(v) => format!("{}", v),
-                    pdb2::Variant::I16(v) => format!("{}", v),
-                    pdb2::Variant::I32(v) => format!("{}", v),
-                    pdb2::Variant::I64(v) => format!("{}", v),
+                    pdb2::Variant::U8(v) => {
+                        if self.size > 1 {
+                            if v < u8::MAX {
+                                format!("{v}")
+                            } else if v == u8::MAX {
+                                format!("0x{:X}", match self.size {
+                                    2 => u16::MAX as u128,
+                                    4 => u32::MAX as u128,
+                                    8 => u64::MAX as u128,
+                                    16 => u128::MAX as u128,
+                                    _ => todo!()
+                                })
+                            } else {
+                                todo!("{value:#?}")
+                            }
+                        } else {
+                            format!("{}", v)
+                        }
+                    }
+                    
+                    pdb2::Variant::U16(v) => {
+                        if self.size > 2 {
+                            if v < u16::MAX {
+                                format!("{v}")
+                            } else if v == u16::MAX {
+                                format!("0x{:X}", match self.size {
+                                    4 => u32::MAX as u128,
+                                    8 => u64::MAX as u128,
+                                    16 => u128::MAX as u128,
+                                    _ => todo!()
+                                })
+                            } else {
+                                todo!("{value:#?}")
+                            }
+                        } else {
+                            format!("{}", v)
+                        }
+                    }
+
+                    pdb2::Variant::U32(v) => {
+                        if self.size > 4 {
+                            if v < u32::MAX {
+                                format!("{v}")
+                            } else if v == u32::MAX {
+                                format!("0x{:X}", match self.size {
+                                    8 => u64::MAX as u128,
+                                    16 => u128::MAX as u128,
+                                    _ => todo!()
+                                })
+                            } else {
+                                todo!("{value:#?}")
+                            }
+                        } else if v > 0xFFFFFF {
+                            let d = ((v >> 0) & 0xFF) as u8 as char;
+                            let c = ((v >> 8) & 0xFF) as u8 as char;
+                            let b = ((v >> 16) & 0xFF) as u8 as char;
+                            let a = ((v >> 24) & 0xFF) as u8 as char;
+                            if [a, b, c, d].iter().all(|c| c.is_ascii()) {
+                                format!("'{a}{b}{c}{d}'")
+                            } else {
+                                format!("{}", v)
+                            }
+                        } else {
+                            format!("{}", v)
+                        }
+                    }
+
+                    pdb2::Variant::U64(v) => {
+                        if self.size > 8 {
+                            if v < u64::MAX {
+                                format!("{v}")
+                            } else if v == u64::MAX {
+                                format!("0x{:X}", match self.size {
+                                    16 => u128::MAX as u128,
+                                    _ => todo!()
+                                })
+                            } else {
+                                todo!("{value:#?}")
+                            }
+                        } else {
+                            format!("{}", v)
+                        }
+                    }
+
+                    pdb2::Variant::I8(v) => {
+                        if self.size > 1 {
+                            if v == 0 {
+                                format!("0")
+                            } else if v > i8::MIN && v < i8::MAX {
+                                format!("{}", v)
+                            } else {
+                                todo!("{value:#?}")
+                            }
+                        } else {
+                            format!("{}", v)
+                        }
+                    }
+
+                    pdb2::Variant::I16(v) => {
+                        if self.size > 2 {
+                            if v == 0 {
+                                format!("0")
+                            } else if v > i16::MIN && v < i16::MAX {
+                                format!("{}", v)
+                            } else {
+                                todo!("{value:#?}")
+                            }
+                        } else {
+                            format!("{}", v)
+                        }
+                    }
+
+                    pdb2::Variant::I32(v) => {
+                        if self.size > 4 {
+                            if v == 0 {
+                                format!("0")
+                            } else if v > i32::MIN && v < i32::MAX {
+                                format!("{}", v)
+                            } else {
+                                todo!("{value:#?}")
+                            }
+                        } else {
+                            format!("{}", v)
+                        }
+                    }
+
+                    pdb2::Variant::I64(v) => {
+                        if self.size > 8 {
+                            if v == 0 {
+                                format!("0")
+                            } else if v > i64::MIN && v < i64::MAX {
+                                format!("{}", v)
+                            } else {
+                                todo!("{value:#?}")
+                            }
+                        } else {
+                            format!("{}", v)
+                        }
+                    }
                 }
             )?;
         }
 
         for _ in 0..self.depth {
-            write!(f, "\t")?;
+            write!(f, "    ")?;
         }
 
         write!(f, "}};")?;

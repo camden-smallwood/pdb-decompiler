@@ -689,6 +689,7 @@ impl Class {
                             depth: self.depth + 1,
                             line: 0,
                             underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, true)?,
+                            size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?,
                             is_declaration: false,
                             values: vec![],
                             field_attributes: Some(nested_data.attributes),
@@ -959,10 +960,10 @@ impl fmt::Display for Class {
                 }
                         
                 for _ in 0..self.depth {
-                    write!(f, "\t")?;
+                    write!(f, "    ")?;
                 }
                 
-                write!(f, "\t{}{}", base.type_name, if i == last_base_class_index { "" } else { "," })?;
+                write!(f, "    {}{}", base.type_name, if i == last_base_class_index { "" } else { "," })?;
             }
         }
 
@@ -974,7 +975,7 @@ impl fmt::Display for Class {
         writeln!(f)?;
 
         for _ in 0..self.depth {
-            write!(f, "\t")?;
+            write!(f, "    ")?;
         }
 
         writeln!(f, "{{")?;
@@ -1009,7 +1010,7 @@ impl fmt::Display for Class {
             if member_access != prev_access {
                 if let Some(member_access) = member_access {
                     for _ in 0..self.depth {
-                        write!(f, "\t")?;
+                        write!(f, "    ")?;
                     }
             
                     writeln!(f, "{}:", member_access)?;
@@ -1019,16 +1020,28 @@ impl fmt::Display for Class {
             }
 
             for _ in 0..self.depth {
-                write!(f, "\t")?;
+                write!(f, "    ")?;
             }
     
-            writeln!(f, "\t{}", member)?;
+            writeln!(f, "    {}", member)?;
         }
 
         for _ in 0..self.depth {
-            write!(f, "\t")?;
+            write!(f, "    ")?;
         }
 
-        write!(f, "}};")
+        if !self.name.is_empty() && self.size != 0 {
+            writeln!(f, "}};")?;
+
+            for _ in 0..self.depth {
+                write!(f, "    ")?;
+            }
+
+            write!(f, "static_assert(sizeof({}) == {}, \"Invalid {} size\")", self.name, self.size, self.name)?;
+        } else {
+            write!(f, "}};")?;
+        }
+
+        Ok(())
     }
 }

@@ -18,13 +18,17 @@ struct Options {
     #[structopt(short, long)]
     pdb: Option<String>,
 
-    /// The base address to add when resolving an RVA (optional).
+    /// The base address to add when resolving an RVA. (Optional)
     #[structopt(short, long, parse(try_from_str = parse_base_address))]
     base_address: Option<u64>,
 
-    /// Whether to include scope information in decompiled function stubs.
+    /// Whether to include scope information in decompiled function stubs. (Experimental)
     #[structopt(short, long)]
     unroll_functions: bool,
+
+    /// Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental)
+    #[structopt(short, long)]
+    reorganize: bool,
 }
 
 fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
@@ -552,12 +556,203 @@ fn process_modules<'a>(
     // Write modules to file
     //
 
-    for module in modules.values() {
+    for mut module in modules.values().cloned() {
         let path = PathBuf::from(sanitize_path(format!(
             "{}/{}",
             options.out.as_ref().unwrap().to_string_lossy(),
             module.path.to_string_lossy().trim_start_matches('/'),
         )));
+
+        //
+        // Sort module members by line number
+        //
+
+        let mut storage: Vec<(u32, cpp::ModuleMember)> = vec![];
+        let mut prev_line = 0;
+
+        for u in module.members.iter() {
+            match u {
+                cpp::ModuleMember::Class(x) => {
+                    storage.push((x.borrow().line, u.clone()));
+                    prev_line = x.borrow().line;
+                }
+
+                cpp::ModuleMember::Enum(x) => {
+                    storage.push((x.line, u.clone()));
+                    prev_line = x.line;
+                }
+
+                cpp::ModuleMember::Data(_, _, Some(line)) => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                cpp::ModuleMember::ThreadStorage(_, _, Some(line)) => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                cpp::ModuleMember::Procedure(cpp::Procedure { line: Some(line), .. }) => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                _ => {
+                    prev_line += 1;
+                    storage.push((prev_line, u.clone()));
+                }
+            }
+        }
+
+        storage.sort_by(|a, b| a.0.cmp(&b.0));
+        let members = storage.iter().map(|m| m.1.clone()).collect::<Vec<_>>();
+
+        if options.reorganize {
+            //
+            // Rebuild module under specific sections
+            //
+
+            let mut new_members = vec![];
+
+            // using namespaces
+            let using_namespace_members = members.iter().filter(|m| match m {
+                cpp::ModuleMember::UsingNamespace(_) => true,
+                _ => false,
+            }).cloned().collect::<Vec<_>>();
+
+            new_members.extend(using_namespace_members);
+
+            // enums, const vars, macros
+            let constant_members = members.iter().filter(|m| match m {
+                cpp::ModuleMember::Enum(_) => true,
+                // cpp::ModuleMember::Constant(_) => true,
+                cpp::ModuleMember::Data(signature, _, _) => signature.starts_with("const ") && !signature.contains("$"),
+                cpp::ModuleMember::ThreadStorage(signature, _, _) => signature.starts_with("const ") && !signature.contains("$"),
+                _ => false,
+            }).cloned().collect::<Vec<_>>();
+
+            if !constant_members.is_empty() {
+                new_members.push(cpp::ModuleMember::Comment("---------- constants".into()));
+                new_members.extend(constant_members);
+            }
+
+            // structs/unions/classes/typedefs
+            let definition_members = members.iter().filter(|m| match m {
+                cpp::ModuleMember::Class(_) => true,
+                // cpp::ModuleMember::UserDefinedType(_) => true,
+                _ => false,
+            }).cloned().collect::<Vec<_>>();
+
+            if !definition_members.is_empty() {
+                new_members.push(cpp::ModuleMember::Comment("---------- definitions".into()));
+                new_members.extend(definition_members);
+            }
+
+            // function prototypes
+            let mut private_code_members = members.iter().filter(|m| match m {
+                cpp::ModuleMember::Procedure(procedure) => {
+                    procedure.is_static
+                        && !procedure.signature.contains("`")
+                        && !procedure.signature.contains("$")
+                }
+                _ => false,
+            }).cloned().collect::<Vec<_>>();
+
+            let mut public_code_members = members.iter().filter(|m| match m {
+                cpp::ModuleMember::Procedure(procedure) => {
+                    !procedure.is_static
+                        && !procedure.signature.contains("`")
+                        && !procedure.signature.contains("$")
+                }
+                _ => false,
+            }).cloned().collect::<Vec<_>>();
+
+            let mut prototype_members = private_code_members.clone();
+
+            for member in prototype_members.iter_mut() {
+                if let cpp::ModuleMember::Procedure(procedure) = member {
+                    procedure.body = None;
+                    procedure.address = 0;
+                }
+            }
+
+            if !prototype_members.is_empty() {
+                new_members.push(cpp::ModuleMember::Comment("---------- prototypes".into()));
+                new_members.extend(prototype_members);
+            }
+
+            // public mutable vars
+            let global_members = members.iter().filter(|m| match m {
+                cpp::ModuleMember::Data(signature, _, _) => {
+                    !signature.starts_with("const ")
+                        && !signature.contains("`")
+                        && !signature.contains("$")
+                }
+                cpp::ModuleMember::ThreadStorage(signature, _, _) => {
+                    !signature.starts_with("const ")
+                        && !signature.contains("`")
+                        && !signature.contains("$")
+                }
+                _ => false,
+            }).cloned().collect::<Vec<_>>();
+
+            if !global_members.is_empty() {
+                new_members.push(cpp::ModuleMember::Comment("---------- globals".into()));
+                new_members.extend(global_members);
+            }
+
+            fn comment_block(block: &mut cpp::Block) {
+                for statement in block.statements.iter_mut() {
+                    match statement {
+                        cpp::Statement::Comment(_) | cpp::Statement::Commented(_) => {
+                            continue;
+                        }
+
+                        cpp::Statement::Block(block) => comment_block(block),
+
+                        _ => *statement = cpp::Statement::Commented(Box::new(statement.clone())),
+                    }
+                }
+            }
+
+            // public functions
+            for member in public_code_members.iter_mut() {
+                if let cpp::ModuleMember::Procedure(procedure) = member {
+                    if procedure.body.is_none() {
+                        procedure.body = Some(cpp::Block::default());
+                    }
+
+                    comment_block(procedure.body.as_mut().unwrap());
+                }
+            }
+
+            if !public_code_members.is_empty() {
+                new_members.push(cpp::ModuleMember::Comment("---------- public code".into()));
+                new_members.extend(public_code_members);
+            }
+
+            // private functions
+            for member in private_code_members.iter_mut() {
+                if let cpp::ModuleMember::Procedure(procedure) = member {
+                    if procedure.body.is_none() {
+                        procedure.body = Some(cpp::Block::default());
+                    }
+
+                    comment_block(procedure.body.as_mut().unwrap());
+                }
+            }
+            
+            if !private_code_members.is_empty() {
+                new_members.push(cpp::ModuleMember::Comment("---------- private code".into()));
+                new_members.extend(private_code_members);
+            }
+
+            module.members = new_members;
+        }
+
+        //
+        // Write the module out to its file
+        //
 
         if let Some(parent_path) = path.parent() {
             fs::create_dir_all(parent_path)?;
@@ -953,7 +1148,8 @@ fn process_module_symbol_data(
             }
 
             let constant = cpp::ModuleMember::Constant(format!(
-                "const {type_name} = {};",
+                "{}{type_name} = {};",
+                if type_name.starts_with("const ") { "" } else { "const " },
                 match constant_symbol.value {
                     pdb2::Variant::U8(x) => format!("0x{:X}", x),
                     pdb2::Variant::U16(x) => format!("0x{:X}", x),
@@ -1092,8 +1288,6 @@ fn process_module_symbol_data(
         }
 
         pdb2::SymbolData::Procedure(procedure_symbol) => {
-            // println!("Procedure symbol: {}", procedure_symbol.name.to_string());
-
             let module_symbols = match module_symbols {
                 Some(x) => x,
                 None => {
@@ -1371,6 +1565,7 @@ fn process_module_symbol_data(
                     address,
                     line: line_info.map(|x| x.line_start),
                     type_index: procedure_symbol.type_index,
+                    is_static: !procedure_symbol.global,
                     signature: procedure,
                     body,
                 }),

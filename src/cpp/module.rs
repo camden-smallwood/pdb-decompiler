@@ -1,3 +1,5 @@
+use crate::cpp::type_size;
+
 use super::{type_name, Class, Enum, Procedure};
 use std::{cell::RefCell, collections::HashMap, fmt, iter::Peekable, path::PathBuf, rc::Rc, str::Chars};
 
@@ -7,6 +9,7 @@ pub static SOURCE_FILE_EXTS: &[&str] = &[
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleMember {
+    Comment(String),
     Class(Rc<RefCell<Class>>),
     Enum(Enum),
     UserDefinedType(String),
@@ -21,6 +24,7 @@ impl fmt::Display for ModuleMember {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Comment(c) => write!(f, "/* {c} */"),
             Self::Class(c) => c.borrow().fmt(f),
             Self::Enum(e) => e.fmt(f),
             Self::UserDefinedType(u) => u.fmt(f),
@@ -394,12 +398,15 @@ impl Module {
                     }
                 };
 
+                let size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?;
+
                 let mut definition = Enum {
                     name: data.name.to_string().to_string(),
                     index: type_index,
                     depth: 0,
                     line,
                     underlying_type_name,
+                    size,
                     is_declaration: false,
                     values: vec![],
                     field_attributes: None,
@@ -524,7 +531,7 @@ impl Module {
 
         // println!("Module build info args: [");
         // for arg in args.iter() {
-        //     println!("\t\"{arg}\",");
+        //     println!("    \"{arg}\",");
         // }
         // println!("]");
 
@@ -1635,9 +1642,6 @@ mod tests {
 
 impl fmt::Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut storage: Vec<(u32, ModuleMember)> = vec![];
-        let mut prev_line = 0;
-
         let mut is_header = false;
 
         match self.path.extension().and_then(std::ffi::OsStr::to_str) {
@@ -1657,45 +1661,38 @@ impl fmt::Display for Module {
             }
         }
 
-        for u in &self.members {
-            match u {
-                ModuleMember::Class(x) => {
-                    storage.push((x.borrow().line, u.clone()));
-                    prev_line = x.borrow().line;
-                }
+        let mut prev_item: Option<&ModuleMember> = None;
 
-                ModuleMember::Enum(x) => {
-                    storage.push((x.line, u.clone()));
-                    prev_line = x.line;
-                }
-
-                ModuleMember::Data(_, _, Some(line)) => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                ModuleMember::ThreadStorage(_, _, Some(line)) => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                ModuleMember::Procedure(Procedure { line: Some(line), .. }) => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                _ => {
-                    prev_line += 1;
-                    storage.push((prev_line, u.clone()));
-                }
+        for item in self.members.iter() {
+            if !matches!(
+                (prev_item, item),
+                (
+                    Some(ModuleMember::UsingNamespace(_)),
+                    ModuleMember::UsingNamespace(_)
+                ) | (
+                    Some(ModuleMember::Procedure(Procedure { body: None, .. })),
+                    ModuleMember::Procedure(Procedure { body: None, .. })
+                ) | (
+                    Some(ModuleMember::UserDefinedType(_)),
+                    ModuleMember::UserDefinedType(_)
+                ) | (
+                    Some(
+                        ModuleMember::Constant(_)
+                            | ModuleMember::Data(_, _, _)
+                            | ModuleMember::ThreadStorage(_, _, _)
+                    ),
+                    ModuleMember::Constant(_)
+                        | ModuleMember::Data(_, _, _)
+                        | ModuleMember::ThreadStorage(_, _, _)
+                )
+            ) {
+                writeln!(f)?;
             }
-        }
 
-        storage.sort_by(|a, b| a.0.cmp(&b.0));
-
-        for item in storage {
+            item.fmt(f)?;
             writeln!(f)?;
-            item.1.fmt(f)?;
+
+            prev_item = Some(item);
         }
 
         Ok(())
