@@ -155,7 +155,7 @@ impl fmt::Display for Enum {
                             let c = ((v >> 8) & 0xFF) as u8 as char;
                             let b = ((v >> 16) & 0xFF) as u8 as char;
                             let a = ((v >> 24) & 0xFF) as u8 as char;
-                            if [a, b, c, d].iter().all(|c| c.is_ascii()) {
+                            if [a, b, c, d].iter().all(|c| *c != '\0' && c.is_ascii()) {
                                 format!("'{a}{b}{c}{d}'")
                             } else {
                                 format!("{}", v)
@@ -197,17 +197,7 @@ impl fmt::Display for Enum {
                     }
 
                     pdb2::Variant::I16(v) => {
-                        if self.size > 2 {
-                            if v == 0 {
-                                format!("0")
-                            } else if v > i16::MIN && v < i16::MAX {
-                                format!("{}", v)
-                            } else {
-                                todo!("{value:#?}")
-                            }
-                        } else {
-                            format!("{}", v)
-                        }
+                        format!("{}", v)
                     }
 
                     pdb2::Variant::I32(v) => {
@@ -218,6 +208,16 @@ impl fmt::Display for Enum {
                                 format!("{}", v)
                             } else {
                                 todo!("{value:#?}")
+                            }
+                        } else if v > 0xFFFFFF {
+                            let d = ((v >> 0) & 0xFF) as u8 as char;
+                            let c = ((v >> 8) & 0xFF) as u8 as char;
+                            let b = ((v >> 16) & 0xFF) as u8 as char;
+                            let a = ((v >> 24) & 0xFF) as u8 as char;
+                            if [a, b, c, d].iter().all(|c| *c != '\0' && c.is_ascii()) {
+                                format!("'{a}{b}{c}{d}'")
+                            } else {
+                                format!("{}", v)
                             }
                         } else {
                             format!("{}", v)
