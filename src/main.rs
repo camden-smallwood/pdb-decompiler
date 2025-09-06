@@ -564,6 +564,174 @@ fn process_modules<'a>(
         )));
 
         //
+        // Replace nested type declarations with their full types
+        //
+            
+        let cloned_members = module.members.clone();
+
+        for (i, member) in module.members.iter_mut().enumerate() {
+            match member {
+                cpp::ModuleMember::Class(class_data) => {
+                    let class_name = class_data.borrow().name.clone();
+
+                    for class_member in class_data.borrow_mut().members.iter_mut() {
+                        match class_member {
+                            cpp::ClassMember::Class(nested_class) if nested_class.borrow().is_declaration => {
+                                let nested_name = nested_class.borrow().name.clone();
+                                let full_name = format!("{}::{}", class_name, nested_name);
+
+                                let found = cloned_members.iter().enumerate().find(|(ii, m)| {
+                                    if i == *ii {
+                                        return false;
+                                    }
+                                    let cpp::ModuleMember::Class(other_class) = m else {
+                                        return false;
+                                    };
+                                    other_class.borrow().name == full_name
+                                });
+
+                                if let Some((_, found_member)) = found {
+                                    let cpp::ModuleMember::Class(other_class) = found_member else {
+                                        unreachable!()
+                                    };
+
+                                    let mut nested_class = nested_class.borrow_mut();
+                                    nested_class.is_declaration = false;
+                                    nested_class.size = other_class.borrow().size;
+                                    nested_class.base_classes = other_class.borrow().base_classes.clone();
+                                    nested_class.members = other_class.borrow().members.clone();
+
+                                    let nested_depth = nested_class.depth + 1;
+
+                                    for member in nested_class.members.iter_mut() {
+                                        match member {
+                                            cpp::ClassMember::Class(inner_class) => inner_class.borrow_mut().depth = nested_depth,
+                                            cpp::ClassMember::Enum(inner_enum) => inner_enum.depth = nested_depth,
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+
+                            cpp::ClassMember::Enum(nested_enum) if nested_enum.is_declaration => {
+                                let full_name = format!("{}::{}", class_name, nested_enum.name);
+                                
+                                let found = cloned_members.iter().enumerate().find(|(ii, m)| {
+                                    if i == *ii {
+                                        return false;
+                                    }
+
+                                    let cpp::ModuleMember::Enum(other_enum) = m else {
+                                        return false;
+                                    };
+
+                                    other_enum.name == full_name
+                                });
+
+                                if let Some((_, found_member)) = found {
+                                    let cpp::ModuleMember::Enum(other_enum) = found_member else {
+                                        unreachable!()
+                                    };
+
+                                    nested_enum.is_declaration = false;
+                                    nested_enum.underlying_type_name = other_enum.underlying_type_name.clone();
+                                    nested_enum.size = other_enum.size;
+                                    nested_enum.values = other_enum.values.clone();
+                                }
+                            }
+
+                            _ => {}
+                        }
+                    }
+                }
+
+                _ => {}
+            }
+        }
+
+        //
+        // Remove nested types that ended up in toplevel and are now unreferenced
+        //
+
+        let cloned_members = module.members.clone();
+        let mut remove_class_names = vec![];
+        let mut remove_enum_names = vec![];
+
+        for (i, member) in module.members.iter_mut().enumerate() {
+            match member {
+                cpp::ModuleMember::Class(class_data) => {
+                    let class_data = class_data.borrow();
+                    
+                    if class_data.name.contains("::") {
+                        let parts = class_data.name.split("::").collect::<Vec<_>>();
+                        if !parts.is_empty()
+                            && cloned_members.iter().enumerate().any(|(ii, m)| {
+                                if i == ii {
+                                    return false;
+                                }
+
+                                let cpp::ModuleMember::Class(other_class) = m else {
+                                    return false;
+                                };
+
+                                other_class.borrow().name == parts[0]
+                            })
+                        {
+                            if !remove_class_names.contains(&class_data.name) {
+                                remove_class_names.push(class_data.name.clone());
+                            }
+                        }
+                    }
+                }
+
+                cpp::ModuleMember::Enum(enum_data) => {
+                    if enum_data.name.contains("::") {
+                        let parts = enum_data.name.split("::").collect::<Vec<_>>();
+                        if !parts.is_empty()
+                            && cloned_members.iter().enumerate().any(|(ii, m)| {
+                                if i == ii {
+                                    return false;
+                                }
+
+                                let cpp::ModuleMember::Class(other_class) = m else {
+                                    return false;
+                                };
+                                
+                                other_class.borrow().name == parts[0]
+                            })
+                        {
+                            if !remove_enum_names.contains(&enum_data.name) {
+                                remove_enum_names.push(enum_data.name.clone());
+                            }
+                        }
+                    }
+                }
+
+                _ => {}
+            }
+        }
+
+        for class_name in remove_class_names.into_iter().rev() {
+            for i in (0..module.members.len()).rev() {
+                if let cpp::ModuleMember::Class(class_data) = &module.members[i]
+                    && class_data.borrow().name == class_name
+                {
+                    module.members.remove(i);
+                }
+            }
+        }
+
+        for enum_name in remove_enum_names.into_iter().rev() {
+            for i in (0..module.members.len()).rev() {
+                if let cpp::ModuleMember::Enum(enum_data) = &module.members[i]
+                    && enum_data.name == enum_name
+                {
+                    module.members.remove(i);
+                }
+            }
+        }
+
+        //
         // Sort module members by line number
         //
 

@@ -1,5 +1,5 @@
-use std::{cell::RefCell, collections::BTreeMap, fmt, ops::Range, rc::Rc};
 use super::*;
+use std::{cell::RefCell, collections::BTreeMap, fmt, ops::Range, rc::Rc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaseClass {
@@ -654,16 +654,31 @@ impl Class {
                 let nested_type_data = nested_type_item.parse()?;
                 
                 match &nested_type_data {
-                    pdb2::TypeData::Class(data) => {
+                    data if matches!(data, pdb2::TypeData::Class(_) | pdb2::TypeData::Union(_)) => {
+                        let (size, properties, fields, derived_from) = match &data {
+                            pdb2::TypeData::Class(class_data) => {
+                                (class_data.size, class_data.properties, class_data.fields, class_data.derived_from)
+                            }
+
+                            pdb2::TypeData::Union(union_data) => {
+                                (union_data.size, union_data.properties, Some(union_data.fields), None)
+                            }
+
+                            _ => unreachable!(),
+                        };
+
                         let definition = Rc::new(RefCell::new(Class {
-                            kind: Some(data.kind),
-                            is_union: false,
+                            kind: match &data {
+                                pdb2::TypeData::Class(data) => Some(data.kind),
+                                _ => None,
+                            },
+                            is_union: matches!(data, pdb2::TypeData::Union(_)),
                             is_declaration: false,
                             name: nested_data.name.to_string().to_string(),
                             index: nested_data.nested_type,
                             depth: self.depth + 1,
                             line: 0,
-                            size: data.size,
+                            size: size,
                             base_classes: vec![],
                             members: vec![],
                             field_attributes: Some(nested_data.attributes),
@@ -673,14 +688,16 @@ impl Class {
                             class_table.push(definition.clone());
                         }
         
-                        if let Some(derived_from) = data.derived_from {
+                        if let Some(derived_from) = derived_from {
                             definition.borrow_mut().add_derived_from(type_finder, derived_from)?;
                         }
         
-                        if data.properties.forward_reference() {
+                        if properties.forward_reference() {
                             definition.borrow_mut().is_declaration = true;
-                        } else if let Some(fields) = data.fields {
-                            definition.borrow_mut().add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
+                        } else if let Some(fields) = fields {
+                            let mut temp = definition.borrow().clone();
+                            temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
+                            *definition.borrow_mut() = temp;
                         }
                         
                         let mut exists = false;
@@ -736,51 +753,6 @@ impl Class {
         
                         if !exists {
                             self.members.push(ClassMember::Enum(definition));
-                        }
-                    }
-        
-                    pdb2::TypeData::Union(data) => {
-                        let definition = Rc::new(RefCell::new(Class {
-                            kind: None,
-                            is_union: true,
-                            is_declaration: false,
-                            name: nested_data.name.to_string().to_string(),
-                            index: nested_data.nested_type,
-                            depth: self.depth + 1,
-                            line: 0,
-                            size: data.size,
-                            base_classes: vec![],
-                            members: vec![],
-                            field_attributes: Some(nested_data.attributes),
-                        }));
-                        
-                        if !class_table.iter().any(|c| c.borrow().index == nested_data.nested_type) {
-                            class_table.push(definition.clone());
-                        }
-
-                        if data.properties.forward_reference() {
-                            definition.borrow_mut().is_declaration = true;
-                        } else {
-                            definition.borrow_mut().add_members(class_table, type_sizes, machine_type, type_info, type_finder, data.fields)?;
-                        }
-                        
-                        let mut exists = false;
-                        
-                        for member in self.members.iter() {
-                            if let ClassMember::Class(other_definition) = member
-                                && definition.borrow().kind == other_definition.borrow().kind
-                                && definition.borrow().name == other_definition.borrow().name
-                                && definition.borrow().size == other_definition.borrow().size
-                                && definition.borrow().base_classes.eq(&other_definition.borrow().base_classes)
-                                && definition.borrow().members.eq(&other_definition.borrow().members)
-                            {
-                                exists = true;
-                                break;
-                            }
-                        }
-                        
-                        if !exists {
-                            self.members.push(ClassMember::Class(definition));
                         }
                     }
         

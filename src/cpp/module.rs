@@ -1,7 +1,13 @@
-use crate::cpp::type_size;
-
-use super::{type_name, Class, Enum, Procedure};
-use std::{cell::RefCell, collections::HashMap, fmt, iter::Peekable, path::PathBuf, rc::Rc, str::Chars};
+use crate::cpp;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt,
+    iter::Peekable,
+    path::PathBuf,
+    rc::Rc,
+    str::Chars,
+};
 
 pub static SOURCE_FILE_EXTS: &[&str] = &[
     "c", "cc", "cpp", "cxx", "pch", "asm", "fasm", "masm", "res", "exp",
@@ -10,14 +16,14 @@ pub static SOURCE_FILE_EXTS: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleMember {
     Comment(String),
-    Class(Rc<RefCell<Class>>),
-    Enum(Enum),
+    Class(Rc<RefCell<cpp::Class>>),
+    Enum(cpp::Enum),
     UserDefinedType(String),
     UsingNamespace(String),
     Constant(String),
     Data(String, u64, Option<u32>),
     ThreadStorage(String, u64, Option<u32>),
-    Procedure(Procedure),
+    Procedure(cpp::Procedure),
 }
 
 impl fmt::Display for ModuleMember {
@@ -254,7 +260,7 @@ impl Module {
 
     pub fn add_type_definition(
         &mut self,
-        class_table: &mut Vec<Rc<RefCell<Class>>>,
+        class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
         type_sizes: &mut HashMap<String, u64>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
@@ -279,16 +285,36 @@ impl Module {
         };
 
         match type_item.parse() {
-            Ok(pdb2::TypeData::Class(data)) => {
-                let definition = Rc::new(RefCell::new(Class {
-                    kind: Some(data.kind),
-                    is_union: false,
+            Ok(data) if matches!(data, pdb2::TypeData::Class(_) | pdb2::TypeData::Union(_)) => {
+                let (name, size, properties, fields, derived_from) = match &data {
+                    pdb2::TypeData::Class(class_data) => {
+                        (class_data.name, class_data.size, class_data.properties, class_data.fields, class_data.derived_from)
+                    }
+
+                    pdb2::TypeData::Union(union_data) => {
+                        (union_data.name, union_data.size, union_data.properties, Some(union_data.fields), None)
+                    }
+
+                    _ => unreachable!(),
+                };
+
+                if properties.forward_reference() {
+                    println!("WARNING: Skipping forward reference in toplevel: \"{}\" in \"{}\"", name, self.path.display());
+                    return Ok(());
+                }
+
+                let definition = Rc::new(RefCell::new(cpp::Class {
+                    kind: match &data {
+                        pdb2::TypeData::Class(class_data) => Some(class_data.kind),
+                        _ => None
+                    },
+                    is_union: matches!(data, pdb2::TypeData::Union(_)),
                     is_declaration: false,
-                    name: data.name.to_string().to_string(),
+                    name: name.to_string().to_string(),
                     index: type_index,
                     depth: 0,
                     line,
-                    size: data.size,
+                    size: size,
                     base_classes: vec![],
                     members: vec![],
                     field_attributes: None,
@@ -298,15 +324,17 @@ impl Module {
                     class_table.push(definition.clone());
                 }
 
-                if let Some(derived_from) = data.derived_from
+                if let Some(derived_from) = derived_from
                     && let Err(_) = definition.borrow_mut().add_derived_from(type_finder, derived_from)
                 {
                     // println!("WARNING: failed to add class derived from: {e}");
                 }
 
-                if data.properties.forward_reference() {
-                    definition.borrow_mut().is_declaration = true;
-                } else if let Some(fields) = data.fields {
+                let Some(fields) = fields else {
+                    panic!("Failed to get fields of \"{}\"", name);
+                };
+                
+                {
                     let mut temp = definition.borrow().clone();
                     temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
                     *definition.borrow_mut() = temp;
@@ -317,6 +345,7 @@ impl Module {
                 for member in self.members.iter() {
                     if let ModuleMember::Class(other_definition) = member
                         && definition.borrow().kind == other_definition.borrow().kind
+                        && definition.borrow().is_union == other_definition.borrow().is_union
                         && definition.borrow().name == other_definition.borrow().name
                         && definition.borrow().size == other_definition.borrow().size
                         && definition.borrow().base_classes.eq(&other_definition.borrow().base_classes)
@@ -332,55 +361,13 @@ impl Module {
                 }
             }
 
-            Ok(pdb2::TypeData::Union(data)) => {
-                let definition = Rc::new(RefCell::new(Class {
-                    kind: None,
-                    is_union: true,
-                    is_declaration: false,
-                    name: data.name.to_string().to_string(),
-                    index: type_index,
-                    depth: 0,
-                    line,
-                    size: data.size,
-                    base_classes: vec![],
-                    members: vec![],
-                    field_attributes: None,
-                }));
-
-                if !class_table.iter().any(|c| c.borrow().index == type_index) {
-                    class_table.push(definition.clone());
-                }
-
-                if data.properties.forward_reference() {
-                    definition.borrow_mut().is_declaration = true;
-                } else {
-                    let mut temp = definition.borrow().clone();
-                    temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, data.fields)?;
-                    *definition.borrow_mut() = temp;
-                }
-
-                let mut exists = false;
-
-                for member in self.members.iter() {
-                    if let ModuleMember::Class(other_definition) = member
-                        && definition.borrow().kind == other_definition.borrow().kind
-                        && definition.borrow().name == other_definition.borrow().name
-                        && definition.borrow().size == other_definition.borrow().size
-                        && definition.borrow().base_classes.eq(&other_definition.borrow().base_classes)
-                        && definition.borrow().members.eq(&other_definition.borrow().members)
-                    {
-                        exists = true;
-                        break;
-                    }
-                }
-
-                if !exists {
-                    self.members.push(ModuleMember::Class(definition));
-                }
-            }
-
             Ok(pdb2::TypeData::Enumeration(data)) => {
-                let underlying_type_name = match type_name(
+                if data.properties.forward_reference() {
+                    println!("WARNING: Skipping forward reference in toplevel: \"{}\" in \"{}\"", data.name, self.path.display());
+                    return Ok(());
+                }
+
+                let underlying_type_name = match cpp::type_name(
                     class_table,
                     type_sizes, 
                     machine_type,
@@ -398,9 +385,9 @@ impl Module {
                     }
                 };
 
-                let size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?;
+                let size = cpp::type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?;
 
-                let mut definition = Enum {
+                let mut definition = cpp::Enum {
                     name: data.name.to_string().to_string(),
                     index: type_index,
                     depth: 0,
@@ -412,9 +399,7 @@ impl Module {
                     field_attributes: None,
                 };
 
-                if data.properties.forward_reference() {
-                    definition.is_declaration = true;
-                } else if let Err(_) = definition.add_members(type_finder, data.fields) {
+                if let Err(_) = definition.add_members(type_finder, data.fields) {
                     // println!("WARNING: failed to add enum members: {e}");
                 }
 
@@ -1670,8 +1655,8 @@ impl fmt::Display for Module {
                     Some(ModuleMember::UsingNamespace(_)),
                     ModuleMember::UsingNamespace(_)
                 ) | (
-                    Some(ModuleMember::Procedure(Procedure { body: None, .. })),
-                    ModuleMember::Procedure(Procedure { body: None, .. })
+                    Some(ModuleMember::Procedure(cpp::Procedure { body: None, .. })),
+                    ModuleMember::Procedure(cpp::Procedure { body: None, .. })
                 ) | (
                     Some(ModuleMember::UserDefinedType(_)),
                     ModuleMember::UserDefinedType(_)
