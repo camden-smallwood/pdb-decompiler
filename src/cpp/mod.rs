@@ -66,19 +66,19 @@ pub fn primitive_name(kind: PrimitiveKind) -> &'static str {
         pdb2::PrimitiveKind::Bool8 => "bool",
 
         pdb2::PrimitiveKind::I8 => "__int8",
-        pdb2::PrimitiveKind::U8 => "__uint8",
+        pdb2::PrimitiveKind::U8 => "unsigned __int8",
 
         pdb2::PrimitiveKind::I16 => "__int16",
-        pdb2::PrimitiveKind::U16 => "__uint16",
-        
+        pdb2::PrimitiveKind::U16 => "unsigned __int16",
+
         pdb2::PrimitiveKind::I32 => "__int32",
-        pdb2::PrimitiveKind::U32 => "__uint32",
+        pdb2::PrimitiveKind::U32 => "unsigned __int32",
 
         pdb2::PrimitiveKind::I64 => "__int64",
-        pdb2::PrimitiveKind::U64 => "__uint64",
+        pdb2::PrimitiveKind::U64 => "unsigned __int64",
         
         pdb2::PrimitiveKind::I128 => "__int128",
-        pdb2::PrimitiveKind::U128 => "__uint128",
+        pdb2::PrimitiveKind::U128 => "unsigned __int128",
 
         pdb2::PrimitiveKind::WChar => "wchar_t",
         pdb2::PrimitiveKind::Char8 => "char8_t",
