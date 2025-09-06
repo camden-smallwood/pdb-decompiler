@@ -22,7 +22,7 @@ impl TabbedDisplay for Statement {
             }
 
             Statement::Commented(x) => {
-                let s = TabbedDisplayer(x.as_ref()).to_string();
+                let s = TabbedDisplayer(0, x.as_ref()).to_string();
                 
                 if s.lines().count() > 1 {
                     write!(f, "/* {s} */")?;
@@ -141,7 +141,7 @@ impl Display for Procedure {
                     write!(f, " // 0x{:X}", self.address)?;
                 }
                 writeln!(f)?;
-                write!(f, "{}", TabbedDisplayer(body))?;
+                write!(f, "{}", TabbedDisplayer(0, body))?;
             },
 
             None => {

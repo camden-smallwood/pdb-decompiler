@@ -376,6 +376,7 @@ impl Module {
                     data.underlying_type,
                     None,
                     None,
+                    None,
                     true,
                 ) {
                     Ok(name) => name,

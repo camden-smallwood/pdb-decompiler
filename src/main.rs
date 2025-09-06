@@ -564,85 +564,159 @@ fn process_modules<'a>(
         )));
 
         //
-        // Replace nested type declarations with their full types
+        // Replace nested type declarations and anonymous field types with their full types
         //
-            
+        
         let cloned_members = module.members.clone();
+        let mut remove_class_names = vec![];
+        let mut remove_enum_names = vec![];
 
         for (i, member) in module.members.iter_mut().enumerate() {
             match member {
                 cpp::ModuleMember::Class(class_data) => {
-                    let class_name = class_data.borrow().name.clone();
+                    fn fix_class(
+                        module_members: &[cpp::ModuleMember],
+                        i: usize,
+                        class_data: Rc<RefCell<cpp::Class>>,
+                        remove_class_names: &mut Vec<String>,
+                        remove_enum_names: &mut Vec<String>,
+                    ) {
+                        let class_name = class_data.borrow().name.clone();
+                        let mut new_members = class_data.borrow_mut().members.clone();
 
-                    for class_member in class_data.borrow_mut().members.iter_mut() {
-                        match class_member {
-                            cpp::ClassMember::Class(nested_class) if nested_class.borrow().is_declaration => {
-                                let nested_name = nested_class.borrow().name.clone();
-                                let full_name = format!("{}::{}", class_name, nested_name);
+                        for class_member in new_members.iter_mut() {
+                            match class_member {
+                                cpp::ClassMember::Class(nested_class) => {
+                                    let is_declaration = nested_class.borrow().is_declaration;
+                                    let nested_name = nested_class.borrow().name.clone();
+                                    let full_name = format!("{}::{}", class_name, nested_name);
 
-                                let found = cloned_members.iter().enumerate().find(|(ii, m)| {
-                                    if i == *ii {
-                                        return false;
+                                    if is_declaration {
+                                        let found = module_members.iter().enumerate().find(|(ii, m)| {
+                                            if i == *ii {
+                                                return false;
+                                            }
+                                            let cpp::ModuleMember::Class(other_class) = m else {
+                                                return false;
+                                            };
+                                            other_class.borrow().name == full_name
+                                        });
+
+                                        if let Some((_, found_member)) = found {
+                                            let cpp::ModuleMember::Class(other_class) = found_member else {
+                                                unreachable!()
+                                            };
+
+                                            let mut nested_class = nested_class.borrow_mut();
+                                            nested_class.is_declaration = false;
+                                            nested_class.size = other_class.borrow().size;
+                                            nested_class.base_classes = other_class.borrow().base_classes.clone();
+                                            nested_class.members = other_class.borrow().members.clone();
+
+                                            let nested_depth = nested_class.depth + 1;
+
+                                            for member in nested_class.members.iter_mut() {
+                                                match member {
+                                                    cpp::ClassMember::Class(inner_class) => inner_class.borrow_mut().depth = nested_depth,
+                                                    cpp::ClassMember::Enum(inner_enum) => inner_enum.depth = nested_depth,
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
                                     }
-                                    let cpp::ModuleMember::Class(other_class) = m else {
-                                        return false;
-                                    };
-                                    other_class.borrow().name == full_name
-                                });
 
-                                if let Some((_, found_member)) = found {
-                                    let cpp::ModuleMember::Class(other_class) = found_member else {
-                                        unreachable!()
-                                    };
+                                    fix_class(module_members, i, nested_class.clone(), remove_class_names, remove_enum_names);
+                                    
+                                    if !remove_class_names.contains(&full_name) {
+                                        remove_class_names.push(full_name);
+                                    }
+                                }
 
-                                    let mut nested_class = nested_class.borrow_mut();
-                                    nested_class.is_declaration = false;
-                                    nested_class.size = other_class.borrow().size;
-                                    nested_class.base_classes = other_class.borrow().base_classes.clone();
-                                    nested_class.members = other_class.borrow().members.clone();
+                                cpp::ClassMember::Enum(nested_enum) => {
+                                    let full_name = format!("{}::{}", class_name, nested_enum.name);
+                                    
+                                    if nested_enum.is_declaration {
+                                        let found = module_members.iter().enumerate().find(|(ii, m)| {
+                                            if i == *ii {
+                                                return false;
+                                            }
 
-                                    let nested_depth = nested_class.depth + 1;
+                                            let cpp::ModuleMember::Enum(other_enum) = m else {
+                                                return false;
+                                            };
 
-                                    for member in nested_class.members.iter_mut() {
-                                        match member {
-                                            cpp::ClassMember::Class(inner_class) => inner_class.borrow_mut().depth = nested_depth,
-                                            cpp::ClassMember::Enum(inner_enum) => inner_enum.depth = nested_depth,
-                                            _ => {}
+                                            other_enum.name == full_name
+                                        });
+
+                                        if let Some((_, found_member)) = found {
+                                            let cpp::ModuleMember::Enum(other_enum) = found_member else {
+                                                unreachable!()
+                                            };
+
+                                            nested_enum.is_declaration = false;
+                                            nested_enum.underlying_type_name = other_enum.underlying_type_name.clone();
+                                            nested_enum.size = other_enum.size;
+                                            nested_enum.values = other_enum.values.clone();
+                                        }
+                                    }
+
+                                    if !remove_enum_names.contains(&full_name) {
+                                        remove_enum_names.push(full_name);
+                                    }
+                                }
+
+                                cpp::ClassMember::Field(field) => {
+                                    if field.type_name.contains("::<unnamed") {
+                                        let parts = field.type_name.split("::").collect::<Vec<_>>();
+
+                                        if !parts.is_empty() && parts.last().unwrap().starts_with("<unnamed") {
+                                            let full_name = field.type_name.clone();
+
+                                            let found = module_members.iter().enumerate().find(|(ii, m)| {
+                                                if i == *ii {
+                                                    return false;
+                                                }
+                                                let cpp::ModuleMember::Class(other_class) = m else {
+                                                    return false;
+                                                };
+                                                other_class.borrow().name == full_name
+                                            });
+
+                                            if let Some((_, found_member)) = found {
+                                                let cpp::ModuleMember::Class(other_class) = found_member else {
+                                                    unreachable!()
+                                                };
+
+                                                fix_class(module_members, i, other_class.clone(), remove_class_names, remove_enum_names);
+
+                                                let mut other_class = other_class.borrow().clone();
+                                                other_class.name = String::new();
+                                                other_class.depth = class_data.borrow().depth + 1;
+                                                
+                                                field.type_name = other_class
+                                                    .to_string()
+                                                    .trim_start()
+                                                    .trim_end_matches(";")
+                                                    .to_string();
+                                            
+                                                field.display = format!("{} {}", field.type_name, field.name);
+
+                                                if !remove_class_names.contains(&full_name) {
+                                                    remove_class_names.push(full_name);
+                                                }
+                                            }
                                         }
                                     }
                                 }
+
+                                _ => {}
                             }
-
-                            cpp::ClassMember::Enum(nested_enum) if nested_enum.is_declaration => {
-                                let full_name = format!("{}::{}", class_name, nested_enum.name);
-                                
-                                let found = cloned_members.iter().enumerate().find(|(ii, m)| {
-                                    if i == *ii {
-                                        return false;
-                                    }
-
-                                    let cpp::ModuleMember::Enum(other_enum) = m else {
-                                        return false;
-                                    };
-
-                                    other_enum.name == full_name
-                                });
-
-                                if let Some((_, found_member)) = found {
-                                    let cpp::ModuleMember::Enum(other_enum) = found_member else {
-                                        unreachable!()
-                                    };
-
-                                    nested_enum.is_declaration = false;
-                                    nested_enum.underlying_type_name = other_enum.underlying_type_name.clone();
-                                    nested_enum.size = other_enum.size;
-                                    nested_enum.values = other_enum.values.clone();
-                                }
-                            }
-
-                            _ => {}
                         }
+                    
+                        class_data.borrow_mut().members = new_members;
                     }
+                
+                    fix_class(cloned_members.as_slice(), i, class_data.clone(), &mut remove_class_names, &mut remove_enum_names);
                 }
 
                 _ => {}
@@ -653,63 +727,59 @@ fn process_modules<'a>(
         // Remove nested types that ended up in toplevel and are now unreferenced
         //
 
-        let cloned_members = module.members.clone();
-        let mut remove_class_names = vec![];
-        let mut remove_enum_names = vec![];
-
-        for (i, member) in module.members.iter_mut().enumerate() {
-            match member {
-                cpp::ModuleMember::Class(class_data) => {
-                    let class_data = class_data.borrow();
+        // for (i, member) in module.members.iter_mut().enumerate() {
+        //     match member {
+        //         cpp::ModuleMember::Class(class_data) => {
+        //             let class_data = class_data.borrow();
                     
-                    if class_data.name.contains("::") {
-                        let parts = class_data.name.split("::").collect::<Vec<_>>();
-                        if !parts.is_empty()
-                            && cloned_members.iter().enumerate().any(|(ii, m)| {
-                                if i == ii {
-                                    return false;
-                                }
+        //             if class_data.name.contains("::") {
+        //                 let parts = class_data.name.split("::").collect::<Vec<_>>();
+        //                 if !parts.is_empty()
+        //                     && cloned_members.iter().enumerate().any(|(ii, m)| {
+        //                         if i == ii {
+        //                             return false;
+        //                         }
 
-                                let cpp::ModuleMember::Class(other_class) = m else {
-                                    return false;
-                                };
+        //                         let cpp::ModuleMember::Class(other_class) = m else {
+        //                             return false;
+        //                         };
 
-                                other_class.borrow().name == parts[0]
-                            })
-                        {
-                            if !remove_class_names.contains(&class_data.name) {
-                                remove_class_names.push(class_data.name.clone());
-                            }
-                        }
-                    }
-                }
+        //                         other_class.borrow().name == parts[0]
+        //                     })
+        //                 {
+        //                     if !remove_class_names.contains(&class_data.name) {
+        //                         remove_class_names.push(class_data.name.clone());
+        //                     }
+        //                 }
+        //             }
+        //         }
 
-                cpp::ModuleMember::Enum(enum_data) => {
-                    if enum_data.name.contains("::") {
-                        let parts = enum_data.name.split("::").collect::<Vec<_>>();
-                        if !parts.is_empty()
-                            && cloned_members.iter().enumerate().any(|(ii, m)| {
-                                if i == ii {
-                                    return false;
-                                }
+        //         cpp::ModuleMember::Enum(enum_data) => {
+        //             if enum_data.name.contains("::") {
+        //                 let parts = enum_data.name.split("::").collect::<Vec<_>>();
+        //                 if !parts.is_empty()
+        //                     && cloned_members.iter().enumerate().any(|(ii, m)| {
+        //                         if i == ii {
+        //                             return false;
+        //                         }
 
-                                let cpp::ModuleMember::Class(other_class) = m else {
-                                    return false;
-                                };
+        //                         let cpp::ModuleMember::Class(other_class) = m else {
+        //                             return false;
+        //                         };
                                 
-                                other_class.borrow().name == parts[0]
-                            })
-                        {
-                            if !remove_enum_names.contains(&enum_data.name) {
-                                remove_enum_names.push(enum_data.name.clone());
-                            }
-                        }
-                    }
-                }
+        //                         other_class.borrow().name == parts[0]
+        //                     })
+        //                 {
+        //                     if !remove_enum_names.contains(&enum_data.name) {
+        //                         remove_enum_names.push(enum_data.name.clone());
+        //                     }
+        //                 }
+        //             }
+        //         }
 
-                _ => {}
-            }
-        }
+        //         _ => {}
+        //     }
+        // }
 
         for class_name in remove_class_names.into_iter().rev() {
             for i in (0..module.members.len()).rev() {
@@ -1285,6 +1355,7 @@ fn process_module_symbol_data(
                     type_info,
                     type_finder,
                     udt_symbol.type_index,
+                    None,
                     Some(udt_symbol.name.to_string().to_string()),
                     None,
                     false
@@ -1305,12 +1376,13 @@ fn process_module_symbol_data(
                 type_info,
                 type_finder,
                 constant_symbol.type_index,
+                None,
                 Some(constant_symbol.name.to_string().to_string()),
                 None,
                 false,
             )?;
 
-            if type_name.starts_with("const float ") {
+            if type_name.starts_with("float const ") {
                 // println!("WARNING: failed to decompile constant float in \"{}\": {symbol_data:#?}", module_file_path.to_string_lossy());
                 return Ok(());
             }
@@ -1381,6 +1453,7 @@ fn process_module_symbol_data(
                         type_info,
                         type_finder,
                         data_symbol.type_index,
+                        None,
                         Some(data_symbol.name.to_string().to_string()),
                         None,
                         false
@@ -1439,6 +1512,7 @@ fn process_module_symbol_data(
                         type_info,
                         type_finder,
                         thread_storage_symbol.type_index,
+                        None,
                         Some(thread_storage_symbol.name.to_string().to_string()),
                         None,
                         false
@@ -1661,6 +1735,7 @@ fn process_module_symbol_data(
                 type_info,
                 type_finder,
                 procedure_symbol.type_index,
+                None,
                 Some(procedure_symbol.name.to_string().to_string()),
                 Some(parameters),
                 false,
@@ -1942,6 +2017,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         type_info,
                         type_finder,
                         register_variable_symbol.type_index,
+                        None,
                         Some(register_variable_symbol.name.to_string().to_string()),
                         None,
                         false,
@@ -1960,6 +2036,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         type_info,
                         type_finder,
                         register_relative_symbol.type_index,
+                        None,
                         Some(register_relative_symbol.name.to_string().to_string()),
                         None,
                         false,
@@ -2020,6 +2097,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         type_info,
                         type_finder,
                         constant_symbol.type_index,
+                        None,
                         Some(constant_symbol.name.to_string().to_string()),
                         None,
                         false,
@@ -2048,6 +2126,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         type_info,
                         type_finder,
                         data_symbol.type_index,
+                        None,
                         Some(data_symbol.name.to_string().to_string()),
                         None,
                         false,
@@ -2066,6 +2145,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         type_info,
                         type_finder,
                         local_symbol.type_index,
+                        None,
                         Some(local_symbol.name.to_string().to_string()),
                         None,
                         false,
@@ -2101,6 +2181,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                             type_info,
                             type_finder,
                             tls_symbol.type_index,
+                            None,
                             Some(tls_symbol.name.to_string().to_string()),
                             None,
                             false,

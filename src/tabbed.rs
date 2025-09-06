@@ -11,10 +11,10 @@ impl<T: Display> TabbedDisplay for T {
     }
 }
 
-pub struct TabbedDisplayer<'a, T: TabbedDisplay>(pub &'a T);
+pub struct TabbedDisplayer<'a, T: TabbedDisplay>(pub usize, pub &'a T);
 
 impl<T: TabbedDisplay> Display for TabbedDisplayer<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.tabbed_fmt(0, f)
+        self.1.tabbed_fmt(self.0, f)
     }
 }

@@ -33,6 +33,7 @@ impl fmt::Display for ClassMember {
 pub struct Field {
     pub type_name: String,
     pub name: String,
+    pub display: String,
     pub offset: u64,
     pub size: usize,
     pub bitfield_info: Option<(u8, u8)>,
@@ -49,7 +50,7 @@ impl fmt::Display for Field {
             write!(f, "virtual ")?;
         }
 
-        write!(f, "{}", self.type_name)?;
+        write!(f, "{}", self.display)?;
 
         if let Some((_, bitfield_length)) = self.bitfield_info.as_ref() {
             write!(f, " : {}", bitfield_length)?;
@@ -506,11 +507,22 @@ impl Class {
                         type_info,
                         type_finder,
                         data.field_type,
-                        Some(data.name.to_string().to_string()),
+                        None,
+                        None,
                         None,
                         true,
                     )?,
                     name: data.name.to_string().to_string(),
+                    display: type_name(class_table, type_sizes, 
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        data.field_type,
+                        None,
+                        Some(data.name.to_string().to_string()),
+                        None,
+                        true,
+                    )?,
                     offset: data.offset,
                     size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
                     bitfield_info,
@@ -532,12 +544,26 @@ impl Class {
                             type_info,
                             type_finder,
                             data.field_type,
-                            Some(data.name.to_string().to_string()),
+                            None,
+                            None,
                             None,
                             true,
                         )?
                     ),
                     name: data.name.to_string().to_string(),
+                    display: format!(
+                        "static {}",
+                        type_name(class_table, type_sizes, 
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            data.field_type,
+                            None,
+                            Some(data.name.to_string().to_string()),
+                            None,
+                            true,
+                        )?
+                    ),
                     offset: std::u64::MAX,
                     size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
                     bitfield_info,
@@ -555,7 +581,7 @@ impl Class {
                             2 => "public ",
                             _ => ""
                         },
-                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, true)?
+                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, true)?
                     ),
                     offset: data.offset,
                     index: data.base_class
@@ -572,7 +598,7 @@ impl Class {
                             2 => "public ",
                             _ => ""
                         },
-                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, true)?
+                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, true)?
                     ),
                     offset: data.base_pointer_offset,
                     index: data.base_class
@@ -590,7 +616,7 @@ impl Class {
                         Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
                             name: data.name.to_string().to_string(),
                             type_index: data.method_type,
-                            return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
+                            return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, None, true)?,
                             arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, function_data.argument_list, None)?,
                             field_attributes: Some(data.attributes),
                             function_attributes: function_data.attributes,
@@ -621,7 +647,7 @@ impl Class {
                                         Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
                                             name: data.name.to_string().to_string(),
                                             type_index: method_type,
-                                            return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
+                                            return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, None, true)?,
                                             arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, function_data.argument_list, None)?,
                                             field_attributes: Some(attributes),
                                             function_attributes: function_data.attributes,
@@ -726,7 +752,7 @@ impl Class {
                             index: nested_data.nested_type,
                             depth: self.depth + 1,
                             line: 0,
-                            underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, true)?,
+                            underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, None, true)?,
                             size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?,
                             is_declaration: false,
                             values: vec![],
@@ -757,7 +783,7 @@ impl Class {
                     }
         
                     pdb2::TypeData::Pointer(data) => {
-                        let type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, Some(nested_data.name.to_string().to_string()), None, true)?;
+                        let type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, Some(nested_data.name.to_string().to_string()), None, true)?;
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
                             type_name,
@@ -769,17 +795,26 @@ impl Class {
                     }
 
                     pdb2::TypeData::Modifier(data) => {
-                        let mut type_name = String::new();
+                        let mut type_name = self::type_name(
+                            class_table,
+                            type_sizes,
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            data.underlying_type,
+                            Some(data),
+                            Some(nested_data.name.to_string().to_string()),
+                            None,
+                            true,
+                        )?;
 
                         if data.constant {
-                            type_name.push_str("const ");
+                            type_name.push_str("const");
                         }
 
                         if data.volatile {
                             type_name.push_str("volatile ");
                         }
-
-                        type_name.push_str(self::type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, Some(nested_data.name.to_string().to_string()), None, true)?.as_str());
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
                             type_name,
@@ -811,7 +846,7 @@ impl Class {
                     }
 
                     pdb2::TypeData::Array(data) => {
-                        let mut type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, Some(nested_data.name.to_string().to_string()), None, true)?;
+                        let mut type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, None, Some(nested_data.name.to_string().to_string()), None, true)?;
                         let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             
                         if element_size == 0 {
@@ -886,6 +921,7 @@ impl Class {
                             type_info,
                             type_finder,
                             nested_data.nested_type,
+                            None,
                             Some(nested_data.name.to_string().to_string()),
                             None,
                             true,
