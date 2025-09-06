@@ -70,7 +70,7 @@ impl fmt::Display for Enum {
 
         if self.underlying_type_name != "int"
             && self.underlying_type_name != "long"
-            && self.underlying_type_name != "int32_t"
+            && self.underlying_type_name != "__int32"
         {
             write!(f, " : {}", self.underlying_type_name)?;
         }
