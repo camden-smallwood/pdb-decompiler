@@ -139,7 +139,17 @@ impl fmt::Display for Enum {
 
                     pdb2::Variant::U32(v) => {
                         if self.size > 4 {
-                            if v < u32::MAX {
+                            if v > 0xFFFFFF {
+                                let d = ((v >> 0) & 0xFF) as u8 as char;
+                                let c = ((v >> 8) & 0xFF) as u8 as char;
+                                let b = ((v >> 16) & 0xFF) as u8 as char;
+                                let a = ((v >> 24) & 0xFF) as u8 as char;
+                                if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
+                                    format!("'{a}{b}{c}{d}'")
+                                } else {
+                                    format!("{}", v)
+                                }
+                            } else if v < u32::MAX {
                                 format!("{v}")
                             } else if v == u32::MAX {
                                 format!("0x{:X}", match self.size {
@@ -155,7 +165,7 @@ impl fmt::Display for Enum {
                             let c = ((v >> 8) & 0xFF) as u8 as char;
                             let b = ((v >> 16) & 0xFF) as u8 as char;
                             let a = ((v >> 24) & 0xFF) as u8 as char;
-                            if [a, b, c, d].iter().all(|c| *c != '\0' && c.is_ascii()) {
+                            if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
                                 format!("'{a}{b}{c}{d}'")
                             } else {
                                 format!("{}", v)
@@ -167,7 +177,17 @@ impl fmt::Display for Enum {
 
                     pdb2::Variant::U64(v) => {
                         if self.size > 8 {
-                            if v < u64::MAX {
+                            if v > 0xFFFFFF && v < 0x100000000 {
+                                let d = ((v >> 0) & 0xFF) as u8 as char;
+                                let c = ((v >> 8) & 0xFF) as u8 as char;
+                                let b = ((v >> 16) & 0xFF) as u8 as char;
+                                let a = ((v >> 24) & 0xFF) as u8 as char;
+                                if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
+                                    format!("'{a}{b}{c}{d}'")
+                                } else {
+                                    format!("{}", v)
+                                }
+                            } else if v < u64::MAX {
                                 format!("{v}")
                             } else if v == u64::MAX {
                                 format!("0x{:X}", match self.size {
@@ -176,6 +196,16 @@ impl fmt::Display for Enum {
                                 })
                             } else {
                                 todo!("{value:#?}")
+                            }
+                        } else if v > 0xFFFFFF && v < 0x100000000 {
+                            let d = ((v >> 0) & 0xFF) as u8 as char;
+                            let c = ((v >> 8) & 0xFF) as u8 as char;
+                            let b = ((v >> 16) & 0xFF) as u8 as char;
+                            let a = ((v >> 24) & 0xFF) as u8 as char;
+                            if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
+                                format!("'{a}{b}{c}{d}'")
+                            } else {
+                                format!("{}", v)
                             }
                         } else {
                             format!("{}", v)
@@ -202,10 +232,16 @@ impl fmt::Display for Enum {
 
                     pdb2::Variant::I32(v) => {
                         if self.size > 4 {
-                            if v == 0 {
-                                format!("0")
-                            } else if v > i32::MIN && v < i32::MAX {
-                                format!("{}", v)
+                            if v > 0xFFFFFF {
+                                let d = ((v >> 0) & 0xFF) as u8 as char;
+                                let c = ((v >> 8) & 0xFF) as u8 as char;
+                                let b = ((v >> 16) & 0xFF) as u8 as char;
+                                let a = ((v >> 24) & 0xFF) as u8 as char;
+                                if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
+                                    format!("'{a}{b}{c}{d}'")
+                                } else {
+                                    format!("{}", v)
+                                }
                             } else {
                                 todo!("{value:#?}")
                             }
@@ -214,7 +250,7 @@ impl fmt::Display for Enum {
                             let c = ((v >> 8) & 0xFF) as u8 as char;
                             let b = ((v >> 16) & 0xFF) as u8 as char;
                             let a = ((v >> 24) & 0xFF) as u8 as char;
-                            if [a, b, c, d].iter().all(|c| *c != '\0' && c.is_ascii()) {
+                            if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
                                 format!("'{a}{b}{c}{d}'")
                             } else {
                                 format!("{}", v)

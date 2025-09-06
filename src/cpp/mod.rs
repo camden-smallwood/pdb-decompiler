@@ -307,7 +307,7 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::MemberFunction(data) => {
-            let name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
+            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
                 if let Some(field_name) = declaration_name.as_ref() {
                     field_name.clone()
                 } else {
@@ -343,7 +343,19 @@ pub fn type_name<'p>(
                 parameter_names.remove(0);
             }
 
-            format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, data.argument_list, parameter_names)?.join(", "))
+            name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, data.argument_list, parameter_names)?.join(", "));
+
+            if let Some(modifier) = type_modifier(data, type_finder) {
+                if modifier.constant {
+                    name.push_str(" const");
+                }
+
+                if modifier.volatile {
+                    name.push_str(" volatile");
+                }
+            }
+
+            name
         }
 
         pdb2::TypeData::MethodList(_) => {
@@ -599,4 +611,92 @@ pub fn type_size<'p>(
             type_index, type_data
         )
     }
+}
+
+pub fn type_modifier<'p>(
+    member_func_type: &pdb2::MemberFunctionType,
+    type_finder: &pdb2::TypeFinder<'p>,
+) -> Option<pdb2::ModifierType> {
+    if let Some(this_pointer_type) = member_func_type.this_pointer_type {
+        match type_finder.find(this_pointer_type).ok()?.parse().ok()? {
+            pdb2::TypeData::Pointer(data) => {
+                match type_finder.find(data.underlying_type).ok()?.parse().ok()? {
+                    pdb2::TypeData::Modifier(data) => Some(data),
+                    _ => {
+                        // no modifier on this_pointer_type
+                        None
+                    }
+                }
+            }
+            _ => {
+                // this_pointer_type is not a pointer
+                None
+            }
+        }
+    } else {
+        // no this pointer
+        None
+    }
+}
+
+pub fn parse_type_name(name: &str, keep_template: bool) -> (String, usize) {
+    let mut result = String::new();
+    let mut depth = 0;
+    let mut first = true;
+    let mut offset = 0;
+
+    for (i, c) in name.chars().enumerate() {
+        offset = i;
+
+        match c {
+            '<' => {
+                depth += 1;
+                first = false;
+                if keep_template {
+                    result.push(c);
+                }
+                continue;
+            }
+
+            '>' => {
+                if depth == 0 {
+                    result.push(c);
+                    continue;
+                }
+
+                depth -= 1;
+                
+                if depth == 0 && !first {
+                    if keep_template {
+                        result.push(c);
+                    }
+                    break;
+                }
+            }
+
+            _ => {}
+        }
+
+        if depth == 0 || keep_template {
+            result.push(c);
+        }
+    }
+
+    if keep_template {
+        depth = 0;
+    }
+
+    if depth != 0 {
+        let chunk = name.chars().rev().take_while(|c| *c == '<').collect::<String>();
+        assert!(!chunk.is_empty());
+        result.extend(chunk.chars());
+        depth = 0;
+    }
+
+    assert!(depth == 0);
+
+    // HACK: these are only on the function implementation for some reason
+    result = result.replace(" __ptr64", "");
+
+    (result, offset + 1)
 }

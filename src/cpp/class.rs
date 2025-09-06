@@ -72,14 +72,15 @@ pub struct Method {
     pub return_type_name: String,
     pub arguments: Vec<String>,
     pub field_attributes: Option<pdb2::FieldAttributes>,
-    pub function_attributes: pdb2::FunctionAttributes
+    pub function_attributes: pdb2::FunctionAttributes,
+    pub modifier: Option<pdb2::ModifierType>,
 }
 
 impl fmt::Display for Method {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}{}{}({}){};",
+            "{}{}{}({}){}{};",
 
             match self.field_attributes {
                 Some(field_attributes) => if field_attributes.is_virtual() {
@@ -102,6 +103,24 @@ impl fmt::Display for Method {
             self.name,
 
             self.arguments.join(", "),
+
+            match self.modifier {
+                Some(modifier) => {
+                    let mut modifier_string = String::new();
+
+                    if modifier.constant {
+                        modifier_string.push_str(" const");
+                    }
+
+                    if modifier.volatile {
+                        modifier_string.push_str(" volatile");
+                    }
+
+                    modifier_string
+                }
+
+                None => String::new()
+            },
 
             match self.field_attributes {
                 Some(field_attributes) => if field_attributes.is_pure_virtual() {
@@ -574,7 +593,8 @@ impl Class {
                             return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
                             arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, function_data.argument_list, None)?,
                             field_attributes: Some(data.attributes),
-                            function_attributes: function_data.attributes
+                            function_attributes: function_data.attributes,
+                            modifier: None,
                         },
             
                         Ok(data) => panic!("Unhandled member function type data in Class::add_member - {:#?}", data),
@@ -604,7 +624,8 @@ impl Class {
                                             return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, true)?,
                                             arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, function_data.argument_list, None)?,
                                             field_attributes: Some(attributes),
-                                            function_attributes: function_data.attributes
+                                            function_attributes: function_data.attributes,
+                                            modifier: None,
                                         },
                             
                                         Ok(data) => panic!("Unhandled member function type data in Class::add_member - {:#?}", data),
@@ -1037,7 +1058,7 @@ impl fmt::Display for Class {
                 write!(f, "    ")?;
             }
 
-            write!(f, "static_assert(sizeof({}) == {}, \"Invalid {} size\")", self.name, self.size, self.name)?;
+            write!(f, "static_assert(sizeof({}) == {}, \"Invalid {} size\");", self.name, self.size, self.name)?;
         } else {
             write!(f, "}};")?;
         }

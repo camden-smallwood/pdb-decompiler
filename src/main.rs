@@ -1323,71 +1323,9 @@ fn process_module_symbol_data(
             let procedure_type = type_finder.find(procedure_symbol.type_index)?.parse()?;
             
             if let pdb2::TypeData::MemberFunction(member_function) = procedure_type {
-                fn parse_type_name(name: &str, keep_template: bool) -> (String, usize) {
-                    let mut result = String::new();
-                    let mut depth = 0;
-                    let mut first = true;
-                    let mut offset = 0;
-
-                    for (i, c) in name.chars().enumerate() {
-                        offset = i;
-
-                        match c {
-                            '<' => {
-                                depth += 1;
-                                first = false;
-                                if keep_template {
-                                    result.push(c);
-                                }
-                                continue;
-                            }
-
-                            '>' => {
-                                if depth == 0 {
-                                    result.push(c);
-                                    continue;
-                                }
-
-                                depth -= 1;
-                                
-                                if depth == 0 && !first {
-                                    if keep_template {
-                                        result.push(c);
-                                    }
-                                    break;
-                                }
-                            }
-
-                            _ => {}
-                        }
-
-                        if depth == 0 || keep_template {
-                            result.push(c);
-                        }
-                    }
-
-                    if keep_template {
-                        depth = 0;
-                    }
-
-                    if depth != 0 {
-                        let chunk = name.chars().rev().take_while(|c| *c == '<').collect::<String>();
-                        assert!(!chunk.is_empty());
-                        result.extend(chunk.chars());
-                        depth = 0;
-                    }
-
-                    assert!(depth == 0);
-
-                    // HACK: these are only on the function implementation for some reason
-                    result = result.replace(" __ptr64", "");
-
-                    (result, offset + 1)
-                }
-
                 let procedure_name_full = procedure_symbol.name.to_string().to_string();
-                let (mut procedure_class_name, end_offset) = parse_type_name(&procedure_name_full, true);
-                let (mut procedure_name, _end_offset) = parse_type_name(&procedure_name_full[end_offset..], true);
+                let (mut procedure_class_name, end_offset) = cpp::parse_type_name(&procedure_name_full, true);
+                let (mut procedure_name, _end_offset) = cpp::parse_type_name(&procedure_name_full[end_offset..], true);
 
                 if procedure_name.is_empty() && procedure_class_name.contains("::") {
                     let mut parts = procedure_class_name.split("::").map(|s| s.to_string()).collect::<Vec<_>>();
@@ -1456,6 +1394,8 @@ fn process_module_symbol_data(
                                     member_function.argument_list,
                                     Some(parameters.clone()),
                                 )?;
+
+                                class_method.modifier = cpp::type_modifier(&class_member_function, type_finder);
 
                                 // found = true;
                                 break;
@@ -1546,7 +1486,9 @@ fn process_module_symbol_data(
                 return Ok(());
             }
 
-            let procedure = cpp::type_name(class_table, type_sizes, 
+            let procedure = cpp::type_name(
+                class_table,
+                type_sizes, 
                 machine_type,
                 type_info,
                 type_finder,
