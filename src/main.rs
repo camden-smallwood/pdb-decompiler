@@ -556,6 +556,39 @@ fn process_modules<'a>(
     // Write modules to file
     //
 
+    fn find_enum_or_flags_typedef<'a>(
+        options: &Options,
+        class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
+        type_sizes: &mut HashMap<String, u64>,
+        machine_type: pdb2::MachineType,
+        base_address: Option<u64>,
+        pdb: &mut pdb2::PDB<File>,
+        address_map: &pdb2::AddressMap,
+        string_table: Option<&pdb2::StringTable>,
+        debug_info: &pdb2::DebugInformation,
+        global_symbols: &'a pdb2::SymbolTable,
+        id_finder: &mut pdb2::IdFinder,
+        type_info: &pdb2::TypeInformation,
+        type_finder: &pdb2::TypeFinder,
+        modules: &mut HashMap<String, cpp::Module>,
+        enum_name: &str,
+    ) -> Option<cpp::TypeDefinition> {
+        for module in modules.values() {
+            for member in module.members.iter() {
+                let cpp::ModuleMember::TypeDefinition(type_definition) = member else {
+                    continue;
+                };
+                
+                if type_definition.type_name.starts_with("c_enum<enum ") {
+                    println!("Found \"{}\"", type_definition);
+                    return Some(type_definition.clone());
+                }
+            }
+        }
+
+        None
+    }
+
     for mut module in modules.values().cloned() {
         let path = PathBuf::from(sanitize_path(format!(
             "{}/{}",
@@ -726,60 +759,6 @@ fn process_modules<'a>(
         //
         // Remove nested types that ended up in toplevel and are now unreferenced
         //
-
-        // for (i, member) in module.members.iter_mut().enumerate() {
-        //     match member {
-        //         cpp::ModuleMember::Class(class_data) => {
-        //             let class_data = class_data.borrow();
-                    
-        //             if class_data.name.contains("::") {
-        //                 let parts = class_data.name.split("::").collect::<Vec<_>>();
-        //                 if !parts.is_empty()
-        //                     && cloned_members.iter().enumerate().any(|(ii, m)| {
-        //                         if i == ii {
-        //                             return false;
-        //                         }
-
-        //                         let cpp::ModuleMember::Class(other_class) = m else {
-        //                             return false;
-        //                         };
-
-        //                         other_class.borrow().name == parts[0]
-        //                     })
-        //                 {
-        //                     if !remove_class_names.contains(&class_data.name) {
-        //                         remove_class_names.push(class_data.name.clone());
-        //                     }
-        //                 }
-        //             }
-        //         }
-
-        //         cpp::ModuleMember::Enum(enum_data) => {
-        //             if enum_data.name.contains("::") {
-        //                 let parts = enum_data.name.split("::").collect::<Vec<_>>();
-        //                 if !parts.is_empty()
-        //                     && cloned_members.iter().enumerate().any(|(ii, m)| {
-        //                         if i == ii {
-        //                             return false;
-        //                         }
-
-        //                         let cpp::ModuleMember::Class(other_class) = m else {
-        //                             return false;
-        //                         };
-                                
-        //                         other_class.borrow().name == parts[0]
-        //                     })
-        //                 {
-        //                     if !remove_enum_names.contains(&enum_data.name) {
-        //                         remove_enum_names.push(enum_data.name.clone());
-        //                     }
-        //                 }
-        //             }
-        //         }
-
-        //         _ => {}
-        //     }
-        // }
 
         for class_name in remove_class_names.into_iter().rev() {
             for i in (0..module.members.len()).rev() {
@@ -1063,7 +1042,6 @@ fn process_modules<'a>(
                 }
                 
                 new_public_code_members.push(member.clone());
-
             }
 
             if !new_public_code_members.is_empty() {
@@ -1072,8 +1050,12 @@ fn process_modules<'a>(
             }
 
             // private functions
-            for member in private_code_members.iter_mut() {
+            let mut new_private_code_members = vec![];
+
+            for member in private_code_members.iter() {
                 if let cpp::ModuleMember::Procedure(procedure) = member {
+                    let mut procedure = procedure.clone();
+
                     if procedure.body.is_none() {
                         procedure.body = Some(cpp::Block::default());
                     }
@@ -1097,12 +1079,91 @@ fn process_modules<'a>(
                             ),
                         );
                     }
+
+                    let return_type_str = procedure.return_type.map(|return_type| {
+                        cpp::type_name(
+                            class_table,
+                            type_sizes,
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            return_type,
+                            None,
+                            None,
+                            None,
+                            false,
+                            true,
+                        )
+                        .unwrap()
+                    });
+
+                    if return_type_str
+                        .map(|s| matches!(s.as_str(), "void" | "void const"))
+                        .unwrap_or(true)
+                    {
+                        procedure.body.as_mut().unwrap().statements.push(
+                            cpp::Statement::FunctionCall(
+                                format!("_sub_{:X}", procedure.address).into(),
+                                procedure
+                                    .arguments
+                                    .iter()
+                                    .map(|a| a.1.clone().unwrap_or("arg".into()))
+                                    .collect(),
+                            ),
+                        );
+                    } else {
+                        procedure.body.as_mut().unwrap().statements.push(
+                            cpp::Statement::ReturnWithValue(cpp::Return {
+                                value: Some(Box::new(cpp::Statement::FunctionCall(
+                                    format!("_sub_{:X}", procedure.address).into(),
+                                    procedure
+                                        .arguments
+                                        .iter()
+                                        .map(|a| a.1.clone().unwrap_or("arg".into()))
+                                        .collect(),
+                                ))),
+                            }),
+                        );
+                    }
+
+                    new_private_code_members.push(cpp::ModuleMember::ExternC(Box::new(
+                        cpp::ModuleMember::Procedure(cpp::Procedure {
+                            address: 0,
+                            line: procedure.line,
+                            type_index: procedure.type_index,
+                            is_static: procedure.is_static,
+                            signature: cpp::type_name(
+                                class_table,
+                                type_sizes,
+                                machine_type,
+                                type_info,
+                                type_finder,
+                                procedure.type_index,
+                                None,
+                                Some(format!("_sub_{:X}", procedure.address).into()),
+                                None,
+                                false,
+                                true,
+                            )?
+                            .trim_end_matches(" const")
+                            .trim_end_matches(" volatile")
+                            .into(),
+                            body: None,
+                            return_type: procedure.return_type,
+                            arguments: vec![],
+                        }),
+                    )));
+
+                    new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
+                    continue;
                 }
+            
+                new_private_code_members.push(member.clone());
             }
             
-            if !private_code_members.is_empty() {
+            if !new_private_code_members.is_empty() {
                 new_members.push(cpp::ModuleMember::Comment("---------- private code".into()));
-                new_members.extend(private_code_members);
+                new_members.extend(new_private_code_members);
             }
 
             module.members = new_members;
@@ -1468,9 +1529,8 @@ fn process_module_symbol_data(
             let module_key = module_file_path.to_string_lossy().to_lowercase().to_string();
             let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_file_path.clone()));
 
-            let user_defined_type = cpp::ModuleMember::UserDefinedType(format!(
-                "typedef {};",
-                cpp::type_name(class_table, type_sizes, 
+            let user_defined_type = cpp::ModuleMember::TypeDefinition(cpp::TypeDefinition {
+                type_name: cpp::type_name(class_table, type_sizes, 
                     machine_type,
                     type_info,
                     type_finder,
@@ -1480,8 +1540,12 @@ fn process_module_symbol_data(
                     None,
                     false,
                     false
-                )?
-            ));
+                )?,
+                underlying_type: udt_symbol.type_index,
+                field_attributes: None,
+                pointer_attributes: None,
+                containing_class: None,
+            });
 
             if !module.members.contains(&user_defined_type) {
                 module.members.push(user_defined_type);

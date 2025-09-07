@@ -18,7 +18,7 @@ pub enum ModuleMember {
     Comment(String),
     Class(Rc<RefCell<cpp::Class>>),
     Enum(cpp::Enum),
-    UserDefinedType(String),
+    TypeDefinition(cpp::TypeDefinition),
     UsingNamespace(String),
     Constant(String),
     Data(String, u64, Option<u32>),
@@ -34,7 +34,7 @@ impl fmt::Display for ModuleMember {
             Self::Comment(c) => write!(f, "/* {c} */"),
             Self::Class(c) => c.borrow().fmt(f),
             Self::Enum(e) => e.fmt(f),
-            Self::UserDefinedType(u) => u.fmt(f),
+            Self::TypeDefinition(u) => u.fmt(f),
             Self::UsingNamespace(n) => f.write_fmt(format_args!("using namespace {n};")),
             Self::Constant(c) => c.fmt(f),
             Self::Data(d, _, _) => d.fmt(f),
@@ -1670,8 +1670,8 @@ impl fmt::Display for Module {
                         Some(ModuleMember::Procedure(cpp::Procedure { body: None, .. }) | ModuleMember::ExternC(_)),
                         ModuleMember::Procedure(cpp::Procedure { body: None, .. }) | ModuleMember::ExternC(_)
                     ) | (
-                        Some(ModuleMember::UserDefinedType(_)),
-                        ModuleMember::UserDefinedType(_)
+                        Some(ModuleMember::TypeDefinition(_)),
+                        ModuleMember::TypeDefinition(_)
                     ) | (
                         Some(
                             ModuleMember::Constant(_)
