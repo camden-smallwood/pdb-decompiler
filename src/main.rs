@@ -978,11 +978,9 @@ fn process_modules<'a>(
                             true,
                         )
                         .unwrap()
-                    });
+                    }).unwrap_or("void".to_string());
 
-                    if return_type_str
-                        .map(|s| matches!(s.as_str(), "void" | "void const"))
-                        .unwrap_or(true)
+                    if matches!(return_type_str.as_str(), "void" | "void const")
                     {
                         procedure.body.as_mut().unwrap().statements.push(
                             cpp::Statement::FunctionCall(
@@ -996,7 +994,8 @@ fn process_modules<'a>(
                         );
                     } else {
                         procedure.body.as_mut().unwrap().statements.push(
-                            cpp::Statement::ReturnWithValue(cpp::Return {
+                            cpp::Statement::ReturnWithValue(cpp::ReturnWithValue {
+                                signature: return_type_str,
                                 value: Some(Box::new(cpp::Statement::FunctionCall(
                                     format!("_sub_{:X}", procedure.address).into(),
                                     procedure
@@ -1095,11 +1094,9 @@ fn process_modules<'a>(
                             true,
                         )
                         .unwrap()
-                    });
+                    }).unwrap_or("void".to_string());
 
-                    if return_type_str
-                        .map(|s| matches!(s.as_str(), "void" | "void const"))
-                        .unwrap_or(true)
+                    if matches!(return_type_str.as_str(), "void" | "void const")
                     {
                         procedure.body.as_mut().unwrap().statements.push(
                             cpp::Statement::FunctionCall(
@@ -1113,7 +1110,8 @@ fn process_modules<'a>(
                         );
                     } else {
                         procedure.body.as_mut().unwrap().statements.push(
-                            cpp::Statement::ReturnWithValue(cpp::Return {
+                            cpp::Statement::ReturnWithValue(cpp::ReturnWithValue {
+                                signature: return_type_str,
                                 value: Some(Box::new(cpp::Statement::FunctionCall(
                                     format!("_sub_{:X}", procedure.address).into(),
                                     procedure
