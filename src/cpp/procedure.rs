@@ -52,18 +52,23 @@ impl TabbedDisplay for Statement {
 
             Statement::Return(x) => {
                 write!(f, "return")?;
+                
                 if let Some(value) = x.value.as_ref() {
                     write!(f, " ")?;
                     value.tabbed_fmt(depth, f)?;
+                } else {
+                    write!(f, ";")?;
                 }
-                write!(f, ";")?;
             }
 
             Statement::ReturnWithValue(x) => {
                 if let Some(value) = x.value.as_ref() {
                     write!(f, "auto __result = ")?;
                     value.tabbed_fmt(depth, f)?;
-                    writeln!(f, ";")?;
+                    if !TabbedDisplayer(0, value.as_ref()).to_string().ends_with(';') {
+                        write!(f, ";")?;
+                    }
+                    writeln!(f)?;
                     "".tabbed_fmt(depth, f)?;
                     write!(f, "return __result;")?;
                 }

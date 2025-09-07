@@ -5,7 +5,7 @@ mod procedure;
 mod type_names;
 mod typedef;
 
-use std::{cell::RefCell, collections::HashMap, ops::Not, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 pub use self::{
     class::*, r#enum::*, module::*, procedure::*, type_names::*, typedef::*
@@ -35,6 +35,7 @@ pub fn argument_list<'p>(
 
                 args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, true, false)?);
             }
+
             for (i, &arg_type) in data.arguments.iter().enumerate() {
                 let arg_name = match names.as_ref() {
                     Some(names) if i < names.len() => Some(names[i].clone()),
@@ -67,6 +68,7 @@ pub fn argument_type_list<'p>(
 
                 args.push((this_pointer_type, Some(this_name)));
             }
+
             for (i, &arg_type) in data.arguments.iter().enumerate() {
                 let arg_name = match names.as_ref() {
                     Some(names) if i < names.len() => Some(names[i].clone()),

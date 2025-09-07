@@ -7,8 +7,6 @@ use std::{
 };
 use structopt::StructOpt;
 
-use crate::cpp::Statement;
-
 #[derive(Clone, Debug, StructOpt)]
 #[structopt(name = "pdb-decompiler", about = "A tool to decompile MSVC PDB files to C++ source code.")]
 struct Options {
@@ -898,7 +896,7 @@ fn process_modules<'a>(
                 _ => false,
             }).cloned().collect::<Vec<_>>();
 
-            let mut public_code_members = members.iter().filter(|m| match m {
+            let public_code_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Procedure(procedure) => {
                     !procedure.is_static
                         && !procedure.signature.contains("`")
@@ -986,29 +984,79 @@ fn process_modules<'a>(
                         );
                     }
 
-                    let return_type_str = procedure.return_type.map(|return_type| cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, return_type, None, None, None, false, true).unwrap());
-                    if return_type_str.map(|s| matches!(s.as_str(), "void"|"void const")).unwrap_or(true) {
-                        procedure.body.as_mut().unwrap().statements.push(cpp::Statement::FunctionCall(
+                    let return_type_str = procedure.return_type.map(|return_type| {
+                        cpp::type_name(
+                            class_table,
+                            type_sizes,
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            return_type,
+                            None,
+                            None,
+                            None,
+                            false,
+                            true,
+                        )
+                        .unwrap()
+                    });
+
+                    if return_type_str
+                        .map(|s| matches!(s.as_str(), "void" | "void const"))
+                        .unwrap_or(true)
+                    {
+                        procedure.body.as_mut().unwrap().statements.push(
+                            cpp::Statement::FunctionCall(
                                 format!("_sub_{:X}", procedure.address).into(),
-                                procedure.arguments.iter().map(|a| a.1.clone().unwrap_or("arg".into())).collect(),
-                            ));
-                    }
-                    else {
-                        procedure.body.as_mut().unwrap().statements.push(cpp::Statement::ReturnWithValue(cpp::Return{ value : Some(Box::new(cpp::Statement::FunctionCall(
-                                format!("_sub_{:X}", procedure.address).into(),
-                                procedure.arguments.iter().map(|a| a.1.clone().unwrap_or("arg".into())).collect(),
-                        )))}));
+                                procedure
+                                    .arguments
+                                    .iter()
+                                    .map(|a| a.1.clone().unwrap_or("arg".into()))
+                                    .collect(),
+                            ),
+                        );
+                    } else {
+                        procedure.body.as_mut().unwrap().statements.push(
+                            cpp::Statement::ReturnWithValue(cpp::Return {
+                                value: Some(Box::new(cpp::Statement::FunctionCall(
+                                    format!("_sub_{:X}", procedure.address).into(),
+                                    procedure
+                                        .arguments
+                                        .iter()
+                                        .map(|a| a.1.clone().unwrap_or("arg".into()))
+                                        .collect(),
+                                ))),
+                            }),
+                        );
                     }
 
-                    new_public_code_members.push(cpp::ModuleMember::ExternC(Box::new(cpp::ModuleMember::Procedure(cpp::Procedure{
-                         address: 0, 
-                         line: procedure.line, 
-                         type_index: procedure.type_index, 
-                         is_static: procedure.is_static, 
-                         signature: cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, procedure.type_index, None, Some(format!("_sub_{:X}", procedure.address).into()), None, false, true)?.trim_end_matches(" const").trim_end_matches(" volatile").into(),
-                         body: None, 
-                         return_type: procedure.return_type,
-                         arguments: vec![] }))));
+                    new_public_code_members.push(cpp::ModuleMember::ExternC(Box::new(
+                        cpp::ModuleMember::Procedure(cpp::Procedure {
+                            address: 0,
+                            line: procedure.line,
+                            type_index: procedure.type_index,
+                            is_static: procedure.is_static,
+                            signature: cpp::type_name(
+                                class_table,
+                                type_sizes,
+                                machine_type,
+                                type_info,
+                                type_finder,
+                                procedure.type_index,
+                                None,
+                                Some(format!("_sub_{:X}", procedure.address).into()),
+                                None,
+                                false,
+                                true,
+                            )?
+                            .trim_end_matches(" const")
+                            .trim_end_matches(" volatile")
+                            .into(),
+                            body: None,
+                            return_type: procedure.return_type,
+                            arguments: vec![],
+                        }),
+                    )));
 
                     new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
                     continue;
@@ -1691,8 +1739,8 @@ fn process_module_symbol_data(
                             let valid = if class_member_function.argument_list == member_function.argument_list {
                                 true
                             } else {
-                                let lhs = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.this_pointer_type, class_member_function.argument_list, None)?;
-                                let rhs = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, member_function.this_pointer_type, member_function.argument_list, None)?;
+                                let lhs = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
+                                let rhs = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
                                 lhs == rhs
                             };
 
@@ -1709,7 +1757,7 @@ fn process_module_symbol_data(
                                     machine_type,
                                     type_info,
                                     type_finder,
-                                    member_function.this_pointer_type,
+                                    None,
                                     member_function.argument_list,
                                     Some(parameters.clone()),
                                 )?;
@@ -1835,11 +1883,12 @@ fn process_module_symbol_data(
                 data => todo!("{data:#?}")
             };
 
-            let mut arguments = cpp::argument_type_list(
+            let arguments = cpp::argument_type_list(
                 type_finder, 
                 this_pointer_type,
                 argument_list, 
-                Some(parameters)).unwrap();
+                Some(parameters),
+            ).unwrap();
 
             module.members.push(
                 cpp::ModuleMember::Procedure(cpp::Procedure {
