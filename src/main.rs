@@ -557,21 +557,8 @@ fn process_modules<'a>(
     //
 
     fn find_enum_or_flags_typedef<'a>(
-        options: &Options,
-        class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
-        type_sizes: &mut HashMap<String, u64>,
-        machine_type: pdb2::MachineType,
-        base_address: Option<u64>,
-        pdb: &mut pdb2::PDB<File>,
-        address_map: &pdb2::AddressMap,
-        string_table: Option<&pdb2::StringTable>,
-        debug_info: &pdb2::DebugInformation,
-        global_symbols: &'a pdb2::SymbolTable,
-        id_finder: &mut pdb2::IdFinder,
-        type_info: &pdb2::TypeInformation,
-        type_finder: &pdb2::TypeFinder,
         modules: &mut HashMap<String, cpp::Module>,
-        enum_name: &str,
+        enum_data: &cpp::Enum,
     ) -> Option<cpp::TypeDefinition> {
         for module in modules.values() {
             for member in module.members.iter() {
@@ -579,9 +566,396 @@ fn process_modules<'a>(
                     continue;
                 };
                 
-                if type_definition.type_name.starts_with("c_enum<enum ") {
-                    println!("Found \"{}\"", type_definition);
-                    return Some(type_definition.clone());
+                fn parse_it<T: std::str::FromStr + PartialEq>(input: T, max: T, value: &str) -> bool {
+                    let min_value = match value.parse() {
+                        Ok(x) => x,
+                        Err(_) => {
+                            if value == "-1" {
+                                max
+                            } else {
+                                panic!("{}", value)
+                            }
+                        }
+                    };
+                    
+                    if input == min_value {
+                        return true;
+                    }
+
+                    false
+                }
+
+                if type_definition.type_name.starts_with(format!("c_enum<enum {},", enum_data.name).as_str()) {
+                    let mut result = type_definition.clone();
+                    result.type_name = format!("c_enum<{}", result.type_name.trim_start_matches("c_enum<enum "));
+
+                    let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
+                        panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
+                    };
+
+                    let mut template_args = type_string
+                        .trim_start_matches("c_enum<")
+                        .trim_end_matches(">")
+                        .split(",")
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>();
+
+                    assert!(template_args.len() == 4);
+
+                    template_args.iter_mut().for_each(|a| *a = a.trim_start().trim_end().into());
+
+                    let mut min_found = false;
+                    let mut max_found = false;
+
+                    for value in enum_data.values.iter() {
+                        if min_found && max_found {
+                            break;
+                        }
+
+                        match &value.value {
+                            pdb2::Variant::U8(x) => {
+                                if !min_found {
+                                    if parse_it(*x, u8::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        min_found = true;
+                                    }
+                                }
+
+                                if !max_found {
+                                    if parse_it(*x, u8::MAX, template_args[3].as_str()) {
+                                        template_args[3] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U16(x) => {
+                                if !min_found {
+                                    if parse_it(*x, u16::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        min_found = true;
+                                    }
+                                }
+
+                                if !max_found {
+                                    if parse_it(*x, u16::MAX, template_args[3].as_str()) {
+                                        template_args[3] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U32(x) => {
+                                if !min_found {
+                                    if parse_it(*x, u32::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        min_found = true;
+                                    }
+                                }
+
+                                if !max_found {
+                                    if parse_it(*x, u32::MAX, template_args[3].as_str()) {
+                                        template_args[3] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U64(x) => {
+                                if !min_found {
+                                    if parse_it(*x, u64::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        min_found = true;
+                                    }
+                                }
+
+                                if !max_found {
+                                    if parse_it(*x, u64::MAX, template_args[3].as_str()) {
+                                        template_args[3] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I8(x) => {
+                                if !min_found {
+                                    if parse_it(*x, i8::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        min_found = true;
+                                    }
+                                }
+
+                                if !max_found {
+                                    if parse_it(*x, i8::MAX, template_args[3].as_str()) {
+                                        template_args[3] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I16(x) => {
+                                if !min_found {
+                                    if parse_it(*x, i16::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        min_found = true;
+                                    }
+                                }
+
+                                if !max_found {
+                                    if parse_it(*x, i16::MAX, template_args[3].as_str()) {
+                                        template_args[3] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I32(x) => {
+                                if !min_found {
+                                    if parse_it(*x, i32::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        min_found = true;
+                                    }
+                                }
+
+                                if !max_found {
+                                    if parse_it(*x, i32::MAX, template_args[3].as_str()) {
+                                        template_args[3] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I64(x) => {
+                                if !min_found {
+                                    if parse_it(*x, i64::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        min_found = true;
+                                    }
+                                }
+
+                                if !max_found {
+                                    if parse_it(*x, i64::MAX, template_args[3].as_str()) {
+                                        template_args[3] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    result.type_name = format!("c_enum<{}> {}", template_args.join(","), name_string);
+
+                    return Some(result);
+                }
+
+                if type_definition.type_name.starts_with(format!("c_flags<enum {},", enum_data.name).as_str()) {
+                    let mut result = type_definition.clone();
+                    result.type_name = format!("c_flags<{}", result.type_name.trim_start_matches("c_flags<enum "));
+
+                    let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
+                        panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
+                    };
+
+                    let mut template_args = type_string
+                        .trim_start_matches("c_flags<")
+                        .trim_end_matches(">")
+                        .split(",")
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>();
+                    assert!(template_args.len() == 3);
+
+                    template_args.iter_mut().for_each(|a| *a = a.trim_start().trim_end().into());
+
+                    let mut max_found = false;
+
+                    for value in enum_data.values.iter() {
+                        if max_found {
+                            break;
+                        }
+
+                        match &value.value {
+                            pdb2::Variant::U8(x) => {
+                                if !max_found {
+                                    if parse_it(*x, u8::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U16(x) => {
+                                if !max_found {
+                                    if parse_it(*x, u16::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U32(x) => {
+                                if !max_found {
+                                    if parse_it(*x, u32::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U64(x) => {
+                                if !max_found {
+                                    if parse_it(*x, u64::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I8(x) => {
+                                if !max_found {
+                                    if parse_it(*x, i8::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I16(x) => {
+                                if !max_found {
+                                    if parse_it(*x, i16::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I32(x) => {
+                                if !max_found {
+                                    if parse_it(*x, i32::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I64(x) => {
+                                if !max_found {
+                                    if parse_it(*x, i64::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    result.type_name = format!("c_flags<{}> {}", template_args.join(","), name_string);
+
+                    return Some(result);
+                }
+
+                if type_definition.type_name.starts_with(format!("c_flags_no_init<enum {},", enum_data.name).as_str()) {
+                    let mut result = type_definition.clone();
+                    result.type_name = format!("c_flags_no_init<{}", result.type_name.trim_start_matches("c_flags_no_init<enum "));
+
+                    let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
+                        panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
+                    };
+
+                    let mut template_args = type_string
+                        .trim_start_matches("c_flags_no_init<")
+                        .trim_end_matches(">")
+                        .split(",")
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>();
+                    assert!(template_args.len() == 3);
+
+                    template_args.iter_mut().for_each(|a| *a = a.trim_start().trim_end().into());
+
+                    let mut max_found = false;
+
+                    for value in enum_data.values.iter() {
+                        if max_found {
+                            break;
+                        }
+
+                        match &value.value {
+                            pdb2::Variant::U8(x) => {
+                                if !max_found {
+                                    if parse_it(*x, u8::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U16(x) => {
+                                if !max_found {
+                                    if parse_it(*x, u16::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U32(x) => {
+                                if !max_found {
+                                    if parse_it(*x, u32::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::U64(x) => {
+                                if !max_found {
+                                    if parse_it(*x, u64::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I8(x) => {
+                                if !max_found {
+                                    if parse_it(*x, i8::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I16(x) => {
+                                if !max_found {
+                                    if parse_it(*x, i16::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I32(x) => {
+                                if !max_found {
+                                    if parse_it(*x, i32::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+
+                            pdb2::Variant::I64(x) => {
+                                if !max_found {
+                                    if parse_it(*x, i64::MAX, template_args[2].as_str()) {
+                                        template_args[2] = value.name.clone();
+                                        max_found = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    result.type_name = format!("c_flags_no_init<{}> {}", template_args.join(","), name_string);
+
+                    return Some(result);
                 }
             }
         }
@@ -589,6 +963,24 @@ fn process_modules<'a>(
         None
     }
 
+    //
+    // Find c_enum and c_flags typedefs
+    //
+
+    let mut compound_enums = vec![];
+
+    if options.reorganize {
+        for module in modules.values().cloned().collect::<Vec<_>>() {
+            for member in module.members.clone() {
+                if let cpp::ModuleMember::Enum(enum_definition) = member
+                    && let Some(type_definition) = find_enum_or_flags_typedef(modules, &enum_definition)
+                {
+                    compound_enums.push((enum_definition.clone(), type_definition));
+                }
+            }
+        }
+    }
+    
     for mut module in modules.values().cloned() {
         let path = PathBuf::from(sanitize_path(format!(
             "{}/{}",
@@ -597,14 +989,59 @@ fn process_modules<'a>(
         )));
 
         //
+        // Sort module members by line number
+        //
+
+        let mut storage: Vec<(u32, cpp::ModuleMember)> = vec![];
+        let mut prev_line = 0;
+
+        for u in module.members.iter() {
+            match u {
+                cpp::ModuleMember::Class(x) => {
+                    storage.push((x.borrow().line, u.clone()));
+                    prev_line = x.borrow().line;
+                }
+
+                cpp::ModuleMember::Enum(x) => {
+                    storage.push((x.line, u.clone()));
+                    prev_line = x.line;
+                }
+
+                cpp::ModuleMember::Data(_, _, Some(line)) => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                cpp::ModuleMember::ThreadStorage(_, _, Some(line)) => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                cpp::ModuleMember::Procedure(cpp::Procedure { line: Some(line), .. }) => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                _ => {
+                    prev_line += 1;
+                    storage.push((prev_line, u.clone()));
+                }
+            }
+        }
+
+        storage.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut members = storage.iter().map(|m| m.1.clone()).collect::<Vec<_>>();
+
+        //
         // Replace nested type declarations and anonymous field types with their full types
         //
         
-        let cloned_members = module.members.clone();
+        let cloned_members = members.clone();
+        let mut new_members = vec![];
         let mut remove_class_names = vec![];
         let mut remove_enum_names = vec![];
 
-        for (i, member) in module.members.iter_mut().enumerate() {
+        for (i, member) in members.iter_mut().enumerate() {
             match member {
                 cpp::ModuleMember::Class(class_data) => {
                     fn fix_class(
@@ -750,11 +1187,17 @@ fn process_modules<'a>(
                     }
                 
                     fix_class(cloned_members.as_slice(), i, class_data.clone(), &mut remove_class_names, &mut remove_enum_names);
+
+                    new_members.push(cpp::ModuleMember::Class(class_data.clone()));
                 }
 
-                _ => {}
+                _ => {
+                    new_members.push(member.clone());
+                }
             }
         }
+
+        members = new_members;
 
         //
         // Remove nested types that ended up in toplevel and are now unreferenced
@@ -779,50 +1222,6 @@ fn process_modules<'a>(
                 }
             }
         }
-
-        //
-        // Sort module members by line number
-        //
-
-        let mut storage: Vec<(u32, cpp::ModuleMember)> = vec![];
-        let mut prev_line = 0;
-
-        for u in module.members.iter() {
-            match u {
-                cpp::ModuleMember::Class(x) => {
-                    storage.push((x.borrow().line, u.clone()));
-                    prev_line = x.borrow().line;
-                }
-
-                cpp::ModuleMember::Enum(x) => {
-                    storage.push((x.line, u.clone()));
-                    prev_line = x.line;
-                }
-
-                cpp::ModuleMember::Data(_, _, Some(line)) => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                cpp::ModuleMember::ThreadStorage(_, _, Some(line)) => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                cpp::ModuleMember::Procedure(cpp::Procedure { line: Some(line), .. }) => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                _ => {
-                    prev_line += 1;
-                    storage.push((prev_line, u.clone()));
-                }
-            }
-        }
-
-        storage.sort_by(|a, b| a.0.cmp(&b.0));
-        let members = storage.iter().map(|m| m.1.clone()).collect::<Vec<_>>();
 
         if options.reorganize {
             //
@@ -850,13 +1249,30 @@ fn process_modules<'a>(
 
             if !constant_members.is_empty() {
                 new_members.push(cpp::ModuleMember::Comment("---------- constants".into()));
-                new_members.extend(constant_members);
+
+                let mut new_constant_members = vec![];
+
+                for member in constant_members {
+                    match member {
+                        cpp::ModuleMember::Enum(enum_data) => {
+                            new_members.push(cpp::ModuleMember::Enum(enum_data.clone()));
+
+                            if let Some((_, type_definition)) = compound_enums.iter().find(|(e, _)| enum_data == *e) {
+                                new_members.push(cpp::ModuleMember::TypeDefinition(type_definition.clone()));
+                            }
+                        }
+
+                        _ => new_constant_members.push(member),
+                    }
+                }
+
+                new_members.extend(new_constant_members);
             }
 
             // structs/unions/classes/typedefs
             let definition_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Class(_) => true,
-                // cpp::ModuleMember::UserDefinedType(_) => true,
+                cpp::ModuleMember::TypeDefinition(_) => true,
                 _ => false,
             }).cloned().collect::<Vec<_>>();
 
@@ -866,7 +1282,7 @@ fn process_modules<'a>(
             }
 
             // function prototypes
-            let mut private_code_members = members.iter().filter(|m| match m {
+            let private_code_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Procedure(procedure) => {
                     procedure.is_static
                         && !procedure.signature.contains("`")
@@ -1470,6 +1886,10 @@ fn process_module_local_symbols(
             }
         };
 
+        if let pdb2::SymbolData::UserDefinedType(_) = symbol_data {
+            continue;
+        }
+        
         process_module_symbol_data(
             options,
             class_table,
