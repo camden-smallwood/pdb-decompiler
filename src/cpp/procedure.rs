@@ -14,7 +14,7 @@ pub enum Statement {
     FunctionCall(String, Vec<String>),
     Block(Block),
     Return(Return),
-    ReturnWithValue(Return)
+    ReturnWithValue(ReturnWithValue)
 }
 
 impl TabbedDisplay for Statement {
@@ -63,7 +63,8 @@ impl TabbedDisplay for Statement {
 
             Statement::ReturnWithValue(x) => {
                 if let Some(value) = x.value.as_ref() {
-                    write!(f, "auto __result = ")?;
+                    x.signature.fmt(f)?;
+                    write!(f, " __result = ")?;
                     value.tabbed_fmt(depth, f)?;
                     if !TabbedDisplayer(0, value.as_ref()).to_string().ends_with(';') {
                         write!(f, ";")?;
@@ -153,6 +154,12 @@ impl TabbedDisplay for Block {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Return {
+    pub value: Option<Box<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReturnWithValue {
+    pub signature: String,
     pub value: Option<Box<Statement>>,
 }
 
