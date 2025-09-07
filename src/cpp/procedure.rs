@@ -13,6 +13,8 @@ pub enum Statement {
     Variable(Variable),
     FunctionCall(String, Vec<String>),
     Block(Block),
+    Return(Return),
+    ReturnWithValue(Return)
 }
 
 impl TabbedDisplay for Statement {
@@ -46,6 +48,28 @@ impl TabbedDisplay for Statement {
 
             Statement::Block(x) => {
                 x.tabbed_fmt(depth, f)?;
+            }
+
+            Statement::Return(x) => {
+                write!(f, "return")?;
+                if let Some(value) = x.value.as_ref() {
+                    write!(f, " ")?;
+                    value.tabbed_fmt(depth, f)?;
+                }
+                write!(f, ";")?;
+            }
+
+            Statement::ReturnWithValue(x) => {
+                if let Some(value) = x.value.as_ref() {
+                    write!(f, "auto __result = ")?;
+                    value.tabbed_fmt(depth, f)?;
+                    writeln!(f, ";")?;
+                    "".tabbed_fmt(depth, f)?;
+                    write!(f, "return __result;")?;
+                }
+                else {
+                    write!(f, "return;")?;
+                }
             }
         }
 
@@ -123,6 +147,11 @@ impl TabbedDisplay for Block {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Return {
+    pub value: Option<Box<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Procedure {
     pub address: u64,
     pub line: Option<u32>,
@@ -130,6 +159,8 @@ pub struct Procedure {
     pub is_static: bool,
     pub signature: String,
     pub body: Option<Block>,
+    pub return_type: Option<pdb2::TypeIndex>,
+    pub arguments: Vec<(pdb2::TypeIndex, Option<String>)>
 }
 
 impl Display for Procedure {

@@ -5,7 +5,7 @@ mod procedure;
 mod type_names;
 mod typedef;
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ops::Not, rc::Rc};
 
 pub use self::{
     class::*, r#enum::*, module::*, procedure::*, type_names::*, typedef::*
@@ -19,26 +19,67 @@ pub fn argument_list<'p>(
     machine_type: pdb2::MachineType,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder<'p>,
+    this_pointer_type: Option<pdb2::TypeIndex>,
     type_index: pdb2::TypeIndex,
-    names: Option<Vec<String>>,
+    mut names: Option<Vec<String>>,
 ) -> pdb2::Result<Vec<String>> {
     match type_finder.find(type_index)?.parse()? {
         pdb2::TypeData::ArgumentList(data) => {
             let mut args: Vec<String> = vec![];
 
+            if let Some(type_index) = this_pointer_type {
+                let this_name = names.as_mut().map(|names| names.first().cloned()).flatten();
+                if !names.as_ref().map(|names| names.is_empty()).unwrap_or(false) {
+                    names.as_mut().map(|names| names.remove(0));
+                }
+
+                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, true, false)?);
+            }
             for (i, &arg_type) in data.arguments.iter().enumerate() {
                 let arg_name = match names.as_ref() {
                     Some(names) if i < names.len() => Some(names[i].clone()),
                     _ => None
                 };
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, true)?);
+                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, true, false)?);
             }
 
             Ok(args)
         }
 
         _ => Err(pdb2::Error::UnimplementedFeature("argument list of non-argument-list type".into()))
+    }
+}
+
+pub fn argument_type_list<'p>(
+    type_finder: &pdb2::TypeFinder<'p>,
+    this_pointer_type: Option<pdb2::TypeIndex>,
+    type_index: pdb2::TypeIndex,
+    mut names: Option<Vec<String>>,
+) -> pdb2::Result<Vec<(pdb2::TypeIndex, Option<String>)>> {
+    match type_finder.find(type_index)?.parse()? {
+        pdb2::TypeData::ArgumentList(data) => {
+            let mut args = vec![];
+
+            if let Some(this_pointer_type) = this_pointer_type {
+                let this_name = names.as_mut().map(|names| names.first().cloned()).flatten().unwrap_or("this".to_string());
+                names.as_mut().map(|names| names.remove(0));
+
+                args.push((this_pointer_type, Some(this_name)));
+            }
+            for (i, &arg_type) in data.arguments.iter().enumerate() {
+                let arg_name = match names.as_ref() {
+                    Some(names) if i < names.len() => Some(names[i].clone()),
+                    _ => None
+                };
+
+                args.push((arg_type, arg_name));
+            }
+
+            Ok(args)
+        }
+
+        data => panic!("argument list of non-argument-list type : {:#?}", data)
     }
 }
 
@@ -103,6 +144,7 @@ pub fn type_name<'p>(
     declaration_name: Option<String>,
     parameter_names: Option<Vec<String>>,
     is_pointer: bool,
+    include_this: bool,
 ) -> pdb2::Result<String> {
     let type_item = type_finder.find(type_index)?;
     let type_data = type_item.parse()?;
@@ -203,13 +245,13 @@ pub fn type_name<'p>(
 
         pdb2::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
             Ok(pdb2::TypeData::Procedure(_)) | Ok(pdb2::TypeData::MemberFunction(_)) => {
-                type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, true)?
+                type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, true, false)?
             }
 
             _ => {
                 let mut name = format!(
                     "{} {}",
-                    type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, true)?,
+                    type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, true, false)?,
                     if data.attributes.is_reference() {
                         "&"
                     } else {
@@ -238,11 +280,12 @@ pub fn type_name<'p>(
                 declaration_name,
                 None,
                 true,
+                false
             )?
         }
 
         pdb2::TypeData::Array(data) => {
-            let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, declaration_name, None, true)?;
+            let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, declaration_name, None, true, false)?;
             let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
 
             if element_size == 0 {
@@ -306,7 +349,7 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Bitfield(data) => {
-            let name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, true)?;
+            let name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, true, false)?;
             format!("{} : {}", name, data.length)
         }
 
@@ -319,7 +362,7 @@ pub fn type_name<'p>(
                 }
             } else {
                 let mut name = match data.return_type {
-                    Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, true)?,
+                    Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, true, false)?,
                     None => String::new(),
                 };
 
@@ -343,7 +386,7 @@ pub fn type_name<'p>(
             name.push_str(
                 format!(
                     "({})",
-                    argument_list(class_table, type_sizes, machine_type, type_info, type_finder, data.argument_list, parameter_names)?.join(", ")
+                    argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", ")
                 ).as_str()
             );
 
@@ -358,7 +401,7 @@ pub fn type_name<'p>(
                     String::new()
                 }
             } else {
-                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.return_type, modifier, None, None, true)?;
+                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.return_type, modifier, None, None, true, false)?;
 
                 if is_pointer {
                     name.push_str("(*");
@@ -379,15 +422,20 @@ pub fn type_name<'p>(
 
             let mut parameter_names = parameter_names;
 
-            if let Some(parameter_names) = parameter_names.as_mut()
-                && data.this_pointer_type.is_some()
-                && !parameter_names.is_empty()
-                && parameter_names[0] == "this"
-            {
-                parameter_names.remove(0);
+            if include_this && let Some(this_pointer_type) = data.this_pointer_type {
+                name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, Some(this_pointer_type), data.argument_list, parameter_names)?.join(", "));
             }
+            else {
+                if let Some(parameter_names) = parameter_names.as_mut()
+                    && data.this_pointer_type.is_some()
+                    && !parameter_names.is_empty()
+                    && parameter_names[0] == "this"
+                {
+                    parameter_names.remove(0);
+                }
 
-            name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, data.argument_list, parameter_names)?.join(", "));
+                name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", "));
+            }
 
             if let Some(modifier) = type_modifier(data, type_finder) {
                 if modifier.constant {

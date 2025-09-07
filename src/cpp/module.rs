@@ -24,6 +24,7 @@ pub enum ModuleMember {
     Data(String, u64, Option<u32>),
     ThreadStorage(String, u64, Option<u32>),
     Procedure(cpp::Procedure),
+    ExternC(Box<ModuleMember>),
 }
 
 impl fmt::Display for ModuleMember {
@@ -39,6 +40,7 @@ impl fmt::Display for ModuleMember {
             Self::Data(d, _, _) => d.fmt(f),
             Self::ThreadStorage(t, _, _) => t.fmt(f),
             Self::Procedure(p) => p.fmt(f),
+            Self::ExternC(m) => write!(f, "extern \"C\" {{ extern {m} }}"),
         }
     }
 }
@@ -379,6 +381,7 @@ impl Module {
                     None,
                     None,
                     true,
+                    false
                 ) {
                     Ok(name) => name,
                     Err(_) => {
@@ -1651,30 +1654,39 @@ impl fmt::Display for Module {
         let mut prev_item: Option<&ModuleMember> = None;
 
         for item in self.members.iter() {
-            if !matches!(
+           if !matches!(
                 (prev_item, item),
                 (
-                    Some(ModuleMember::UsingNamespace(_)),
-                    ModuleMember::UsingNamespace(_)
-                ) | (
-                    Some(ModuleMember::Procedure(cpp::Procedure { body: None, .. })),
-                    ModuleMember::Procedure(cpp::Procedure { body: None, .. })
-                ) | (
-                    Some(ModuleMember::UserDefinedType(_)),
-                    ModuleMember::UserDefinedType(_)
-                ) | (
-                    Some(
+                    Some(ModuleMember::ExternC(_)),
+                    ModuleMember::Procedure(cpp::Procedure { .. })
+                )
+            ) {
+                if !matches!(
+                    (prev_item, item),
+                    (
+                        Some(ModuleMember::UsingNamespace(_)),
+                        ModuleMember::UsingNamespace(_)
+                    ) | (
+                        Some(ModuleMember::Procedure(cpp::Procedure { body: None, .. }) | ModuleMember::ExternC(_)),
+                        ModuleMember::Procedure(cpp::Procedure { body: None, .. }) | ModuleMember::ExternC(_)
+                    ) | (
+                        Some(ModuleMember::UserDefinedType(_)),
+                        ModuleMember::UserDefinedType(_)
+                    ) | (
+                        Some(
+                            ModuleMember::Constant(_)
+                                | ModuleMember::Data(_, _, _)
+                                | ModuleMember::ThreadStorage(_, _, _)
+                        ),
                         ModuleMember::Constant(_)
                             | ModuleMember::Data(_, _, _)
                             | ModuleMember::ThreadStorage(_, _, _)
-                    ),
-                    ModuleMember::Constant(_)
-                        | ModuleMember::Data(_, _, _)
-                        | ModuleMember::ThreadStorage(_, _, _)
-                )
-            ) {
-                writeln!(f)?;
+                    )
+                ) {
+                    writeln!(f)?;
+                }
             }
+            
 
             item.fmt(f)?;
             writeln!(f)?;
