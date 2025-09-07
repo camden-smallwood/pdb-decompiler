@@ -961,6 +961,24 @@ fn process_modules<'a>(
                     }
 
                     comment_block(procedure.body.as_mut().unwrap());
+                    
+                    if let Some((mangled_name, _address)) = module.mangled_symbols.iter()
+                        .find(|(_, address)| *address == procedure.address)
+                    {
+                        if procedure.body.is_none() {
+                            procedure.body = Some(cpp::Block::default());
+                        }
+
+                        procedure.body.as_mut().unwrap().statements.insert(
+                            0,
+                            cpp::Statement::FunctionCall(
+                                "mangled_assert".into(),
+                                vec![
+                                    format!("\"{}\"", mangled_name),
+                                ],
+                            ),
+                        );
+                    }
                 }
             }
 
@@ -977,6 +995,24 @@ fn process_modules<'a>(
                     }
 
                     comment_block(procedure.body.as_mut().unwrap());
+
+                    if let Some((mangled_name, _address)) = module.mangled_symbols.iter()
+                        .find(|(_, address)| *address == procedure.address)
+                    {
+                        if procedure.body.is_none() {
+                            procedure.body = Some(cpp::Block::default());
+                        }
+
+                        procedure.body.as_mut().unwrap().statements.insert(
+                            0,
+                            cpp::Statement::FunctionCall(
+                                "mangled_assert".into(),
+                                vec![
+                                    format!("\"{}\"", mangled_name),
+                                ],
+                            ),
+                        );
+                    }
                 }
             }
             
@@ -1787,8 +1823,44 @@ fn process_module_symbol_data(
             parse_separated_code_symbols(module_symbols)
         }
 
-        pdb2::SymbolData::Public(_)
-        | pdb2::SymbolData::ProcedureReference(_)
+        pdb2::SymbolData::Public(public_symbol) => {
+            let mut file_name_ref = None;
+            // let mut line_info = None;
+
+            for (name_ref, offsets) in line_offsets.iter() {
+                if let Some(_line) = offsets.get(&public_symbol.offset) {
+                    file_name_ref = Some(*name_ref);
+                    // line_info = Some(line.clone());
+                    break;
+                }
+            }
+
+            let path = if let Some(file_name_ref) = file_name_ref {
+                PathBuf::from(sanitize_path(file_name_ref.to_string_lossy(string_table.unwrap())?.to_string()))
+            } else {
+                module_file_path.clone()
+            };
+
+            let module_key = path.to_string_lossy().to_lowercase().to_string();
+            let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(path));
+
+            let rva = match public_symbol.offset.to_rva(address_map) {
+                Some(rva) => rva,
+                None => {
+                    // println!("WARNING: no RVA found for public symbol: {public_symbol:?}");
+                    return Ok(());
+                }
+            };
+
+            let address = base_address.unwrap_or(0) + rva.0 as u64;
+            let entry = (public_symbol.name.to_string().to_string(), address);
+
+            if !module.mangled_symbols.contains(&entry) {
+                module.mangled_symbols.push(entry);
+            }
+        }
+
+        pdb2::SymbolData::ProcedureReference(_)
         | pdb2::SymbolData::ObjName(_)
         | pdb2::SymbolData::BuildInfo(_)
         | pdb2::SymbolData::CompileFlags(_)

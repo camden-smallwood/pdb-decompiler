@@ -11,6 +11,7 @@ pub enum Statement {
     Commented(Box<Statement>),
     Label(Label),
     Variable(Variable),
+    FunctionCall(String, Vec<String>),
     Block(Block),
 }
 
@@ -37,6 +38,10 @@ impl TabbedDisplay for Statement {
 
             Statement::Variable(x) => {
                 write!(f, "{x}")?;
+            }
+
+            Statement::FunctionCall(function, parameters) => {
+                write!(f, "{}({});", function, parameters.join(", "))?;
             }
 
             Statement::Block(x) => {

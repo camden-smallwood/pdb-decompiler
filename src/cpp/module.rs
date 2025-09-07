@@ -167,6 +167,7 @@ pub struct Module {
 
     pub headers: Vec<(PathBuf, bool)>,
     pub members: Vec<ModuleMember>,
+    pub mangled_symbols: Vec<(String, u64)>,
 
     pub compiler_response_file: Option<PathBuf>,
     pub pack_structure_members: Option<String>,
