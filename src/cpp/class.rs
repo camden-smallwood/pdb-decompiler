@@ -1042,7 +1042,11 @@ impl fmt::Display for Class {
                 _ => prev_access
             };
 
-            if member_access != prev_access {
+            if member_access.is_none() && prev_access.is_none() {
+                writeln!(f, "public:")?;
+                prev_access = Some("public");
+            }
+            else if member_access != prev_access {
                 if let Some(member_access) = member_access {
                     for _ in 0..self.depth {
                         write!(f, "    ")?;
