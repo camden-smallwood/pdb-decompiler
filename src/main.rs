@@ -1300,13 +1300,56 @@ fn process_modules<'a>(
                 _ => false,
             }).cloned().collect::<Vec<_>>();
 
-            let mut prototype_members = private_code_members.clone();
+            let mut prototype_members = vec![];
 
-            for member in prototype_members.iter_mut() {
+            for member in public_code_members.iter() {
                 if let cpp::ModuleMember::Procedure(procedure) = member {
+                    let mut procedure = procedure.clone();
+
                     procedure.body = None;
                     procedure.address = 0;
+
+                    if !procedure.is_static {
+                        prototype_members.push(cpp::ModuleMember::Extern(Box::new(
+                            cpp::ModuleMember::Procedure(procedure),
+                        )));
+                    } else {
+                        procedure.is_static = false;
+
+                        prototype_members.push(cpp::ModuleMember::StaticMacro(Box::new(
+                            cpp::ModuleMember::Procedure(procedure),
+                        )));
+                    }
+
+                    continue;
                 }
+                
+                // prototype_members.push(member.clone());
+            }
+
+            for member in private_code_members.iter() {
+                if let cpp::ModuleMember::Procedure(procedure) = member {
+                    let mut procedure = procedure.clone();
+
+                    procedure.body = None;
+                    procedure.address = 0;
+
+                    if !procedure.is_static {
+                        prototype_members.push(cpp::ModuleMember::ExternMacro(Box::new(
+                            cpp::ModuleMember::Procedure(procedure),
+                        )));
+                    } else {
+                        procedure.is_static = false;
+
+                        prototype_members.push(cpp::ModuleMember::StaticMacro(Box::new(
+                            cpp::ModuleMember::Procedure(procedure),
+                        )));
+                    }
+
+                    continue;
+                }
+                
+                // prototype_members.push(member.clone());
             }
 
             if !prototype_members.is_empty() {
@@ -1377,6 +1420,10 @@ fn process_modules<'a>(
                                 ],
                             ),
                         );
+
+                        procedure.body.as_mut().unwrap().statements.push(
+                            cpp::Statement::Todo("implement".to_string()),
+                        );
                     }
 
                     let return_type_str = procedure.return_type.map(|return_type| {
@@ -1424,7 +1471,7 @@ fn process_modules<'a>(
                         );
                     }
 
-                    new_public_code_members.push(cpp::ModuleMember::ExternC(Box::new(
+                    new_public_code_members.push(cpp::ModuleMember::ExternMacro(Box::new(
                         cpp::ModuleMember::Procedure(cpp::Procedure {
                             address: 0,
                             line: procedure.line,
@@ -1452,7 +1499,15 @@ fn process_modules<'a>(
                         }),
                     )));
 
-                    new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
+                    if !procedure.is_static {
+                        new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
+                    } else {
+                        procedure.is_static = false;
+
+                        new_public_code_members.push(cpp::ModuleMember::StaticMacro(Box::new(
+                            cpp::ModuleMember::Procedure(procedure),
+                        )));
+                    }
                     continue;
                 }
                 
@@ -1493,6 +1548,10 @@ fn process_modules<'a>(
                                 ],
                             ),
                         );
+
+                        procedure.body.as_mut().unwrap().statements.push(
+                            cpp::Statement::Todo("implement".to_string()),
+                        );
                     }
 
                     let return_type_str = procedure.return_type.map(|return_type| {
@@ -1540,12 +1599,12 @@ fn process_modules<'a>(
                         );
                     }
 
-                    new_private_code_members.push(cpp::ModuleMember::ExternC(Box::new(
+                    new_private_code_members.push(cpp::ModuleMember::ExternMacro(Box::new(
                         cpp::ModuleMember::Procedure(cpp::Procedure {
                             address: 0,
                             line: procedure.line,
                             type_index: procedure.type_index,
-                            is_static: procedure.is_static,
+                            is_static: false,
                             signature: cpp::type_name(
                                 class_table,
                                 type_sizes,
@@ -1568,7 +1627,15 @@ fn process_modules<'a>(
                         }),
                     )));
 
-                    new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
+                    if !procedure.is_static {
+                        new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
+                    } else {
+                        procedure.is_static = false;
+
+                        new_private_code_members.push(cpp::ModuleMember::StaticMacro(Box::new(
+                            cpp::ModuleMember::Procedure(procedure),
+                        )));
+                    }
                     continue;
                 }
             
