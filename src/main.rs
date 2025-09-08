@@ -1230,7 +1230,40 @@ fn process_modules<'a>(
 
             let mut new_members = vec![];
 
+            //--------------------------------------------------------------------------------
+            // starting preprocessor statements
+            //--------------------------------------------------------------------------------
+
+            if module.is_header() {
+                let stem = module.path
+                    .file_stem()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("UNKNOWN")
+                    .to_uppercase();
+
+                new_members.push(cpp::ModuleMember::Preprocessor("pragma once".into()));
+                new_members.push(cpp::ModuleMember::Preprocessor(format!("ifndef __{}_H__", stem)));
+                new_members.push(cpp::ModuleMember::Preprocessor(format!("define __{}_H__", stem)));
+            }
+            
+            //--------------------------------------------------------------------------------
+            // headers
+            //--------------------------------------------------------------------------------
+
+            if !module.headers.is_empty() {
+                new_members.push(cpp::ModuleMember::Comment("---------- headers".into()));
+
+                for (path, global) in module.headers.iter() {
+                    new_members.push(cpp::ModuleMember::Include(*global, path.clone()));
+                }
+
+                module.headers.clear();
+            }
+
+            //--------------------------------------------------------------------------------
             // using namespaces
+            //--------------------------------------------------------------------------------
+
             let using_namespace_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::UsingNamespace(_) => true,
                 _ => false,
@@ -1238,7 +1271,10 @@ fn process_modules<'a>(
 
             new_members.extend(using_namespace_members);
 
+            //--------------------------------------------------------------------------------
             // enums, const vars, macros
+            //--------------------------------------------------------------------------------
+
             let constant_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Enum(_) => true,
                 // cpp::ModuleMember::Constant(_) => true,
@@ -1269,7 +1305,10 @@ fn process_modules<'a>(
                 new_members.extend(new_constant_members);
             }
 
+            //--------------------------------------------------------------------------------
             // structs/unions/classes/typedefs
+            //--------------------------------------------------------------------------------
+
             let definition_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Class(_) => true,
                 cpp::ModuleMember::TypeDefinition(_) => true,
@@ -1281,7 +1320,10 @@ fn process_modules<'a>(
                 new_members.extend(definition_members);
             }
 
+            //--------------------------------------------------------------------------------
             // function prototypes
+            //--------------------------------------------------------------------------------
+
             let private_code_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Procedure(procedure) => {
                     procedure.is_static
@@ -1310,15 +1352,17 @@ fn process_modules<'a>(
                     procedure.address = 0;
 
                     if !procedure.is_static {
-                        prototype_members.push(cpp::ModuleMember::Extern(Box::new(
-                            cpp::ModuleMember::Procedure(procedure),
-                        )));
+                        prototype_members.push(cpp::ModuleMember::Tagged(
+                            "extern".into(),
+                            Box::new(cpp::ModuleMember::Procedure(procedure)),
+                        ));
                     } else {
                         procedure.is_static = false;
 
-                        prototype_members.push(cpp::ModuleMember::StaticMacro(Box::new(
-                            cpp::ModuleMember::Procedure(procedure),
-                        )));
+                        prototype_members.push(cpp::ModuleMember::Tagged(
+                            "_static".into(),
+                            Box::new(cpp::ModuleMember::Procedure(procedure)),
+                        ));
                     }
 
                     continue;
@@ -1335,15 +1379,17 @@ fn process_modules<'a>(
                     procedure.address = 0;
 
                     if !procedure.is_static {
-                        prototype_members.push(cpp::ModuleMember::ExternMacro(Box::new(
-                            cpp::ModuleMember::Procedure(procedure),
-                        )));
+                        prototype_members.push(cpp::ModuleMember::Tagged(
+                            "_extern".into(),
+                            Box::new(cpp::ModuleMember::Procedure(procedure)),
+                        ));
                     } else {
                         procedure.is_static = false;
 
-                        prototype_members.push(cpp::ModuleMember::StaticMacro(Box::new(
-                            cpp::ModuleMember::Procedure(procedure),
-                        )));
+                        prototype_members.push(cpp::ModuleMember::Tagged(
+                            "_static".into(),
+                            Box::new(cpp::ModuleMember::Procedure(procedure)),
+                        ));
                     }
 
                     continue;
@@ -1357,7 +1403,10 @@ fn process_modules<'a>(
                 new_members.extend(prototype_members);
             }
 
+            //--------------------------------------------------------------------------------
             // public mutable vars
+            //--------------------------------------------------------------------------------
+
             let global_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Data(signature, _, _) => {
                     !signature.starts_with("const ")
@@ -1391,7 +1440,10 @@ fn process_modules<'a>(
                 }
             }
 
+            //--------------------------------------------------------------------------------
             // public functions
+            //--------------------------------------------------------------------------------
+
             let mut new_public_code_members: Vec<cpp::ModuleMember> = vec![];
 
             for member in public_code_members.iter() {
@@ -1422,7 +1474,7 @@ fn process_modules<'a>(
                         );
 
                         procedure.body.as_mut().unwrap().statements.push(
-                            cpp::Statement::Todo("implement".to_string()),
+                            cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
                         );
                     }
 
@@ -1471,8 +1523,9 @@ fn process_modules<'a>(
                         );
                     }
 
-                    new_public_code_members.push(cpp::ModuleMember::ExternMacro(Box::new(
-                        cpp::ModuleMember::Procedure(cpp::Procedure {
+                    new_public_code_members.push(cpp::ModuleMember::Tagged(
+                        "_extern".into(),
+                        Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
                             address: 0,
                             line: procedure.line,
                             type_index: procedure.type_index,
@@ -1496,17 +1549,17 @@ fn process_modules<'a>(
                             body: None,
                             return_type: procedure.return_type,
                             arguments: vec![],
-                        }),
-                    )));
+                        })),
+                    ));
 
                     if !procedure.is_static {
                         new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
                     } else {
                         procedure.is_static = false;
 
-                        new_public_code_members.push(cpp::ModuleMember::StaticMacro(Box::new(
-                            cpp::ModuleMember::Procedure(procedure),
-                        )));
+                        new_public_code_members.push(cpp::ModuleMember::Tagged(
+                            "_static".into(),
+                            Box::new(cpp::ModuleMember::Procedure(procedure))));
                     }
                     continue;
                 }
@@ -1519,7 +1572,10 @@ fn process_modules<'a>(
                 new_members.extend(new_public_code_members);
             }
 
+            //--------------------------------------------------------------------------------
             // private functions
+            //--------------------------------------------------------------------------------
+
             let mut new_private_code_members = vec![];
 
             for member in private_code_members.iter() {
@@ -1550,7 +1606,7 @@ fn process_modules<'a>(
                         );
 
                         procedure.body.as_mut().unwrap().statements.push(
-                            cpp::Statement::Todo("implement".to_string()),
+                            cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
                         );
                     }
 
@@ -1599,8 +1655,9 @@ fn process_modules<'a>(
                         );
                     }
 
-                    new_private_code_members.push(cpp::ModuleMember::ExternMacro(Box::new(
-                        cpp::ModuleMember::Procedure(cpp::Procedure {
+                    new_private_code_members.push(cpp::ModuleMember::Tagged(
+                        "_extern".into(),
+                        Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
                             address: 0,
                             line: procedure.line,
                             type_index: procedure.type_index,
@@ -1624,17 +1681,18 @@ fn process_modules<'a>(
                             body: None,
                             return_type: procedure.return_type,
                             arguments: vec![],
-                        }),
-                    )));
+                        })),
+                    ));
 
                     if !procedure.is_static {
                         new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
                     } else {
                         procedure.is_static = false;
 
-                        new_private_code_members.push(cpp::ModuleMember::StaticMacro(Box::new(
-                            cpp::ModuleMember::Procedure(procedure),
-                        )));
+                        new_private_code_members.push(cpp::ModuleMember::Tagged(
+                            "_static".into(),
+                            Box::new(cpp::ModuleMember::Procedure(procedure)),
+                        ));
                     }
                     continue;
                 }
@@ -1645,6 +1703,20 @@ fn process_modules<'a>(
             if !new_private_code_members.is_empty() {
                 new_members.push(cpp::ModuleMember::Comment("---------- private code".into()));
                 new_members.extend(new_private_code_members);
+            }
+
+            //--------------------------------------------------------------------------------
+            // ending preprocessor statements
+            //--------------------------------------------------------------------------------
+
+            if module.is_header() {
+                let stem = module.path
+                    .file_stem()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("UNKNOWN")
+                    .to_uppercase();
+
+                new_members.push(cpp::ModuleMember::Preprocessor(format!("#endif // __{}_H__", stem)));
             }
 
             module.members = new_members;

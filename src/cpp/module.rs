@@ -15,6 +15,8 @@ pub static SOURCE_FILE_EXTS: &[&str] = &[
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleMember {
+    Preprocessor(String),
+    Include(bool, PathBuf),
     Comment(String),
     Class(Rc<RefCell<cpp::Class>>),
     Enum(cpp::Enum),
@@ -24,19 +26,24 @@ pub enum ModuleMember {
     Data(String, u64, Option<u32>),
     ThreadStorage(String, u64, Option<u32>),
     Procedure(cpp::Procedure),
-    Extern(Box<ModuleMember>),
-    ExternC(Box<ModuleMember>),
-    ExternCWrap(Box<ModuleMember>),
-    StaticMacro(Box<ModuleMember>),
-    StaticMacroWrap(Box<ModuleMember>),
-    ExternMacro(Box<ModuleMember>),
-    ExternMacroWrap(Box<ModuleMember>),
+    Tagged(String, Box<ModuleMember>),
+    TaggedWrapped(String, Box<ModuleMember>),
 }
 
 impl fmt::Display for ModuleMember {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Preprocessor(p) => write!(f, "#{p}"),
+            Self::Include(global, path) => write!(
+                f,
+                "#include {}",
+                if *global {
+                    format!("<{}>", path.to_string_lossy().trim_start_matches('/'))
+                } else {
+                    format!("\"{}\"", path.to_string_lossy().trim_start_matches('/'))
+                },
+            ),
             Self::Comment(c) => write!(f, "/* {c} */"),
             Self::Class(c) => c.borrow().fmt(f),
             Self::Enum(e) => e.fmt(f),
@@ -46,13 +53,8 @@ impl fmt::Display for ModuleMember {
             Self::Data(d, _, _) => d.fmt(f),
             Self::ThreadStorage(t, _, _) => t.fmt(f),
             Self::Procedure(p) => p.fmt(f),
-            Self::Extern(m) => write!(f, "extern {m}"),
-            Self::ExternC(m) => write!(f, "extern \"C\" {m}"),
-            Self::ExternCWrap(m) => write!(f, "extern \"C\" {{ {m} }}"),
-            Self::StaticMacro(m) => write!(f, "_static {m}"),
-            Self::StaticMacroWrap(m) => write!(f, "_static {{ {m} }}"),
-            Self::ExternMacro(m) => write!(f, "_extern {m}"),
-            Self::ExternMacroWrap(m) => write!(f, "_extern {{ {m} }}"),
+            Self::Tagged(tag, m) => write!(f, "{tag} {m}"),
+            Self::TaggedWrapped(tag, m) => write!(f, "{tag} {{ {m} }}"),
         }
     }
 }
@@ -242,6 +244,13 @@ pub struct Module {
 }
 
 impl Module {
+    pub fn is_header(&self) -> bool {
+        match self.path.extension().and_then(std::ffi::OsStr::to_str) {
+            Some(ext) if SOURCE_FILE_EXTS.contains(&ext) => false,
+            _ => true,
+        }
+    }
+
     pub fn with_path(mut self, path: PathBuf) -> Self {
         self.path = path;
         self
@@ -1644,65 +1653,45 @@ mod tests {
 
 impl fmt::Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut is_header = false;
+        let mut skip_empty_line = true;
 
-        match self.path.extension().and_then(std::ffi::OsStr::to_str) {
-            Some(ext) if SOURCE_FILE_EXTS.contains(&ext) => (),
-            _ => is_header = true,
-        }
-
-        if is_header {
-            let stem = self
-                .path
-                .file_stem()
-                .and_then(std::ffi::OsStr::to_str)
-                .unwrap_or("UNKNOWN")
-                .to_uppercase();
-
+        if self.is_header() && !self.members.iter().any(|m| {
+            let ModuleMember::Preprocessor(p) = m else {
+                return false;
+            };
+            p == "pragma once"
+        }) {
+            skip_empty_line = false;
             writeln!(f, "#pragma once")?;
-            writeln!(f, "#ifndef __{}_H__", stem)?;
-            writeln!(f, "#define __{}_H__", stem)?;
         }
-
-        let mut includes = vec![];
 
         for (header, is_global) in self.headers.iter() {
-            let line = if *is_global {
-                format!("#include <{}>", header.to_string_lossy().trim_start_matches('/'))
+            if *is_global {
+                writeln!(f, "#include <{}>", header.to_string_lossy().trim_start_matches('/'))?;
             } else {
-                format!("#include \"{}\"", header.to_string_lossy().trim_start_matches('/'))
-            };
-            includes.push(line);
-        }
-
-        if !includes.is_empty() {
-
-            writeln!(f, "/* ---------- headers */")?;
-            writeln!(f)?;
-            for line in &includes {
-                writeln!(f, "{}", line)?;
+                writeln!(f, "#include \"{}\"", header.to_string_lossy().trim_start_matches('/'))?;
             }
         }
 
         let mut prev_item: Option<&ModuleMember> = None;
-                      
+
         for item in self.members.iter() {
-           if !matches!(
+            if !matches!(
                 (prev_item, item),
                 (
-                    Some(ModuleMember::Extern(_))
-                    | Some(ModuleMember::ExternC(_))
-                    | Some(ModuleMember::ExternCWrap(_))
-                    | Some(ModuleMember::StaticMacro(_))
-                    | Some(ModuleMember::StaticMacroWrap(_))
-                    | Some(ModuleMember::ExternMacro(_))
-                    | Some(ModuleMember::ExternMacroWrap(_)),
-                    ModuleMember::Procedure(cpp::Procedure { .. }) | ModuleMember::Extern(_) | ModuleMember::ExternMacro(_) | ModuleMember::StaticMacro(_)
+                    Some(ModuleMember::Tagged(_, _)) | Some(ModuleMember::TaggedWrapped(_, _)),
+                    ModuleMember::Procedure(cpp::Procedure { .. }) | ModuleMember::Tagged(_, _) | ModuleMember::TaggedWrapped(_, _)
                 )
             ) {
                 if !matches!(
                     (prev_item, item),
                     (
+                        Some(ModuleMember::Preprocessor(_)),
+                        ModuleMember::Preprocessor(_)
+                    ) | (
+                        Some(ModuleMember::Include(_, _)),
+                        ModuleMember::Include(_, _)
+                    ) | (
                         Some(ModuleMember::UsingNamespace(_)),
                         ModuleMember::UsingNamespace(_)
                     ) | (
@@ -1722,7 +1711,11 @@ impl fmt::Display for Module {
                             | ModuleMember::ThreadStorage(_, _, _)
                     )
                 ) {
-                    writeln!(f)?;
+                    if !skip_empty_line {
+                        writeln!(f)?;
+                    }
+                    
+                    skip_empty_line = false;
                 }
             }
             
@@ -1731,18 +1724,6 @@ impl fmt::Display for Module {
             writeln!(f)?;
 
             prev_item = Some(item);
-        }
-
-        if is_header {
-            let stem = self
-                .path
-                .file_stem()
-                .and_then(std::ffi::OsStr::to_str)
-                .unwrap_or("UNKNOWN")
-                .to_uppercase();
-
-            writeln!(f)?;
-            writeln!(f, "#endif // __{}_H__", stem)?;
         }
 
         Ok(())

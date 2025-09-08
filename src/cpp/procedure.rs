@@ -15,7 +15,6 @@ pub enum Statement {
     Block(Block),
     Return(Return),
     ReturnWithValue(ReturnWithValue),
-    Todo(String)
 }
 
 impl TabbedDisplay for Statement {
@@ -77,10 +76,6 @@ impl TabbedDisplay for Statement {
                 else {
                     write!(f, "return;")?;
                 }
-            }
-
-            Statement::Todo(x) => {
-                write!(f, "todo(\"{x}\");")?;
             }
         }
 
