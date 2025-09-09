@@ -1329,7 +1329,6 @@ fn process_modules<'a>(
                 new_members.push(cpp::ModuleMember::Comment("---------- definitions".into()));
                 new_members.push(cpp::ModuleMember::EmptyLine);
                 new_members.extend(definition_members);
-                new_members.push(cpp::ModuleMember::EmptyLine);
             }
 
             //--------------------------------------------------------------------------------
