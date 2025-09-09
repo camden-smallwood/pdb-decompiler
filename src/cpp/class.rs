@@ -46,7 +46,7 @@ impl fmt::Display for Field {
             write!(f, "static ")?;
         }
 
-        if self.attributes.is_virtual() {
+        if self.attributes.is_virtual() || self.attributes.is_pure_virtual() || self.attributes.is_intro_virtual() {
             write!(f, "virtual ")?;
         }
 
@@ -84,12 +84,14 @@ impl fmt::Display for Method {
             "{}{}{}({}){}{};",
 
             match self.field_attributes {
-                Some(field_attributes) => if field_attributes.is_virtual() {
-                    "virtual "
-                } else if field_attributes.is_static() {
-                    "static "
-                } else {
-                    ""
+                Some(field_attributes) => {
+                    if field_attributes.is_virtual() || field_attributes.is_pure_virtual() || field_attributes.is_intro_virtual() {
+                        "virtual "
+                    } else if field_attributes.is_static() {
+                        "static "
+                    } else {
+                        ""
+                    }
                 },
 
                 None => ""

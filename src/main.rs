@@ -1329,10 +1329,37 @@ fn process_modules<'a>(
                 _ => false,
             }).cloned().collect::<Vec<_>>();
 
-            if !definition_members.is_empty() {
+            let mut new_definition_members = vec![];
+
+            for member in definition_members {
+                match &member {
+                    cpp::ModuleMember::Class(_) => {
+                        if let Some(cpp::ModuleMember::TypeDefinition(_)) = new_definition_members.last() {
+                            new_definition_members.push(cpp::ModuleMember::EmptyLine);
+                        }
+
+                        new_definition_members.push(member);
+                        new_definition_members.push(cpp::ModuleMember::EmptyLine);
+                    }
+
+                    cpp::ModuleMember::TypeDefinition(_) => {
+                        new_definition_members.push(member);
+                    }
+
+                    _ => todo!()
+                }
+            }
+
+            if !new_definition_members.is_empty() {
                 new_members.push(cpp::ModuleMember::Comment("---------- definitions".into()));
                 new_members.push(cpp::ModuleMember::EmptyLine);
-                new_members.extend(definition_members);
+
+                while let Some(cpp::ModuleMember::EmptyLine) = new_definition_members.last() {
+                    new_definition_members.pop();
+                }
+
+                new_members.extend(new_definition_members);
+                new_members.push(cpp::ModuleMember::EmptyLine);
             }
 
             //--------------------------------------------------------------------------------
