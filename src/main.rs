@@ -2532,7 +2532,7 @@ fn process_module_symbol_data(
                                     Some(parameters.clone()),
                                 )?;
 
-                                class_method.modifier = cpp::type_modifier(&class_member_function, type_finder);
+                                class_method.modifier = cpp::get_member_function_modifier(&class_member_function, type_finder);
 
                                 // found = true;
                                 break;

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::cpp::{Class, type_modifier, type_size};
+use crate::cpp::{Class, get_member_function_modifier, type_size};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -360,7 +360,7 @@ pub fn type_index_to_type_name<'p>(
                 is_volatile: false,
             };
 
-            if let Some(modifier) = type_modifier(data, type_finder) {
+            if let Some(modifier) = get_member_function_modifier(data, type_finder) {
                 result.is_const = modifier.constant;
                 result.is_volatile = modifier.volatile;
             }
