@@ -1520,44 +1520,25 @@ fn process_modules<'a>(
             if !new_private_variable_members.is_empty() {
                 new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
                 new_members.push(cpp::ModuleMember::EmptyLine);
-                new_members.push(cpp::ModuleMember::Code("_static".into()));
-                new_members.push(cpp::ModuleMember::Code("{".into()));
 
                 while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
                     new_private_variable_members.pop();
                 }
 
-                for member in new_private_variable_members.iter() {
-                    match member {
-                        cpp::ModuleMember::Data { name, signature, address, line , .. } => {
-                            new_members.push(cpp::ModuleMember::Data
-                                 {
-                                    is_static: false,
-                                    name: name.clone(),
-                                    signature: signature.clone(),
-                                    address: *address,
-                                    line: *line,
-                                 });
-                        }
+                for member in new_private_variable_members.iter_mut() {
+                    let cpp::ModuleMember::Data { is_static, .. } = member else {
+                        unreachable!("{:#?}", member)
+                    };
 
-                        cpp::ModuleMember::ThreadStorage { name, signature, address, line , .. } => {
-                            new_members.push(cpp::ModuleMember::ThreadStorage
-                                 {
-                                    is_static: false,
-                                    name: name.clone(),
-                                    signature: signature.clone(),
-                                    address: *address,
-                                    line: *line,
-                                 });
-                        }
-
-                        _ => unreachable!("{member:#?}")
-                    }
+                    *is_static = false;
                 }
-                
-                new_members.push(cpp::ModuleMember::Code("}".into()));
 
-                new_members.push(cpp::ModuleMember::EmptyLine);
+                new_members.push(cpp::ModuleMember::Tagged(
+                    "_static".into(),
+                    Box::new(cpp::ModuleMember::Block {
+                        members: new_private_variable_members,
+                    }),
+                ));
             }
             
             //--------------------------------------------------------------------------------

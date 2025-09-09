@@ -1,4 +1,4 @@
-use crate::cpp;
+use crate::{cpp, tabbed::TabbedDisplay};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -19,7 +19,9 @@ pub enum ModuleMember {
     Preprocessor(String),
     Include(bool, PathBuf),
     Comment(String),
-    Code(String),
+    Block {
+        members: Vec<ModuleMember>,
+    },
     Class(Rc<RefCell<cpp::Class>>),
     Enum(cpp::Enum),
     TypeDefinition(cpp::TypeDefinition),
@@ -61,7 +63,16 @@ impl fmt::Display for ModuleMember {
                 },
             ),
             Self::Comment(c) => write!(f, "/* {c} */"),
-            Self::Code(c) => write!(f, "{c}"),
+            Self::Block { members } => {
+                writeln!(f, "{{")?;
+
+                for member in members.iter() {
+                    member.tabbed_fmt(1, f)?;
+                    writeln!(f)?;
+                }
+
+                writeln!(f, "}}")
+            },
             Self::Class(c) => c.borrow().fmt(f),
             Self::Enum(e) => e.fmt(f),
             Self::TypeDefinition(u) => u.fmt(f),
