@@ -1312,6 +1312,10 @@ fn process_modules<'a>(
                     }
                 }
 
+                while let Some(cpp::ModuleMember::EmptyLine) = new_members.last() {
+                    new_members.pop();
+                }
+
                 new_members.push(cpp::ModuleMember::EmptyLine);
             }
 
