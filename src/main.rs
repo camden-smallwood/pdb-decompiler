@@ -1243,9 +1243,9 @@ fn process_modules<'a>(
                     .unwrap_or("UNKNOWN")
                     .to_uppercase();
 
-                new_members.push(cpp::ModuleMember::Preprocessor("pragma once".into()));
                 new_members.push(cpp::ModuleMember::Preprocessor(format!("ifndef __{}_H__", stem)));
                 new_members.push(cpp::ModuleMember::Preprocessor(format!("define __{}_H__", stem)));
+                new_members.push(cpp::ModuleMember::Preprocessor("pragma once".into()));
                 new_members.push(cpp::ModuleMember::EmptyLine);
             }
             
@@ -1520,12 +1520,42 @@ fn process_modules<'a>(
             if !new_private_variable_members.is_empty() {
                 new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
                 new_members.push(cpp::ModuleMember::EmptyLine);
+                new_members.push(cpp::ModuleMember::Code("_static".into()));
+                new_members.push(cpp::ModuleMember::Code("{".into()));
 
                 while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
                     new_private_variable_members.pop();
                 }
 
-                new_members.extend(new_private_variable_members);
+                for member in new_private_variable_members.iter() {
+                    match member {
+                        cpp::ModuleMember::Data { name, signature, address, line , .. } => {
+                            new_members.push(cpp::ModuleMember::Data
+                                 {
+                                    is_static: false,
+                                    name: name.clone(),
+                                    signature: signature.clone(),
+                                    address: *address,
+                                    line: *line,
+                                 });
+                        }
+
+                        cpp::ModuleMember::ThreadStorage { name, signature, address, line , .. } => {
+                            new_members.push(cpp::ModuleMember::ThreadStorage
+                                 {
+                                    is_static: false,
+                                    name: name.clone(),
+                                    signature: signature.clone(),
+                                    address: *address,
+                                    line: *line,
+                                 });
+                        }
+
+                        _ => unreachable!("{member:#?}")
+                    }
+                }
+                
+                new_members.push(cpp::ModuleMember::Code("}".into()));
 
                 new_members.push(cpp::ModuleMember::EmptyLine);
             }
@@ -2379,6 +2409,7 @@ fn process_module_symbol_data(
             }
 
             module.members.push(cpp::ModuleMember::ThreadStorage {
+                is_static: !thread_storage_symbol.global,
                 name: thread_storage_symbol.name.to_string().to_string(),
                 signature: format!(
                     "thread_local {}; // 0x{address:X}",
