@@ -1014,7 +1014,7 @@ fn process_modules<'a>(
                     prev_line = *line;
                 }
 
-                cpp::ModuleMember::ThreadStorage(_, _, Some(line)) => {
+                cpp::ModuleMember::ThreadStorage { line: Some(line), .. } => {
                     storage.push((*line, u.clone()));
                     prev_line = *line;
                 }
@@ -1288,7 +1288,7 @@ fn process_modules<'a>(
                 cpp::ModuleMember::Enum(_) => true,
                 // cpp::ModuleMember::Constant(_) => true,
                 cpp::ModuleMember::Data(signature, _, _) => signature.starts_with("const ") && !signature.contains("$"),
-                cpp::ModuleMember::ThreadStorage(signature, _, _) => signature.starts_with("const ") && !signature.contains("$"),
+                cpp::ModuleMember::ThreadStorage { signature, .. } => signature.starts_with("const ") && !signature.contains("$"),
                 _ => false,
             }).cloned().collect::<Vec<_>>();
 
@@ -1436,7 +1436,7 @@ fn process_modules<'a>(
                         && !signature.contains("`")
                         && !signature.contains("$")
                 }
-                cpp::ModuleMember::ThreadStorage(signature, _, _) => {
+                cpp::ModuleMember::ThreadStorage { signature, .. } => {
                     !signature.starts_with("const ")
                         && !signature.contains("`")
                         && !signature.contains("$")
@@ -1444,10 +1444,50 @@ fn process_modules<'a>(
                 _ => false,
             }).cloned().collect::<Vec<_>>();
 
-            if !global_members.is_empty() {
+            let mut new_global_members = vec![];
+
+            for mut member in global_members {
+                let mut create_empty_line = false;
+
+                // Update thread_local variables
+                if let cpp::ModuleMember::ThreadStorage { name, signature, address, .. } = &mut member {
+                    if !matches!(new_global_members.last(), Some(cpp::ModuleMember::EmptyLine)) {
+                        new_global_members.push(cpp::ModuleMember::EmptyLine);
+                    }
+
+                    new_global_members.push(cpp::ModuleMember::FunctionCall(
+                        "static_warning".into(),
+                        vec![
+                            format!("\"TODO: fix {name} declaration\""),
+                        ],
+                    ));
+
+                    let Some((declaration, _comment)) = signature.rsplit_once(';') else {
+                        panic!("Malformed thread storage signature: \"{}\"", signature);
+                    };
+
+                    *signature = format!("{declaration} = tls_get<decltype({name})>(0x{address:X});");
+                    
+                    create_empty_line = true;
+                }
+
+                new_global_members.push(member);
+
+                if create_empty_line {
+                    new_global_members.push(cpp::ModuleMember::EmptyLine);
+                }
+            }
+
+            if !new_global_members.is_empty() {
                 new_members.push(cpp::ModuleMember::Comment("---------- globals".into()));
                 new_members.push(cpp::ModuleMember::EmptyLine);
-                new_members.extend(global_members);
+
+                while let Some(cpp::ModuleMember::EmptyLine) = new_global_members.last() {
+                    new_global_members.pop();
+                }
+
+                new_members.extend(new_global_members);
+
                 new_members.push(cpp::ModuleMember::EmptyLine);
             }
             
@@ -2291,8 +2331,9 @@ fn process_module_symbol_data(
                 return Ok(());
             }
 
-            module.members.push(cpp::ModuleMember::ThreadStorage(
-                format!(
+            module.members.push(cpp::ModuleMember::ThreadStorage {
+                name: thread_storage_symbol.name.to_string().to_string(),
+                signature: format!(
                     "thread_local {}; // 0x{address:X}",
                     cpp::type_name(class_table, type_sizes, 
                         machine_type,
@@ -2307,8 +2348,8 @@ fn process_module_symbol_data(
                     )?,
                 ),
                 address,
-                line_info.map(|x| x.line_start),
-            ));
+                line: line_info.map(|x| x.line_start),
+            });
 
             writeln!(
                 script_file,

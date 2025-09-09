@@ -15,6 +15,7 @@ pub static SOURCE_FILE_EXTS: &[&str] = &[
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleMember {
+    EmptyLine,
     Preprocessor(String),
     Include(bool, PathBuf),
     Comment(String),
@@ -24,17 +25,23 @@ pub enum ModuleMember {
     UsingNamespace(String),
     Constant(String),
     Data(String, u64, Option<u32>),
-    ThreadStorage(String, u64, Option<u32>),
+    ThreadStorage {
+        name: String,
+        signature: String,
+        address: u64,
+        line: Option<u32>,
+    },
     Procedure(cpp::Procedure),
     Tagged(String, Box<ModuleMember>),
     TaggedWrapped(String, Box<ModuleMember>),
-    EmptyLine,
+    FunctionCall(String, Vec<String>),
 }
 
 impl fmt::Display for ModuleMember {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyLine => write!(f, ""),
             Self::Preprocessor(p) => write!(f, "#{p}"),
             Self::Include(global, path) => write!(
                 f,
@@ -52,11 +59,11 @@ impl fmt::Display for ModuleMember {
             Self::UsingNamespace(n) => f.write_fmt(format_args!("using namespace {n};")),
             Self::Constant(c) => c.fmt(f),
             Self::Data(d, _, _) => d.fmt(f),
-            Self::ThreadStorage(t, _, _) => t.fmt(f),
+            Self::ThreadStorage { signature, .. } => signature.fmt(f),
             Self::Procedure(p) => p.fmt(f),
             Self::Tagged(tag, m) => write!(f, "{tag} {m}"),
             Self::TaggedWrapped(tag, m) => write!(f, "{tag} {{ {m} }}"),
-            Self::EmptyLine => write!(f, ""),
+            Self::FunctionCall(function, parameters) => write!(f, "{}({});", function, parameters.join(", ")),
         }
     }
 }
@@ -1693,11 +1700,11 @@ impl fmt::Display for Module {
                         Some(
                             ModuleMember::Constant(_)
                                 | ModuleMember::Data(_, _, _)
-                                | ModuleMember::ThreadStorage(_, _, _)
+                                | ModuleMember::ThreadStorage { .. }
                         ),
                         ModuleMember::Constant(_)
                             | ModuleMember::Data(_, _, _)
-                            | ModuleMember::ThreadStorage(_, _, _)
+                            | ModuleMember::ThreadStorage { .. }
                     )
                 ) {
                     if !skip_empty_line {
