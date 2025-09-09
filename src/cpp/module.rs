@@ -19,6 +19,7 @@ pub enum ModuleMember {
     Preprocessor(String),
     Include(bool, PathBuf),
     Comment(String),
+    Code(String),
     Class(Rc<RefCell<cpp::Class>>),
     Enum(cpp::Enum),
     TypeDefinition(cpp::TypeDefinition),
@@ -32,6 +33,7 @@ pub enum ModuleMember {
         line: Option<u32>,
     },
     ThreadStorage {
+        is_static: bool,
         name: String,
         signature: String,
         address: u64,
@@ -59,6 +61,7 @@ impl fmt::Display for ModuleMember {
                 },
             ),
             Self::Comment(c) => write!(f, "/* {c} */"),
+            Self::Code(c) => write!(f, "{c}"),
             Self::Class(c) => c.borrow().fmt(f),
             Self::Enum(e) => e.fmt(f),
             Self::TypeDefinition(u) => u.fmt(f),
@@ -76,7 +79,18 @@ impl fmt::Display for ModuleMember {
                     signature,
                 )
             },
-            Self::ThreadStorage { signature, .. } => signature.fmt(f),
+            Self::ThreadStorage { is_static, signature, .. } => {
+                write!(
+                    f,
+                    "{}{}",
+                    if *is_static {
+                        "static "
+                    } else {
+                        ""
+                    },
+                    signature,
+                )
+            },
             Self::Procedure(p) => p.fmt(f),
             Self::Tagged(tag, m) => write!(f, "{tag} {m}"),
             Self::TaggedWrapped(tag, m) => write!(f, "{tag} {{ {m} }}"),
