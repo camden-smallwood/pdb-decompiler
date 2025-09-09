@@ -1390,13 +1390,20 @@ fn process_modules<'a>(
                 if let cpp::ModuleMember::Procedure(procedure) = member {
                     let mut procedure = procedure.clone();
 
+                    let is_member_function = matches!(
+                        type_finder.find(procedure.type_index)?.parse()?,
+                        pdb2::TypeData::MemberFunction(_)
+                    );
+
                     procedure.body = None;
                     procedure.address = 0;
                     
-                    prototype_members.push(cpp::ModuleMember::Tagged(
-                        "extern".into(),
-                        Box::new(cpp::ModuleMember::Procedure(procedure)),
-                    ));
+                    if !is_member_function {
+                        prototype_members.push(cpp::ModuleMember::Tagged(
+                            "extern".into(),
+                            Box::new(cpp::ModuleMember::Procedure(procedure)),
+                        ));
+                    }
                 }
             }
 
