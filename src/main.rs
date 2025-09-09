@@ -1009,7 +1009,7 @@ fn process_modules<'a>(
                     prev_line = x.line;
                 }
 
-                cpp::ModuleMember::Data(_, _, Some(line)) => {
+                cpp::ModuleMember::Data { line: Some(line), .. } => {
                     storage.push((*line, u.clone()));
                     prev_line = *line;
                 }
@@ -1287,7 +1287,7 @@ fn process_modules<'a>(
             let constant_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Enum(_) => true,
                 // cpp::ModuleMember::Constant(_) => true,
-                cpp::ModuleMember::Data(signature, _, _) => signature.starts_with("const ") && !signature.contains("$"),
+                cpp::ModuleMember::Data { signature, .. } => signature.starts_with("const ") && !signature.contains("$"),
                 cpp::ModuleMember::ThreadStorage { signature, .. } => signature.starts_with("const ") && !signature.contains("$"),
                 _ => false,
             }).cloned().collect::<Vec<_>>();
@@ -1438,7 +1438,7 @@ fn process_modules<'a>(
             //--------------------------------------------------------------------------------
 
             let global_members = members.iter().filter(|m| match m {
-                cpp::ModuleMember::Data(signature, _, _) => {
+                cpp::ModuleMember::Data { is_static: false, signature, .. } => {
                     !signature.starts_with("const ")
                         && !signature.contains("`")
                         && !signature.contains("$")
@@ -1494,6 +1494,38 @@ fn process_modules<'a>(
                 }
 
                 new_members.extend(new_global_members);
+
+                new_members.push(cpp::ModuleMember::EmptyLine);
+            }
+            
+            //--------------------------------------------------------------------------------
+            // private mutable vars
+            //--------------------------------------------------------------------------------
+
+            let private_variable_members = members.iter().filter(|m| match m {
+                cpp::ModuleMember::Data { is_static: true, signature, .. } => {
+                    !signature.starts_with("const ")
+                        && !signature.contains("`")
+                        && !signature.contains("$")
+                }
+                _ => false,
+            }).cloned().collect::<Vec<_>>();
+
+            let mut new_private_variable_members = vec![];
+
+            for member in private_variable_members {
+                new_private_variable_members.push(member);
+            }
+
+            if !new_private_variable_members.is_empty() {
+                new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
+                new_members.push(cpp::ModuleMember::EmptyLine);
+
+                while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
+                    new_private_variable_members.pop();
+                }
+
+                new_members.extend(new_private_variable_members);
 
                 new_members.push(cpp::ModuleMember::EmptyLine);
             }
@@ -2177,7 +2209,9 @@ fn process_module_symbol_data(
             let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_file_path.clone()));
 
             let user_defined_type = cpp::ModuleMember::TypeDefinition(cpp::TypeDefinition {
-                type_name: cpp::type_name(class_table, type_sizes, 
+                type_name: cpp::type_name(
+                    class_table,
+                    type_sizes,
                     machine_type,
                     type_info,
                     type_finder,
@@ -2203,7 +2237,9 @@ fn process_module_symbol_data(
             let module_key = module_file_path.to_string_lossy().to_lowercase().to_string();
             let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_file_path.clone()));
 
-            let type_name = cpp::type_name(class_table, type_sizes, 
+            let type_name = cpp::type_name(
+                class_table,
+                type_sizes,
                 machine_type,
                 type_info,
                 type_finder,
@@ -2272,16 +2308,20 @@ fn process_module_symbol_data(
             let address = base_address.unwrap_or(0) + rva.0 as u64;
 
             if module.members.iter().any(|member| match member {
-                cpp::ModuleMember::Data(_, a, _) if *a == address => true,
+                cpp::ModuleMember::Data { address: a, .. } if *a == address => true,
                 _ => false,
             }) {
                 return Ok(());
             }
 
-            module.members.push(cpp::ModuleMember::Data(
-                format!(
+            module.members.push(cpp::ModuleMember::Data {
+                is_static: data_symbol.global,
+                name: data_symbol.name.to_string().to_string(),
+                signature: format!(
                     "{}; // 0x{address:X}",
-                    cpp::type_name(class_table, type_sizes, 
+                    cpp::type_name(
+                        class_table,
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -2294,8 +2334,8 @@ fn process_module_symbol_data(
                     )?,
                 ),
                 address,
-                line_info.map(|x| x.line_start),
-            ));
+                line: line_info.map(|x| x.line_start),
+            });
 
             writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module_file_path.to_string_lossy())?;
         }
@@ -2332,7 +2372,7 @@ fn process_module_symbol_data(
             let address = base_address.unwrap_or(0) + rva.0 as u64;
 
             if module.members.iter().any(|member| match member {
-                cpp::ModuleMember::Data(_, a, _) if *a == address => true,
+                cpp::ModuleMember::Data { address: a, .. } if *a == address => true,
                 _ => false,
             }) {
                 return Ok(());
@@ -2342,7 +2382,9 @@ fn process_module_symbol_data(
                 name: thread_storage_symbol.name.to_string().to_string(),
                 signature: format!(
                     "thread_local {}; // 0x{address:X}",
-                    cpp::type_name(class_table, type_sizes, 
+                    cpp::type_name(
+                        class_table,
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -2559,7 +2601,7 @@ fn process_module_symbol_data(
             let address = base_address.unwrap_or(0) + rva.0 as u64;
 
             if module.members.iter().any(|member| match member {
-                cpp::ModuleMember::Data(_, a, _) if *a == address => true,
+                cpp::ModuleMember::Data { address: a, .. } if *a == address => true,
                 _ => false,
             }) {
                 return Ok(());
@@ -2567,7 +2609,7 @@ fn process_module_symbol_data(
 
             let procedure = cpp::type_name(
                 class_table,
-                type_sizes, 
+                type_sizes,
                 machine_type,
                 type_info,
                 type_finder,
@@ -2997,7 +3039,9 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Constant(constant_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(class_table, type_sizes, 
+                    signature: cpp::type_name(
+                        class_table,
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -3027,7 +3071,9 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Data(data_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(class_table, type_sizes, 
+                    signature: cpp::type_name(
+                        class_table,
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -3047,7 +3093,9 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Local(local_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(class_table, type_sizes, 
+                    signature: cpp::type_name(
+                        class_table,
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -3084,7 +3132,9 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                 statements.push(cpp::Statement::Variable(cpp::Variable {
                     signature: format!(
                         "thread_local {}",
-                        cpp::type_name(class_table, type_sizes, 
+                        cpp::type_name(
+                            class_table,
+                            type_sizes,
                             machine_type,
                             type_info,
                             type_finder,

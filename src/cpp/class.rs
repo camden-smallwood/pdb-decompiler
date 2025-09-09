@@ -504,7 +504,9 @@ impl Class {
                 };
                 
                 self.members.push(ClassMember::Field(Field {
-                    type_name: type_name(class_table, type_sizes, 
+                    type_name: type_name(
+                        class_table,
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -516,7 +518,9 @@ impl Class {
                         false
                     )?,
                     name: data.name.to_string().to_string(),
-                    display: type_name(class_table, type_sizes, 
+                    display: type_name(
+                        class_table,
+                        type_sizes,
                         machine_type,
                         type_info,
                         type_finder,
@@ -543,7 +547,9 @@ impl Class {
                 self.members.push(ClassMember::Field(Field {
                     type_name: format!(
                         "static {}",
-                        type_name(class_table, type_sizes, 
+                        type_name(
+                            class_table,
+                            type_sizes,
                             machine_type,
                             type_info,
                             type_finder,
@@ -558,7 +564,9 @@ impl Class {
                     name: data.name.to_string().to_string(),
                     display: format!(
                         "static {}",
-                        type_name(class_table, type_sizes, 
+                        type_name(
+                            class_table,
+                            type_sizes,
                             machine_type,
                             type_info,
                             type_finder,
@@ -923,7 +931,9 @@ impl Class {
                     }
 
                     pdb2::TypeData::Procedure(_) => {
-                        let type_name = type_name(class_table, type_sizes, 
+                        let type_name = type_name(
+                            class_table,
+                            type_sizes,
                             machine_type,
                             type_info,
                             type_finder,
