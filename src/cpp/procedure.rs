@@ -15,6 +15,7 @@ pub enum Statement {
     Block(Block),
     Return(Return),
     ReturnWithValue(ReturnWithValue),
+    EmptyLine,
 }
 
 impl TabbedDisplay for Statement {
@@ -76,6 +77,10 @@ impl TabbedDisplay for Statement {
                 else {
                     write!(f, "return;")?;
                 }
+            }
+
+            Statement::EmptyLine => {
+                write!(f, "")?;
             }
         }
 

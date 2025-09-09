@@ -28,6 +28,7 @@ pub enum ModuleMember {
     Procedure(cpp::Procedure),
     Tagged(String, Box<ModuleMember>),
     TaggedWrapped(String, Box<ModuleMember>),
+    EmptyLine,
 }
 
 impl fmt::Display for ModuleMember {
@@ -55,6 +56,7 @@ impl fmt::Display for ModuleMember {
             Self::Procedure(p) => p.fmt(f),
             Self::Tagged(tag, m) => write!(f, "{tag} {m}"),
             Self::TaggedWrapped(tag, m) => write!(f, "{tag} {{ {m} }}"),
+            Self::EmptyLine => write!(f, ""),
         }
     }
 }
@@ -1635,24 +1637,9 @@ impl Module {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test() {
-        let args_string = "";
-        let mut chars_iter = args_string.chars().peekable();
-        let mut module = super::Module::default();
-        module.parse_arguments(
-            &std::path::PathBuf::from("/Users/camden/Source/pdb-decompiler/out/test/"),
-            "",
-            args_string,
-            &mut chars_iter
-        );
-    }
-}
-
 impl fmt::Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let has_explicit_empty_lines = self.members.iter().any(|m| matches!(m, ModuleMember::EmptyLine));
         let mut skip_empty_line = true;
 
         if self.is_header() && !self.members.iter().any(|m| {
@@ -1661,7 +1648,9 @@ impl fmt::Display for Module {
             };
             p == "pragma once"
         }) {
-            skip_empty_line = false;
+            if !has_explicit_empty_lines {
+                skip_empty_line = false;
+            }
             writeln!(f, "#pragma once")?;
         }
 
@@ -1715,7 +1704,9 @@ impl fmt::Display for Module {
                         writeln!(f)?;
                     }
                     
-                    skip_empty_line = false;
+                    if !has_explicit_empty_lines {
+                        skip_empty_line = false;
+                    }
                 }
             }
             
@@ -1727,5 +1718,21 @@ impl fmt::Display for Module {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test() {
+        let args_string = "";
+        let mut chars_iter = args_string.chars().peekable();
+        let mut module = super::Module::default();
+        module.parse_arguments(
+            &std::path::PathBuf::from("/Users/camden/Source/pdb-decompiler/out/test/"),
+            "",
+            args_string,
+            &mut chars_iter
+        );
     }
 }
