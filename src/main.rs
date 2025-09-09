@@ -2503,11 +2503,15 @@ fn process_module_symbol_data(
 
                         if class_method_name == procedure_name {
                             let valid = if class_member_function.argument_list == member_function.argument_list {
-                                true
+                                class_member_function.return_type == member_function.return_type
                             } else {
-                                let lhs = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
-                                let rhs = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
-                                lhs == rhs
+                                let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, false, true)?;
+                                let lhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
+
+                                let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, false, true)?;
+                                let rhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
+
+                                (lhs_return_type == rhs_return_type) && (lhs_arg_list == rhs_arg_list)
                             };
 
                             if valid {
