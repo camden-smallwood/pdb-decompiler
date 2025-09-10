@@ -1331,10 +1331,14 @@ fn process_modules<'a>(
             // headers
             //--------------------------------------------------------------------------------
 
-            if !module.headers.is_empty() {
-                new_members.push(cpp::ModuleMember::Comment("---------- headers".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
+            new_members.push(cpp::ModuleMember::Comment("---------- headers".into()));
+            new_members.push(cpp::ModuleMember::EmptyLine);
 
+            if !module.is_header() {
+                new_members.push(cpp::ModuleMember::Include(false, "ares/ares.h".into()));
+            }
+
+            if !module.headers.is_empty() {
                 for (path, global) in module.headers.iter() {
                     new_members.push(cpp::ModuleMember::Include(*global, path.clone()));
                 }
@@ -1370,10 +1374,10 @@ fn process_modules<'a>(
                 _ => false,
             }).cloned().collect::<Vec<_>>();
 
-            if !constant_members.is_empty() {
-                new_members.push(cpp::ModuleMember::Comment("---------- constants".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
+            new_members.push(cpp::ModuleMember::Comment("---------- constants".into()));
+            new_members.push(cpp::ModuleMember::EmptyLine);
 
+            if !constant_members.is_empty() {
                 for member in constant_members {
                     match member {
                         cpp::ModuleMember::Enum(enum_data) => {
@@ -1428,10 +1432,10 @@ fn process_modules<'a>(
                 }
             }
 
-            if !new_definition_members.is_empty() {
-                new_members.push(cpp::ModuleMember::Comment("---------- definitions".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
+            new_members.push(cpp::ModuleMember::Comment("---------- definitions".into()));
+            new_members.push(cpp::ModuleMember::EmptyLine);
 
+            if !new_definition_members.is_empty() {
                 while let Some(cpp::ModuleMember::EmptyLine) = new_definition_members.last() {
                     new_definition_members.pop();
                 }
@@ -1504,9 +1508,10 @@ fn process_modules<'a>(
                 }
             }
 
+            new_members.push(cpp::ModuleMember::Comment("---------- prototypes".into()));
+            new_members.push(cpp::ModuleMember::EmptyLine);
+
             if !prototype_members.is_empty() {
-                new_members.push(cpp::ModuleMember::Comment("---------- prototypes".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
                 new_members.extend(prototype_members);
                 new_members.push(cpp::ModuleMember::EmptyLine);
             }
@@ -1563,10 +1568,10 @@ fn process_modules<'a>(
                 }
             }
 
-            if !new_global_members.is_empty() {
-                new_members.push(cpp::ModuleMember::Comment("---------- globals".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
+            new_members.push(cpp::ModuleMember::Comment("---------- globals".into()));
+            new_members.push(cpp::ModuleMember::EmptyLine);
 
+            if !new_global_members.is_empty() {
                 while let Some(cpp::ModuleMember::EmptyLine) = new_global_members.last() {
                     new_global_members.pop();
                 }
@@ -1595,10 +1600,10 @@ fn process_modules<'a>(
                 new_private_variable_members.push(member);
             }
 
-            if !new_private_variable_members.is_empty() {
-                new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
+            new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
+            new_members.push(cpp::ModuleMember::EmptyLine);
 
+            if !new_private_variable_members.is_empty() {
                 while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
                     new_private_variable_members.pop();
                 }
@@ -1760,9 +1765,10 @@ fn process_modules<'a>(
                 new_public_code_members.push(cpp::ModuleMember::EmptyLine);
             }
 
+            new_members.push(cpp::ModuleMember::Comment("---------- public code".into()));
+            new_members.push(cpp::ModuleMember::EmptyLine);
+
             if !new_public_code_members.is_empty() {
-                new_members.push(cpp::ModuleMember::Comment("---------- public code".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
                 new_members.extend(new_public_code_members);
             }
 
@@ -1889,10 +1895,11 @@ fn process_modules<'a>(
 
                 new_private_code_members.push(cpp::ModuleMember::EmptyLine);
             }
-            
+        
+            new_members.push(cpp::ModuleMember::Comment("---------- private code".into()));
+            new_members.push(cpp::ModuleMember::EmptyLine);
+
             if !new_private_code_members.is_empty() {
-                new_members.push(cpp::ModuleMember::Comment("---------- private code".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
                 new_members.extend(new_private_code_members);
             }
 
