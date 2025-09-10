@@ -231,7 +231,7 @@ pub fn type_name<'p>(
             if element_size == 0 {
                 element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             }
-            
+
             assert!(element_size != 0);
 
             for &size in data.dimensions.iter() {
@@ -396,6 +396,13 @@ pub fn type_name<'p>(
                 }
 
                 name.push(')');
+
+                name.push_str(
+                    format!(
+                        "({})",
+                        argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, procedure_data.argument_list, parameter_names)?.join(", ")
+                    ).as_str()
+                );
 
                 name
             }
