@@ -22,8 +22,9 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 |-|-|-|
 | `-h` | `--help` | Prints help information. |
 | `-r` | `--reorganize` | Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental) |
-| `-u` | `--unroll-functions` | Whether to include scope information in decompiled function stubs. (Experimental) |
 | `-V` | `--version` | Prints version information. |
+| `-u` | `--unroll-functions` | Whether to include scope information in decompiled function stubs. (Experimental) |
+| `-f` | `--function-scopes-pdb` | The file path to the MSVC PDB file to decompile for extra function scope information. |
 
 ### Options
 

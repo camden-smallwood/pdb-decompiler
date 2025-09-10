@@ -31,6 +31,10 @@ struct Options {
     /// Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental)
     #[structopt(short, long)]
     reorganize: bool,
+
+    /// The file path to the MSVC PDB file to decompile for extra function scope information.
+    #[structopt(short, long)]
+    function_scopes_pdb: Option<String>,
 }
 
 fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
@@ -99,10 +103,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         *out = canonicalize_path(out.to_str().unwrap_or(""), "", "", true);
     }
 
+    let mut function_scopes_modules = None;
+
+    if options.function_scopes_pdb.is_some() {
+        let mut options2 = options.clone();
+        options2.pdb = options2.function_scopes_pdb.take();
+        options2.reorganize = false;
+        options2.unroll_functions = true;
+        
+        if let Some(out) = options2.out.as_mut() {
+            *out = format!("{}_FUNCTION_SCOPES_TEMP/", out.to_string_lossy().trim_end_matches('/')).into();
+        }
+        
+        let pdb_path = options2.pdb.clone().ok_or("PDB path not provided")?;
+        let pdb = pdb2::PDB::open(File::open(pdb_path)?)?;
+
+        match decompile_pdb(&options2, pdb, None) {
+            Ok(modules) => function_scopes_modules = Some(modules),
+            Err(error) => println!("ERROR: could not decompile PDB because it {error}"),
+        }
+    }
+
     let pdb_path = options.pdb.clone().ok_or("PDB path not provided")?;
     let pdb = pdb2::PDB::open(File::open(pdb_path)?)?;
 
-    if let Err(error) = decompile_pdb(&options, pdb) {
+    if let Err(error) = decompile_pdb(&options, pdb, function_scopes_modules) {
         println!("ERROR: could not decompile PDB because it {error}");
     }
 
@@ -110,7 +135,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 #[inline(always)]
-fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<dyn Error>> {
+fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>, function_scopes_modules: Option<HashMap<String, cpp::Module>>) -> Result<HashMap<String, cpp::Module>, Box<dyn Error>> {
     let debug_info = pdb.debug_information().map_err(|e| format!("does not contain debug information: {e}"))?;
     let machine_type = debug_info.machine_type().unwrap_or(pdb2::MachineType::Unknown);
     
@@ -176,8 +201,11 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>) -> Result<(), Box<
         &type_info,
         &type_finder,
         &mut modules,
-        &mut script_file
-    )
+        &mut script_file,
+        function_scopes_modules,
+    )?;
+
+    Ok(modules)
 }
 
 #[inline(always)]
@@ -467,6 +495,7 @@ fn process_modules<'a>(
     type_finder: &pdb2::TypeFinder,
     modules: &mut HashMap<String, cpp::Module>,
     script_file: &mut File,
+    function_scopes_modules: Option<HashMap<String, cpp::Module>>,
 ) -> Result<(), Box<dyn Error>> {
     let module_global_symbols = load_module_global_symbols(debug_info, global_symbols)
         .map_err(|e| format!("failed to load module global symbol info: {e}"))?;
@@ -552,6 +581,53 @@ fn process_modules<'a>(
 
     for (k, v) in new_modules {
         modules.entry(k).or_insert(v);
+    }
+
+    //
+    // Include extra function scopes if present
+    //
+
+    if let Some(function_scopes_modules) = function_scopes_modules.as_ref() {
+        for function_scopes_module in function_scopes_modules.values() {
+            for module in modules.values_mut() {
+                if module.path.file_stem() == function_scopes_module.path.file_stem() {
+                    for function_scope_member in function_scopes_module.members.iter() {
+                        let cpp::ModuleMember::Procedure(function_scope_procedure) = function_scope_member else {
+                            continue;
+                        };
+
+                        if function_scope_procedure.body.is_none() {
+                            continue;
+                        }
+
+                        if let Some(member) = module.members.iter_mut().find(|m| {
+                            let cpp::ModuleMember::Procedure(p) = m else {
+                                return false;
+                            };
+
+                            p.body.is_some() && p.signature == function_scope_procedure.signature
+                        }) {
+                            let cpp::ModuleMember::Procedure(procedure) = member else {
+                                unreachable!()
+                            };
+
+                            let Some(procedure_body) = procedure.body.as_mut() else {
+                                unreachable!();
+                            };
+                            
+                            procedure_body.statements.push(cpp::Statement::EmptyLine);
+                            procedure_body.statements.push(cpp::Statement::Comment("DEBUG:".to_string()));
+                            procedure_body.statements.push(cpp::Statement::Commented(Box::new(
+                                cpp::Statement::Block(cpp::Block {
+                                    address: function_scope_procedure.body.as_ref().unwrap().address.clone(),
+                                    statements: function_scope_procedure.body.as_ref().unwrap().statements.clone(),
+                                }),
+                            )));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     //
@@ -983,7 +1059,7 @@ fn process_modules<'a>(
         }
     }
     
-    for mut module in modules.values().cloned() {
+    for module in modules.values_mut() {
         let path = PathBuf::from(sanitize_path(format!(
             "{}/{}",
             options.out.as_ref().unwrap().to_string_lossy(),
@@ -1647,6 +1723,7 @@ fn process_modules<'a>(
                         line: procedure.line,
                         type_index: procedure.type_index,
                         is_static: procedure.is_static,
+                        name: format!("_sub_{:X}", procedure.address).into(),
                         signature: cpp::type_name(
                             class_table,
                             type_sizes,
@@ -1789,6 +1866,7 @@ fn process_modules<'a>(
                         line: procedure.line,
                         type_index: procedure.type_index,
                         is_static: false,
+                        name: format!("_sub_{:X}", procedure.address).into(),
                         signature: cpp::type_name(
                             class_table,
                             type_sizes,
@@ -2651,12 +2729,15 @@ fn process_module_symbol_data(
                 Some(parameters),
             ).unwrap();
 
+            println!("ADDING PROCEDURE: {}", procedure_symbol.name);
+
             module.members.push(
                 cpp::ModuleMember::Procedure(cpp::Procedure {
                     address,
                     line: line_info.map(|x| x.line_start),
                     type_index: procedure_symbol.type_index,
                     is_static: !procedure_symbol.global,
+                    name: procedure_symbol.name.to_string().to_string(),
                     signature: procedure,
                     body,
                     return_type:match type_finder.find(procedure_symbol.type_index)?.parse()? {

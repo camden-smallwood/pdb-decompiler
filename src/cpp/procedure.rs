@@ -174,6 +174,7 @@ pub struct Procedure {
     pub line: Option<u32>,
     pub type_index: pdb2::TypeIndex,
     pub is_static: bool,
+    pub name: String,
     pub signature: String,
     pub body: Option<Block>,
     pub return_type: Option<pdb2::TypeIndex>,
