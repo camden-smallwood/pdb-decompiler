@@ -35,6 +35,10 @@ struct Options {
     /// The file path to the MSVC PDB file to decompile for extra function scope information.
     #[structopt(short, long)]
     function_scopes_pdb: Option<String>,
+
+    /// The output directory to dump all function scopes C++ code to.
+    #[structopt(short, long, parse(from_os_str))]
+    function_scopes_out: Option<PathBuf>,
 }
 
 fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
@@ -110,10 +114,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         options2.pdb = options2.function_scopes_pdb.take();
         options2.reorganize = false;
         options2.unroll_functions = true;
-        
-        if let Some(out) = options2.out.as_mut() {
-            *out = format!("{}_FUNCTION_SCOPES_TEMP/", out.to_string_lossy().trim_end_matches('/')).into();
-        }
+        options2.out = options.function_scopes_out.take();
         
         let pdb_path = options2.pdb.clone().ok_or("PDB path not provided")?;
         let pdb = pdb2::PDB::open(File::open(pdb_path)?)?;
