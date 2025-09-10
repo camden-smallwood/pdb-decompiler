@@ -1722,8 +1722,8 @@ impl fmt::Display for Module {
             if !matches!(
                 (prev_item, item),
                 (
-                    Some(ModuleMember::Tagged(_, _)) | Some(ModuleMember::TaggedWrapped(_, _)),
-                    ModuleMember::Procedure(cpp::Procedure { .. }) | ModuleMember::Tagged(_, _) | ModuleMember::TaggedWrapped(_, _)
+                    Some(ModuleMember::Tagged(_, _)),
+                    ModuleMember::Procedure(cpp::Procedure { .. }) | ModuleMember::Tagged(_, _)
                 )
             ) {
                 if !matches!(
