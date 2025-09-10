@@ -43,6 +43,7 @@ pub enum ModuleMember {
     },
     Procedure(cpp::Procedure),
     Tagged(String, Box<ModuleMember>),
+    #[allow(unused)]
     TaggedWrapped(String, Box<ModuleMember>),
     FunctionCall(String, Vec<String>),
 }

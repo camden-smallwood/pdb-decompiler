@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports)]
-
 mod cpp;
 mod tabbed;
 
@@ -619,7 +617,7 @@ fn process_modules<'a>(
                             if !procedure_body.statements.is_empty() {
                                 procedure_body.statements.push(cpp::Statement::EmptyLine);
                             }
-                            
+
                             procedure_body.statements.push(cpp::Statement::Comment("DEBUG:".to_string()));
                             procedure_body.statements.push(cpp::Statement::Commented(Box::new(
                                 cpp::Statement::Block(cpp::Block {

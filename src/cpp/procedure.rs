@@ -13,6 +13,7 @@ pub enum Statement {
     Variable(Variable),
     FunctionCall(String, Vec<String>),
     Block(Block),
+    #[allow(unused)]
     Return(Return),
     ReturnWithValue(ReturnWithValue),
     EmptyLine,

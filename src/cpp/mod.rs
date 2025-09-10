@@ -2,13 +2,12 @@ mod class;
 mod r#enum;
 mod module;
 mod procedure;
-mod type_names;
 mod typedef;
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 pub use self::{
-    class::*, r#enum::*, module::*, procedure::*, type_names::*, typedef::*
+    class::*, r#enum::*, module::*, procedure::*, typedef::*
 };
 
 use pdb2::{FallibleIterator, PrimitiveKind};
