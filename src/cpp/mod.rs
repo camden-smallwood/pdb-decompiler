@@ -327,8 +327,58 @@ pub fn type_name<'p>(
 
         pdb2::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
             Ok(pdb2::TypeData::Array(array_type)) => {
-                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type, modifier, None, None, false)?;
+                let mut dimensions = vec![];
+                let mut element_type = array_type.element_type;
+
+                match type_finder.find(array_type.element_type)?.parse()? {
+                    pdb2::TypeData::Array(array_type) => {
+                        match type_finder.find(array_type.element_type)?.parse()? {
+                            pdb2::TypeData::Array(_) => todo!(),
+                            
+                            pdb2::TypeData::Modifier(modifier_type) => match type_finder.find(modifier_type.underlying_type)?.parse()? {
+                                pdb2::TypeData::Array(_) => todo!(),
+                                pdb2::TypeData::Modifier(_) => todo!(),
+
+                                _ => {}
+                            }
+
+                            _ => {}
+                        }
+
+                        element_type = array_type.element_type;
+
+                        let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
+                        
+                        if element_size == 0 {
+                            element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
+                        }
+
+                        assert!(element_size != 0);
+                        
+                        for &size in array_type.dimensions.iter() {
+                            dimensions.push(if element_size == 0 { size } else { size / element_size as u32 });
+                            element_size = size as usize;
+                        }
+
+                        println!("dimensions: {:#?}", dimensions);
+                    }
+
+                    pdb2::TypeData::Modifier(modifier_data) => match type_finder.find(modifier_data.underlying_type)?.parse()? {
+                        pdb2::TypeData::Array(_) => todo!(),
+                        pdb2::TypeData::Modifier(_) => todo!(),
+                        _ => {}
+                    }
+
+                    _ => {}
+                }
+
+                // if let Some(field_name) = declaration_name.as_ref() && field_name == "k_speaker_ranges" {
+                //     println!("{field_name} array type: {array_type:#?}");
+                //     println!("{field_name} element type: {name} {element_type:#?}");
+                // }
                 
+                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, None, None, false)?;
+
                 if data.attributes.is_reference() {
                     name.push_str(" (&");
                 } else {
@@ -349,7 +399,7 @@ pub fn type_name<'p>(
                     name.push_str(field_name.as_str());
                 }
                 
-                name.push(')');
+                name.push_str(format!("){}", dimensions.iter().map(|d| format!("[{d}]")).collect::<Vec<_>>().join("")).as_str());
 
                 let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
                 
