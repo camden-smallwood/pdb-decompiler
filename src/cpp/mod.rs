@@ -151,6 +151,26 @@ pub fn type_name<'p>(
     let type_data = type_item.parse()?;
 
     let mut name = match &type_data {
+        pdb2::TypeData::Modifier(data) => {
+            type_name(
+                class_table,
+                type_sizes,
+                machine_type,
+                type_info,
+                type_finder,
+                data.underlying_type,
+                Some(data),
+                declaration_name,
+                None,
+                false
+            )?
+        }
+
+        pdb2::TypeData::Bitfield(data) => {
+            let name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, false)?;
+            format!("{} : {}", name, data.length)
+        }
+
         pdb2::TypeData::Primitive(data) => {
             let mut name = primitive_name(data.kind).to_string();
 
@@ -204,6 +224,109 @@ pub fn type_name<'p>(
             name
         }
 
+        pdb2::TypeData::Array(data) => {
+            let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, declaration_name, None, false)?;
+            let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
+            
+            if element_size == 0 {
+                element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
+            }
+            
+            assert!(element_size != 0);
+
+            for &size in data.dimensions.iter() {
+                name = format!("{}[{}]", name, if element_size == 0 { size } else { size / element_size as u32 });
+                element_size = size as usize;
+            }
+            
+            name
+        }
+
+        pdb2::TypeData::Procedure(data) => {
+            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
+                if let Some(field_name) = declaration_name.as_ref() {
+                    field_name.clone()
+                } else {
+                    String::new()
+                }
+            } else {
+                let mut name = match data.return_type {
+                    Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, false)?,
+                    None => String::new(),
+                };
+
+                if data.return_type.is_some() && !(name.ends_with(' ') || name.ends_with('*') || name.ends_with('&')) {
+                    name.push(' ');
+                }
+
+                if let Some(field_name) = declaration_name {
+                    name.push_str(field_name.as_str());
+                }
+
+                name
+            };
+
+            name.push_str(
+                format!(
+                    "({})",
+                    argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", ")
+                ).as_str()
+            );
+
+            name
+        }
+
+        pdb2::TypeData::MemberFunction(data) => {
+            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
+                if let Some(field_name) = declaration_name.as_ref() {
+                    field_name.clone()
+                } else {
+                    String::new()
+                }
+            } else {
+                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.return_type, modifier, None, None, false)?;
+
+                if !(name.ends_with(' ') || name.ends_with('*') || name.ends_with('&')) {
+                    name.push(' ');
+                }
+
+                if let Some(field_name) = declaration_name {
+                    name.push_str(field_name.as_str());
+                }
+
+                name
+            };
+
+            let mut parameter_names = parameter_names;
+
+            if include_this && let Some(this_pointer_type) = data.this_pointer_type {
+                name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, Some(this_pointer_type), data.argument_list, parameter_names)?.join(", "));
+            }
+            else {
+                if let Some(parameter_names) = parameter_names.as_mut()
+                    && data.this_pointer_type.is_some()
+                    && !parameter_names.is_empty()
+                    && parameter_names[0] == "this"
+                {
+                    parameter_names.remove(0);
+                }
+
+                name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", "));
+            }
+
+            if let Some(modifier) = get_member_function_modifier(data, type_finder) {
+                if modifier.constant {
+                    name.push_str(" const");
+                }
+
+                if modifier.volatile {
+                    name.push_str(" volatile");
+                }
+            }
+
+            name
+        }
+
         pdb2::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
             Ok(pdb2::TypeData::Array(array_type)) => {
                 let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type, modifier, None, None, false)?;
@@ -235,6 +358,7 @@ pub fn type_name<'p>(
                 if element_size == 0 {
                     element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
                 }
+
                 assert!(element_size != 0);
                 
                 for &size in array_type.dimensions.iter() {
@@ -351,126 +475,6 @@ pub fn type_name<'p>(
                 name
             }
         },
-
-        pdb2::TypeData::Modifier(data) => {
-            type_name(
-                class_table,
-                type_sizes,
-                machine_type,
-                type_info,
-                type_finder,
-                data.underlying_type,
-                Some(data),
-                declaration_name,
-                None,
-                false
-            )?
-        }
-
-        pdb2::TypeData::Array(data) => {
-            let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, declaration_name, None, false)?;
-            let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
-            
-            if element_size == 0 {
-                element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
-            }
-            assert!(element_size != 0);
-
-            for &size in data.dimensions.iter() {
-                name = format!("{}[{}]", name, if element_size == 0 { size } else { size / element_size as u32 });
-                element_size = size as usize;
-            }
-            
-            name
-        }
-
-        pdb2::TypeData::Bitfield(data) => {
-            let name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, false)?;
-            format!("{} : {}", name, data.length)
-        }
-
-        pdb2::TypeData::Procedure(data) => {
-            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
-                if let Some(field_name) = declaration_name.as_ref() {
-                    field_name.clone()
-                } else {
-                    String::new()
-                }
-            } else {
-                let mut name = match data.return_type {
-                    Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, false)?,
-                    None => String::new(),
-                };
-
-                if data.return_type.is_some() {
-                    name.push(' ');
-                }
-
-                if let Some(field_name) = declaration_name {
-                    name.push_str(field_name.as_str());
-                }
-
-                name
-            };
-
-            name.push_str(
-                format!(
-                    "({})",
-                    argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", ")
-                ).as_str()
-            );
-
-            name
-        }
-
-        pdb2::TypeData::MemberFunction(data) => {
-            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
-                if let Some(field_name) = declaration_name.as_ref() {
-                    field_name.clone()
-                } else {
-                    String::new()
-                }
-            } else {
-                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.return_type, modifier, None, None, false)?;
-
-                name.push(' ');
-
-                if let Some(field_name) = declaration_name {
-                    name.push_str(field_name.as_str());
-                }
-
-                name
-            };
-
-            let mut parameter_names = parameter_names;
-
-            if include_this && let Some(this_pointer_type) = data.this_pointer_type {
-                name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, Some(this_pointer_type), data.argument_list, parameter_names)?.join(", "));
-            }
-            else {
-                if let Some(parameter_names) = parameter_names.as_mut()
-                    && data.this_pointer_type.is_some()
-                    && !parameter_names.is_empty()
-                    && parameter_names[0] == "this"
-                {
-                    parameter_names.remove(0);
-                }
-
-                name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", "));
-            }
-
-            if let Some(modifier) = get_member_function_modifier(data, type_finder) {
-                if modifier.constant {
-                    name.push_str(" const");
-                }
-
-                if modifier.volatile {
-                    name.push_str(" volatile");
-                }
-            }
-
-            name
-        }
 
         pdb2::TypeData::MethodList(_) => {
             // println!("WARNING: Encountered method list in type_name, using `...`");
