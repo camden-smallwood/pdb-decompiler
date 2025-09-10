@@ -359,8 +359,6 @@ pub fn type_name<'p>(
                             dimensions.push(if element_size == 0 { size } else { size / element_size as u32 });
                             element_size = size as usize;
                         }
-
-                        println!("dimensions: {:#?}", dimensions);
                     }
 
                     pdb2::TypeData::Modifier(modifier_data) => match type_finder.find(modifier_data.underlying_type)?.parse()? {
