@@ -1784,37 +1784,23 @@ fn process_modules<'a>(
 
                 comment_block(procedure.body.as_mut().unwrap());
 
-                if let Some((mangled_name, _address)) = module.mangled_symbols.iter()
-                    .find(|(_, address)| *address == procedure.address)
-                {
-                    if procedure.body.is_none() {
-                        procedure.body = Some(cpp::Block::default());
-                    }
-
-                    procedure.body.as_mut().unwrap().statements.insert(
-                        0,
-                        cpp::Statement::FunctionCall(
-                            "mangled_assert".into(),
-                            vec![
-                                format!("\"{}\"", mangled_name),
-                            ],
-                        ),
-                    );
-
-                    procedure.body.as_mut().unwrap().statements.insert(
-                        1,
-                        cpp::Statement::FunctionCall(
-                            "mangled_assert".into(),
-                            vec![
-                                format!("\"{}\"", mangled_name),
-                            ],
-                        ),
-                    );
-
-                    procedure.body.as_mut().unwrap().statements.push(
-                        cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
-                    );
+                if procedure.body.is_none() {
+                    procedure.body = Some(cpp::Block::default());
                 }
+
+                procedure.body.as_mut().unwrap().statements.insert(
+                    0,
+                    cpp::Statement::FunctionCall(
+                        "mangled_assert".into(),
+                        vec![
+                            format!("\"{}\"", procedure.name),
+                        ],
+                    ),
+                );
+
+                procedure.body.as_mut().unwrap().statements.push(
+                    cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
+                );
 
                 let return_type_str = procedure.return_type.map(|return_type| {
                     cpp::type_name(
