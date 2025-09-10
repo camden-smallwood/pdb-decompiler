@@ -2915,10 +2915,35 @@ fn parse_procedure_symbols(
     let register_variable_names = register_variable_names.borrow().to_vec();
     let register_relative_names = register_relative_names.borrow().to_vec();
 
+    // Remove arguments from scope
+    let argument_count = match type_finder.find(procedure_symbol.type_index)?.parse()? {
+        pdb2::TypeData::Procedure(procedure_type) => match type_finder.find(procedure_type.argument_list)?.parse()? {
+            pdb2::TypeData::ArgumentList(data) => data.arguments.len(),
+
+            data => todo!("{data:?}"),
+        }
+
+        pdb2::TypeData::MemberFunction(member_function_type) => match type_finder.find(member_function_type.argument_list)?.parse()? {
+            pdb2::TypeData::ArgumentList(data) => data.arguments.len() + if member_function_type.this_pointer_type.is_some() { 1 } else { 0 },
+
+            data => todo!("{data:?}"),
+        }
+
+        pdb2::TypeData::Primitive(_) => 0,
+
+        data => todo!("{data:?}"),
+    };
+
+    if block.statements.len() >= argument_count {
+        (0..argument_count).for_each(|_| {
+            block.statements.remove(0);
+        });
+    }
+    
     Ok((
         register_variable_names,
         register_relative_names,
-        if block.statements.is_empty() || !options.unroll_functions {
+        if !options.unroll_functions {
             None
         } else {
             Some(block)
