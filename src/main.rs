@@ -31,11 +31,11 @@ struct Options {
     reorganize: bool,
 
     /// The file path to the MSVC PDB file to decompile for extra function scope information.
-    #[structopt(short, long)]
+    #[structopt(long)]
     function_scopes_pdb: Option<String>,
 
     /// The output directory to dump all function scopes C++ code to.
-    #[structopt(short, long, parse(from_os_str))]
+    #[structopt(long, parse(from_os_str))]
     function_scopes_out: Option<PathBuf>,
 }
 
@@ -1576,7 +1576,29 @@ fn process_modules<'a>(
             new_members.push(cpp::ModuleMember::EmptyLine);
 
             if !new_global_members.is_empty() {
-                new_members.extend(new_global_members);
+                for member in new_global_members {
+                    if let cpp::ModuleMember::Data { name, signature, address, line, .. } = member
+                    {
+                        new_members.push(cpp::ModuleMember::Tagged(
+                            "extern".into(),
+                            Box::new(cpp::ModuleMember::Data {
+                                is_static: false,
+                                name: name,
+                                signature: signature,
+                                address: address,
+                                line: line
+                            }),
+                        ));
+                    }
+                    else
+                    {
+                        new_members.push(member)
+                    }
+                }
+
+                while let Some(cpp::ModuleMember::EmptyLine) = new_members.last() {
+                    new_members.pop();
+                }
 
                 new_members.push(cpp::ModuleMember::EmptyLine);
             }
@@ -1597,25 +1619,32 @@ fn process_modules<'a>(
             let mut new_private_variable_members = vec![];
 
             for member in private_variable_members {
-                new_private_variable_members.push(member);
+                let cpp::ModuleMember::Data { name, signature, address, line, .. } = member else {
+                    unreachable!("{:#?}", member)
+                };
+
+                new_private_variable_members.push(cpp::ModuleMember::Tagged(
+                    "extern".into(),
+                    Box::new(cpp::ModuleMember::Data {
+                        is_static: false,
+                        name: name,
+                        signature: signature,
+                        address: address,
+                        line: line
+                    }),
+                ));
             }
 
             while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
                 new_private_variable_members.pop();
             }
 
-            new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
+            if !new_private_variable_members.is_empty() || !module.is_header() {
+                new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
+                new_members.push(cpp::ModuleMember::EmptyLine);
+            }
 
             if !new_private_variable_members.is_empty() {
-                for member in new_private_variable_members.iter_mut() {
-                    let cpp::ModuleMember::Data { is_static, .. } = member else {
-                        unreachable!("{:#?}", member)
-                    };
-
-                    *is_static = false;
-                }
-
                 new_members.push(cpp::ModuleMember::Tagged(
                     "_static".into(),
                     Box::new(cpp::ModuleMember::Block {
