@@ -2729,8 +2729,6 @@ fn process_module_symbol_data(
                 Some(parameters),
             ).unwrap();
 
-            println!("ADDING PROCEDURE: {}", procedure_symbol.name);
-
             module.members.push(
                 cpp::ModuleMember::Procedure(cpp::Procedure {
                     address,
