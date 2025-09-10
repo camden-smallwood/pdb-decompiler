@@ -1607,7 +1607,6 @@ fn process_modules<'a>(
                         None,
                         None,
                         None,
-                        false,
                         true,
                     )
                     .unwrap()
@@ -1658,7 +1657,6 @@ fn process_modules<'a>(
                             None,
                             Some(format!("_sub_{:X}", procedure.address).into()),
                             None,
-                            false,
                             true,
                         )?
                         .trim_end_matches(" const")
@@ -1751,7 +1749,6 @@ fn process_modules<'a>(
                         None,
                         None,
                         None,
-                        false,
                         true,
                     )
                     .unwrap()
@@ -1802,7 +1799,6 @@ fn process_modules<'a>(
                             None,
                             Some(format!("_sub_{:X}", procedure.address).into()),
                             None,
-                            false,
                             true,
                         )?
                         .trim_end_matches(" const")
@@ -2230,7 +2226,6 @@ fn process_module_symbol_data(
                     None,
                     Some(udt_symbol.name.to_string().to_string()),
                     None,
-                    false,
                     false
                 )?,
                 underlying_type: udt_symbol.type_index,
@@ -2258,7 +2253,6 @@ fn process_module_symbol_data(
                 None,
                 Some(constant_symbol.name.to_string().to_string()),
                 None,
-                false,
                 false,
             )?;
 
@@ -2341,7 +2335,6 @@ fn process_module_symbol_data(
                         Some(data_symbol.name.to_string().to_string()),
                         None,
                         false,
-                        false
                     )?,
                 ),
                 address,
@@ -2405,7 +2398,6 @@ fn process_module_symbol_data(
                         Some(thread_storage_symbol.name.to_string().to_string()),
                         None,
                         false,
-                        false
                     )?,
                 ),
                 address,
@@ -2505,10 +2497,10 @@ fn process_module_symbol_data(
                             let valid = if class_member_function.argument_list == member_function.argument_list {
                                 class_member_function.return_type == member_function.return_type
                             } else {
-                                let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, false, true)?;
+                                let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, true)?;
                                 let lhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
 
-                                let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, false, true)?;
+                                let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, true)?;
                                 let rhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
 
                                 (lhs_return_type == rhs_return_type) && (lhs_arg_list == rhs_arg_list)
@@ -2634,7 +2626,6 @@ fn process_module_symbol_data(
                 Some(procedure_symbol.name.to_string().to_string()),
                 Some(parameters.clone()),
                 false,
-                false
             )?;
 
             if procedure.starts_with("...") || procedure.contains('$') || procedure.contains('`') {
@@ -2982,7 +2973,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(register_variable_symbol.name.to_string().to_string()),
                         None,
                         false,
-                        false
                     )?,
                     value: None,
                     comment: Some(format!("r{}", register_variable_symbol.register.0))
@@ -3002,7 +2992,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(register_relative_symbol.name.to_string().to_string()),
                         None,
                         false,
-                        false
                     )?,
                     value: None,
                     comment: Some(format!("r{} offset {}", register_relative_symbol.register.0, register_relative_symbol.offset))
@@ -3066,7 +3055,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(constant_symbol.name.to_string().to_string()),
                         None,
                         false,
-                        false
                     )?,
                     value: None,
                     comment: Some(format!(
@@ -3098,7 +3086,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(data_symbol.name.to_string().to_string()),
                         None,
                         false,
-                        false
                     )?,
                     value: None,
                     comment: data_symbol.offset.to_rva(address_map).map(|rva| {
@@ -3120,7 +3107,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(local_symbol.name.to_string().to_string()),
                         None,
                         false,
-                        false
                     )?,
                     value: None,
                     comment: Some("local".into()),
@@ -3159,7 +3145,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                             Some(tls_symbol.name.to_string().to_string()),
                             None,
                             false,
-                            false
                         )?,
                     ),
                     value: None,

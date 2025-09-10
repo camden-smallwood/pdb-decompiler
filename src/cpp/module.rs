@@ -452,7 +452,6 @@ impl Module {
                     None,
                     None,
                     None,
-                    true,
                     false
                 ) {
                     Ok(name) => name,
