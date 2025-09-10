@@ -166,8 +166,7 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Bitfield(data) => {
-            let name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, false)?;
-            format!("{} : {}", name, data.length)
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, false)?
         }
 
         pdb2::TypeData::Primitive(data) => {
