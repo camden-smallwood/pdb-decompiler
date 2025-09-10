@@ -597,7 +597,7 @@ fn process_modules<'a>(
                             continue;
                         };
 
-                        if function_scope_procedure.body.is_none() {
+                        if function_scope_procedure.body.as_ref().map(|b| b.statements.is_empty()).unwrap_or(true) {
                             continue;
                         }
 
@@ -616,7 +616,10 @@ fn process_modules<'a>(
                                 unreachable!();
                             };
                             
-                            procedure_body.statements.push(cpp::Statement::EmptyLine);
+                            if !procedure_body.statements.is_empty() {
+                                procedure_body.statements.push(cpp::Statement::EmptyLine);
+                            }
+                            
                             procedure_body.statements.push(cpp::Statement::Comment("DEBUG:".to_string()));
                             procedure_body.statements.push(cpp::Statement::Commented(Box::new(
                                 cpp::Statement::Block(cpp::Block {
