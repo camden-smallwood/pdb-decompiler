@@ -88,6 +88,8 @@ impl fmt::Display for Enum {
 
         writeln!(f, "{{")?;
 
+        let is_signed = !self.underlying_type_name.starts_with("unsigned ");
+
         for value in &self.values {
             for _ in 0..self.depth {
                 write!(f, "    ")?;
@@ -98,117 +100,67 @@ impl fmt::Display for Enum {
                 "    {} = {},",
                 value.name,
                 match value.value {
-                    pdb2::Variant::U8(v) => {
-                        if self.size > 1 {
-                            if v < u8::MAX {
-                                format!("{v}")
-                            } else if v == u8::MAX {
-                                format!("0x{:X}", match self.size {
-                                    2 => u16::MAX as u128,
-                                    4 => u32::MAX as u128,
-                                    8 => u64::MAX as u128,
-                                    16 => u128::MAX as u128,
-                                    _ => todo!()
-                                })
-                            } else {
-                                todo!("{value:#?}")
-                            }
+                    pdb2::Variant::U8(value) => {
+                        if is_signed {
+                            format!("{}", unsafe { *((&raw const value) as *const i8) })
                         } else {
-                            format!("{}", v)
+                            format!("{}", value)
                         }
                     }
                     
-                    pdb2::Variant::U16(v) => {
-                        if self.size > 2 {
-                            if v < u16::MAX {
-                                format!("{v}")
-                            } else if v == u16::MAX {
-                                format!("0x{:X}", match self.size {
-                                    4 => u32::MAX as u128,
-                                    8 => u64::MAX as u128,
-                                    16 => u128::MAX as u128,
-                                    _ => todo!()
-                                })
-                            } else {
-                                todo!("{value:#?}")
-                            }
+                    pdb2::Variant::U16(value) => {
+                        if is_signed {
+                            format!("{}", unsafe { *((&raw const value) as *const i16) })
                         } else {
-                            format!("{}", v)
+                            format!("{}", value)
                         }
                     }
 
-                    pdb2::Variant::U32(v) => {
-                        if self.size > 4 {
-                            if v > 0xFFFFFF {
-                                let d = ((v >> 0) & 0xFF) as u8 as char;
-                                let c = ((v >> 8) & 0xFF) as u8 as char;
-                                let b = ((v >> 16) & 0xFF) as u8 as char;
-                                let a = ((v >> 24) & 0xFF) as u8 as char;
-                                if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
-                                    format!("'{a}{b}{c}{d}'")
-                                } else {
-                                    format!("{}", v)
-                                }
-                            } else if v < u32::MAX {
-                                format!("{v}")
-                            } else if v == u32::MAX {
-                                format!("0x{:X}", match self.size {
-                                    8 => u64::MAX as u128,
-                                    16 => u128::MAX as u128,
-                                    _ => todo!()
-                                })
-                            } else {
-                                todo!("{value:#?}")
-                            }
-                        } else if v > 0xFFFFFF {
-                            let d = ((v >> 0) & 0xFF) as u8 as char;
-                            let c = ((v >> 8) & 0xFF) as u8 as char;
-                            let b = ((v >> 16) & 0xFF) as u8 as char;
-                            let a = ((v >> 24) & 0xFF) as u8 as char;
+                    pdb2::Variant::U32(value) => {
+                        if value > 0xFFFFFF {
+                            let d = ((value >> 0) & 0xFF) as u8 as char;
+                            let c = ((value >> 8) & 0xFF) as u8 as char;
+                            let b = ((value >> 16) & 0xFF) as u8 as char;
+                            let a = ((value >> 24) & 0xFF) as u8 as char;
                             if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
                                 format!("'{a}{b}{c}{d}'")
                             } else {
-                                format!("{}", v)
+                                if is_signed {
+                                    format!("{}", unsafe { *((&raw const value) as *const i32) })
+                                } else {
+                                    format!("{}", value)
+                                }
                             }
                         } else {
-                            format!("{}", v)
+                            if is_signed {
+                                format!("{}", unsafe { *((&raw const value) as *const i32) })
+                            } else {
+                                format!("{}", value)
+                            }
                         }
                     }
 
-                    pdb2::Variant::U64(v) => {
-                        if self.size > 8 {
-                            if v > 0xFFFFFF && v < 0x100000000 {
-                                let d = ((v >> 0) & 0xFF) as u8 as char;
-                                let c = ((v >> 8) & 0xFF) as u8 as char;
-                                let b = ((v >> 16) & 0xFF) as u8 as char;
-                                let a = ((v >> 24) & 0xFF) as u8 as char;
-                                if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
-                                    format!("'{a}{b}{c}{d}'")
-                                } else {
-                                    format!("{}", v)
-                                }
-                            } else if v < u64::MAX {
-                                format!("{v}")
-                            } else if v == u64::MAX {
-                                format!("0x{:X}", match self.size {
-                                    16 => u128::MAX as u128,
-                                    _ => todo!()
-                                })
-                            } else {
-                                todo!("{value:#?}")
-                            }
-                        } else if v > 0xFFFFFF && v < 0x100000000 {
-                            let d = ((v >> 0) & 0xFF) as u8 as char;
-                            let c = ((v >> 8) & 0xFF) as u8 as char;
-                            let b = ((v >> 16) & 0xFF) as u8 as char;
-                            let a = ((v >> 24) & 0xFF) as u8 as char;
+                    pdb2::Variant::U64(value) => {
+                        if value > 0xFFFFFF && value < 0x100000000 {
+                            let d = ((value >> 0) & 0xFF) as u8 as char;
+                            let c = ((value >> 8) & 0xFF) as u8 as char;
+                            let b = ((value >> 16) & 0xFF) as u8 as char;
+                            let a = ((value >> 24) & 0xFF) as u8 as char;
                             if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
                                 format!("'{a}{b}{c}{d}'")
                             } else {
-                                format!("{}", v)
+                                if is_signed {
+                                    format!("{}", unsafe { *((&raw const value) as *const i64) })
+                                } else {
+                                    format!("{}", value)
+                                }
                             }
                         } else {
-                            format!("{}", v)
+                            if is_signed {
+                                format!("{}", unsafe { *((&raw const value) as *const i64) })
+                            } else {
+                                format!("{}", value)
+                            }
                         }
                     }
 
