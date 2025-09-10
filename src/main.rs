@@ -1366,7 +1366,7 @@ fn process_modules<'a>(
             // enums, const vars, macros
             //--------------------------------------------------------------------------------
 
-            let constant_members = members.iter().filter(|m| match m {
+            let mut constant_members = members.iter().filter(|m| match m {
                 cpp::ModuleMember::Enum(_) => true,
                 // cpp::ModuleMember::Constant(_) => true,
                 cpp::ModuleMember::Data { signature, .. } => signature.starts_with("const ") && !signature.contains("$"),
@@ -1374,8 +1374,8 @@ fn process_modules<'a>(
                 _ => false,
             }).cloned().collect::<Vec<_>>();
 
-            new_members.push(cpp::ModuleMember::Comment("---------- constants".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
+            constant_members.insert(0, cpp::ModuleMember::EmptyLine);
+            constant_members.insert(0, cpp::ModuleMember::Comment("---------- constants".into()));
 
             if !constant_members.is_empty() {
                 for member in constant_members {
@@ -1432,8 +1432,8 @@ fn process_modules<'a>(
                 }
             }
 
-            new_members.push(cpp::ModuleMember::Comment("---------- definitions".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
+            new_definition_members.insert(0, cpp::ModuleMember::EmptyLine);
+            new_definition_members.insert(0, cpp::ModuleMember::Comment("---------- definitions".into()));
 
             if !new_definition_members.is_empty() {
                 while let Some(cpp::ModuleMember::EmptyLine) = new_definition_members.last() {
@@ -1568,14 +1568,14 @@ fn process_modules<'a>(
                 }
             }
 
+            while let Some(cpp::ModuleMember::EmptyLine) = new_global_members.last() {
+                new_global_members.pop();
+            }
+
             new_members.push(cpp::ModuleMember::Comment("---------- globals".into()));
             new_members.push(cpp::ModuleMember::EmptyLine);
 
             if !new_global_members.is_empty() {
-                while let Some(cpp::ModuleMember::EmptyLine) = new_global_members.last() {
-                    new_global_members.pop();
-                }
-
                 new_members.extend(new_global_members);
 
                 new_members.push(cpp::ModuleMember::EmptyLine);
@@ -1600,14 +1600,14 @@ fn process_modules<'a>(
                 new_private_variable_members.push(member);
             }
 
+            while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
+                new_private_variable_members.pop();
+            }
+
             new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
             new_members.push(cpp::ModuleMember::EmptyLine);
 
             if !new_private_variable_members.is_empty() {
-                while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
-                    new_private_variable_members.pop();
-                }
-
                 for member in new_private_variable_members.iter_mut() {
                     let cpp::ModuleMember::Data { is_static, .. } = member else {
                         unreachable!("{:#?}", member)
@@ -1765,8 +1765,8 @@ fn process_modules<'a>(
                 new_public_code_members.push(cpp::ModuleMember::EmptyLine);
             }
 
-            new_members.push(cpp::ModuleMember::Comment("---------- public code".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
+            new_public_code_members.insert(0, cpp::ModuleMember::EmptyLine);
+            new_public_code_members.insert(0, cpp::ModuleMember::Comment("---------- public code".into()));
 
             if !new_public_code_members.is_empty() {
                 new_members.extend(new_public_code_members);
@@ -1896,8 +1896,8 @@ fn process_modules<'a>(
                 new_private_code_members.push(cpp::ModuleMember::EmptyLine);
             }
         
-            new_members.push(cpp::ModuleMember::Comment("---------- private code".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
+            new_private_code_members.insert(0, cpp::ModuleMember::EmptyLine);
+            new_private_code_members.insert(0, cpp::ModuleMember::Comment("---------- private code".into()));
 
             if !new_private_code_members.is_empty() {
                 new_members.extend(new_private_code_members);
