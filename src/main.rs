@@ -31,11 +31,11 @@ struct Options {
     reorganize: bool,
 
     /// The file path to the MSVC PDB file to decompile for extra function scope information.
-    #[structopt(short, long)]
+    #[structopt(long)]
     function_scopes_pdb: Option<String>,
 
     /// The output directory to dump all function scopes C++ code to.
-    #[structopt(short, long, parse(from_os_str))]
+    #[structopt(long, parse(from_os_str))]
     function_scopes_out: Option<PathBuf>,
 }
 
