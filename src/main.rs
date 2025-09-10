@@ -1576,7 +1576,29 @@ fn process_modules<'a>(
             new_members.push(cpp::ModuleMember::EmptyLine);
 
             if !new_global_members.is_empty() {
-                new_members.extend(new_global_members);
+                for member in new_global_members {
+                    if let cpp::ModuleMember::Data { name, signature, address, line, .. } = member
+                    {
+                        new_members.push(cpp::ModuleMember::Tagged(
+                            "extern".into(),
+                            Box::new(cpp::ModuleMember::Data {
+                                is_static: false,
+                                name: name,
+                                signature: signature,
+                                address: address,
+                                line: line
+                            }),
+                        ));
+                    }
+                    else
+                    {
+                        new_members.push(member)
+                    }
+                }
+
+                while let Some(cpp::ModuleMember::EmptyLine) = new_members.last() {
+                    new_members.pop();
+                }
 
                 new_members.push(cpp::ModuleMember::EmptyLine);
             }
@@ -1597,25 +1619,32 @@ fn process_modules<'a>(
             let mut new_private_variable_members = vec![];
 
             for member in private_variable_members {
-                new_private_variable_members.push(member);
+                let cpp::ModuleMember::Data { name, signature, address, line, .. } = member else {
+                    unreachable!("{:#?}", member)
+                };
+
+                new_private_variable_members.push(cpp::ModuleMember::Tagged(
+                    "extern".into(),
+                    Box::new(cpp::ModuleMember::Data {
+                        is_static: false,
+                        name: name,
+                        signature: signature,
+                        address: address,
+                        line: line
+                    }),
+                ));
             }
 
             while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
                 new_private_variable_members.pop();
             }
 
-            new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
+            if !new_private_variable_members.is_empty() || !module.is_header() {
+                new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
+                new_members.push(cpp::ModuleMember::EmptyLine);
+            }
 
             if !new_private_variable_members.is_empty() {
-                for member in new_private_variable_members.iter_mut() {
-                    let cpp::ModuleMember::Data { is_static, .. } = member else {
-                        unreachable!("{:#?}", member)
-                    };
-
-                    *is_static = false;
-                }
-
                 new_members.push(cpp::ModuleMember::Tagged(
                     "_static".into(),
                     Box::new(cpp::ModuleMember::Block {

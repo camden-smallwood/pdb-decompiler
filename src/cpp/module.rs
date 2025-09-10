@@ -43,8 +43,6 @@ pub enum ModuleMember {
     },
     Procedure(cpp::Procedure),
     Tagged(String, Box<ModuleMember>),
-    #[allow(unused)]
-    TaggedWrapped(String, Box<ModuleMember>),
     FunctionCall(String, Vec<String>),
 }
 
@@ -104,8 +102,15 @@ impl fmt::Display for ModuleMember {
                 )
             },
             Self::Procedure(p) => p.fmt(f),
-            Self::Tagged(tag, m) => write!(f, "{tag} {m}"),
-            Self::TaggedWrapped(tag, m) => write!(f, "{tag} {{ {m} }}"),
+            Self::Tagged(tag, m) => {
+                if let cpp::ModuleMember::Block { .. } = m.as_ref() {
+                    writeln!(f, "{tag}")?;
+                    write!(f, "{m}")?;
+                } else {
+                    write!(f, "{tag} {m}")?;
+                }
+                Ok(())
+            },
             Self::FunctionCall(function, parameters) => write!(f, "{}({});", function, parameters.join(", ")),
         }
     }
