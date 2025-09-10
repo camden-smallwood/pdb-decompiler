@@ -1934,16 +1934,26 @@ fn process_modules<'a>(
         //
 
         if let Some(parent_path) = path.parent() {
-            fs::create_dir_all(parent_path)?;
+            if let Err(e) = fs::create_dir_all(parent_path) {
+                panic!("Failed to create directory: \"{}\" - {e}", parent_path.display())
+            }
         }
 
         let mut file = if path.exists() {
-            OpenOptions::new().write(true).append(true).open(path)?
+            match OpenOptions::new().write(true).append(true).open(path.clone()) {
+                Ok(x) => x,
+                Err(e) => panic!("Failed to append to file: \"{}\" - {e}", path.display()),
+            }
         } else {
-            File::create(path)?
+            match File::create(path.clone()) {
+                Ok(x) => x,
+                Err(e) => panic!("Failed to create file: \"{}\" - {e}", path.display()),
+            }
         };
 
-        write!(file, "{module}")?;
+        if let Err(e) = write!(file, "{module}") {
+            panic!("Failed to write to file: \"{}\" - {e}", path.display());
+        }
     }
 
     Ok(())
