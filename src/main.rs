@@ -2403,7 +2403,7 @@ fn process_module_symbol_data(
             }
 
             module.members.push(cpp::ModuleMember::Data {
-                is_static: data_symbol.global,
+                is_static: !data_symbol.global,
                 name: data_symbol.name.to_string().to_string(),
                 signature: format!(
                     "{}; // 0x{address:X}",
