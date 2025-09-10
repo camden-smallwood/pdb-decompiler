@@ -29,7 +29,20 @@ impl TabbedDisplay for Statement {
                 let s = TabbedDisplayer(0, x.as_ref()).to_string();
                 
                 if s.lines().count() > 1 {
-                    write!(f, "/* {s} */")?;
+                    write!(f, "/*")?;
+                    let lines = s.lines().collect::<Vec<_>>();
+                    for (i, line) in lines.iter().enumerate() {
+                        if i > 0 {
+                            "".tabbed_fmt(depth, f)?;
+                        }
+
+                        if i < lines.len() - 1 {
+                            writeln!(f, "{}", line)?;
+                        } else {
+                            write!(f, "{}", line)?;
+                        }
+                    }
+                    write!(f, "*/")?;
                 } else {
                     write!(f, "// {s}")?;
                 }
