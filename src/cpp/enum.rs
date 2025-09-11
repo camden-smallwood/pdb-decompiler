@@ -88,8 +88,6 @@ impl fmt::Display for Enum {
 
         writeln!(f, "{{")?;
 
-        let is_signed = !self.underlying_type_name.starts_with("unsigned ");
-
         for value in &self.values {
             for _ in 0..self.depth {
                 write!(f, "    ")?;
@@ -97,133 +95,84 @@ impl fmt::Display for Enum {
     
             writeln!(
                 f,
-                "    {} = {},",
+                "    {} = {}",
                 value.name,
                 match value.value {
                     pdb2::Variant::U8(value) => {
-                        if is_signed {
-                            format!("{}", unsafe { *((&raw const value) as *const i8) })
+                        let c = if (0x20..=0x7E).contains(&value) {
+                            format!(" '{}'", value as char)
                         } else {
-                            format!("{}", value)
-                        }
+                            String::new()
+                        };
+                        format!(
+                            "{}, // 0x{:02X}{}",
+                            unsafe { *((&raw const value) as *const i8) },
+                            value,
+                            c
+                        )
                     }
-                    
+
                     pdb2::Variant::U16(value) => {
-                        if is_signed {
-                            format!("{}", unsafe { *((&raw const value) as *const i16) })
+                        let c = if (0x20..=0x7E).contains(&(value as u8)) {
+                            format!(" '{}'", value as u8 as char)
                         } else {
-                            format!("{}", value)
-                        }
+                            String::new()
+                        };
+                        format!("{}, // 0x{:04X}{}", value, value, c)
                     }
 
                     pdb2::Variant::U32(value) => {
-                        if value > 0xFFFFFF {
-                            let d = ((value >> 0) & 0xFF) as u8 as char;
-                            let c = ((value >> 8) & 0xFF) as u8 as char;
-                            let b = ((value >> 16) & 0xFF) as u8 as char;
-                            let a = ((value >> 24) & 0xFF) as u8 as char;
-                            if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
-                                format!("'{a}{b}{c}{d}'")
-                            } else {
-                                if is_signed {
-                                    format!("{}", unsafe { *((&raw const value) as *const i32) })
-                                } else {
-                                    format!("{}", value)
-                                }
-                            }
+                        let c = if (0x20..=0x7E).contains(&(value as u8)) {
+                            format!(" '{}'", value as u8 as char)
                         } else {
-                            if is_signed {
-                                format!("{}", unsafe { *((&raw const value) as *const i32) })
-                            } else {
-                                format!("{}", value)
-                            }
-                        }
+                            String::new()
+                        };
+                        format!("{}, // 0x{:08X}{}", value, value, c)
                     }
 
                     pdb2::Variant::U64(value) => {
-                        if value > 0xFFFFFF && value < 0x100000000 {
-                            let d = ((value >> 0) & 0xFF) as u8 as char;
-                            let c = ((value >> 8) & 0xFF) as u8 as char;
-                            let b = ((value >> 16) & 0xFF) as u8 as char;
-                            let a = ((value >> 24) & 0xFF) as u8 as char;
-                            if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
-                                format!("'{a}{b}{c}{d}'")
-                            } else {
-                                if is_signed {
-                                    format!("{}", unsafe { *((&raw const value) as *const i64) })
-                                } else {
-                                    format!("{}", value)
-                                }
-                            }
+                        let c = if (0x20..=0x7E).contains(&(value as u8)) {
+                            format!(" '{}'", value as u8 as char)
                         } else {
-                            if is_signed {
-                                format!("{}", unsafe { *((&raw const value) as *const i64) })
-                            } else {
-                                format!("{}", value)
-                            }
-                        }
+                            String::new()
+                        };
+                        format!("{}, // 0x{:016X}{}", value, value, c)
                     }
 
-                    pdb2::Variant::I8(v) => {
-                        if self.size > 1 {
-                            if v == 0 {
-                                format!("0")
-                            } else if v > i8::MIN && v < i8::MAX {
-                                format!("{}", v)
-                            } else {
-                                todo!("{value:#?}")
-                            }
+                    pdb2::Variant::I8(value) => {
+                        let c = if (0x20..=0x7E).contains(&(value as u8)) {
+                            format!(" '{}'", value as u8 as char)
                         } else {
-                            format!("{}", v)
-                        }
+                            String::new()
+                        };
+                        format!("{}, // 0x{:02X}{}", value, value as u8, c)
                     }
 
-                    pdb2::Variant::I16(v) => {
-                        format!("{}", v)
+                    pdb2::Variant::I16(value) => {
+                        let c = if (0x20..=0x7E).contains(&(value as u8)) {
+                            format!(" '{}'", value as u8 as char)
+                        } else {
+                            String::new()
+                        };
+                        format!("{}, // 0x{:04X}{}", value, value as u16, c)
                     }
 
-                    pdb2::Variant::I32(v) => {
-                        if self.size > 4 {
-                            if v > 0xFFFFFF {
-                                let d = ((v >> 0) & 0xFF) as u8 as char;
-                                let c = ((v >> 8) & 0xFF) as u8 as char;
-                                let b = ((v >> 16) & 0xFF) as u8 as char;
-                                let a = ((v >> 24) & 0xFF) as u8 as char;
-                                if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
-                                    format!("'{a}{b}{c}{d}'")
-                                } else {
-                                    format!("{}", v)
-                                }
-                            } else {
-                                todo!("{value:#?}")
-                            }
-                        } else if v > 0xFFFFFF {
-                            let d = ((v >> 0) & 0xFF) as u8 as char;
-                            let c = ((v >> 8) & 0xFF) as u8 as char;
-                            let b = ((v >> 16) & 0xFF) as u8 as char;
-                            let a = ((v >> 24) & 0xFF) as u8 as char;
-                            if [a, b, c, d].iter().all(|c| *c >= 0x20 as char && c.is_ascii()) {
-                                format!("'{a}{b}{c}{d}'")
-                            } else {
-                                format!("{}", v)
-                            }
+                    pdb2::Variant::I32(value) => {
+                        let c = if (0x20..=0x7E).contains(&(value as u8)) {
+                            format!(" '{}'", value as u8 as char)
                         } else {
-                            format!("{}", v)
-                        }
+                            String::new()
+                        };
+                        format!("{}, // 0x{:08X}{}", value, value as u32, c)
                     }
 
-                    pdb2::Variant::I64(v) => {
-                        if self.size > 8 {
-                            if v == 0 {
-                                format!("0")
-                            } else if v > i64::MIN && v < i64::MAX {
-                                format!("{}", v)
-                            } else {
-                                todo!("{value:#?}")
-                            }
+                    pdb2::Variant::I64(value) => {
+                        let c = if (0x20..=0x7E).contains(&(value as u8)) {
+                            format!(" '{}'", value as u8 as char)
                         } else {
-                            format!("{}", v)
-                        }
+                            String::new()
+                        };
+                        format!("{}, // 0x{:016X}{}", value, value as u64, c)
                     }
                 }
             )?;
