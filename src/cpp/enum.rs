@@ -341,7 +341,7 @@ impl fmt::Display for Enum {
                 };
             } else {
                 // Non-sequential: keep explicit value with hex/ASCII comment
-                writeln!(f, "    {} = {},", value.name, fmt_value(&value.value))?;
+                writeln!(f, "    {} = {}", value.name, fmt_value(&value.value))?;
             }
         }
 
