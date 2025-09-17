@@ -97,7 +97,7 @@ impl fmt::Display for Method {
                 None => ""
             },
 
-            if !(self.function_attributes.is_constructor() || self.name.contains('~')) {
+            if !(self.function_attributes.is_constructor() || self.name.starts_with('~')) {
                 format!("{} ", self.return_type_name)
             } else {
                 "".to_string()

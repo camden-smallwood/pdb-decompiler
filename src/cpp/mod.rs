@@ -241,7 +241,7 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Procedure(data) => {
-            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
+            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.starts_with('~')).unwrap_or(false) {
                 if let Some(field_name) = declaration_name.as_ref() {
                     field_name.clone()
                 } else {
@@ -275,7 +275,7 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::MemberFunction(data) => {
-            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.contains('~')).unwrap_or(false) {
+            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.starts_with('~')).unwrap_or(false) {
                 if let Some(field_name) = declaration_name.as_ref() {
                     field_name.clone()
                 } else {
