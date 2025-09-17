@@ -301,6 +301,7 @@ pub struct Module {
 }
 
 impl Module {
+    #[inline(always)]
     pub fn is_header(&self) -> bool {
         match self.path.extension().and_then(std::ffi::OsStr::to_str) {
             Some(ext) if SOURCE_FILE_EXTS.contains(&ext) => false,
@@ -308,11 +309,13 @@ impl Module {
         }
     }
 
+    #[inline(always)]
     pub fn with_path(mut self, path: PathBuf) -> Self {
         self.path = path;
         self
     }
 
+    #[inline(always)]
     pub fn set_primary_flag(&mut self, flag: ModulePrimaryFlags, on: bool) {
         if on {
             self.flags_primary |= flag as u64;
@@ -322,10 +325,12 @@ impl Module {
     }
 
     #[allow(dead_code)]
+    #[inline(always)]
     pub fn test_primary_flag(&self, flag: ModulePrimaryFlags) -> bool {
         (self.flags_primary & (flag as u64)) != 0
     }
 
+    #[inline(always)]
     pub fn set_secondary_flag(&mut self, flag: ModuleSecondaryFlags, on: bool) {
         if on {
             self.flags_secondary |= flag as u64;
@@ -335,10 +340,12 @@ impl Module {
     }
 
     #[allow(dead_code)]
+    #[inline(always)]
     pub fn test_secondary_flag(&self, flag: ModuleSecondaryFlags) -> bool {
         (self.flags_secondary & (flag as u64)) != 0
     }
 
+    #[inline(always)]
     pub fn add_type_definition(
         &mut self,
         class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
@@ -516,6 +523,7 @@ impl Module {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn add_build_info(
         &mut self,
         out_path: &std::path::Path,
@@ -634,6 +642,7 @@ impl Module {
         Ok(())
     }
 
+    #[inline(always)]
     fn parse_arguments(
         &mut self,
         out_path: &std::path::Path,

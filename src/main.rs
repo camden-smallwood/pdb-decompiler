@@ -1,4 +1,5 @@
 mod cpp;
+mod reorganize;
 mod tabbed;
 
 use pdb2::FallibleIterator;
@@ -633,434 +634,19 @@ fn process_modules<'a>(
     }
 
     //
-    // Write modules to file
-    //
-
-    fn find_enum_or_flags_typedef<'a>(
-        modules: &mut HashMap<String, cpp::Module>,
-        enum_data: &cpp::Enum,
-    ) -> Option<cpp::TypeDefinition> {
-        for module in modules.values() {
-            for member in module.members.iter() {
-                let cpp::ModuleMember::TypeDefinition(type_definition) = member else {
-                    continue;
-                };
-                
-                fn parse_it<T: std::str::FromStr + PartialEq>(input: T, max: T, value: &str) -> bool {
-                    let min_value = match value.parse() {
-                        Ok(x) => x,
-                        Err(_) => {
-                            if value == "-1" {
-                                max
-                            } else {
-                                panic!("{}", value)
-                            }
-                        }
-                    };
-                    
-                    if input == min_value {
-                        return true;
-                    }
-
-                    false
-                }
-
-                if type_definition.type_name.starts_with(format!("c_enum<enum {},", enum_data.name).as_str()) {
-                    let mut result = type_definition.clone();
-                    result.type_name = format!("c_enum<{}", result.type_name.trim_start_matches("c_enum<enum "));
-
-                    let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
-                        panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
-                    };
-
-                    let mut template_args = type_string
-                        .trim_start_matches("c_enum<")
-                        .trim_end_matches(">")
-                        .split(",")
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-
-                    assert!(template_args.len() == 4);
-
-                    template_args.iter_mut().for_each(|a| *a = a.trim_start().trim_end().into());
-
-                    let mut min_found = false;
-                    let mut max_found = false;
-
-                    for value in enum_data.values.iter() {
-                        if min_found && max_found {
-                            break;
-                        }
-
-                        match &value.value {
-                            pdb2::Variant::U8(x) => {
-                                if !min_found {
-                                    if parse_it(*x, u8::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        min_found = true;
-                                    }
-                                }
-
-                                if !max_found {
-                                    if parse_it(*x, u8::MAX, template_args[3].as_str()) {
-                                        template_args[3] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U16(x) => {
-                                if !min_found {
-                                    if parse_it(*x, u16::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        min_found = true;
-                                    }
-                                }
-
-                                if !max_found {
-                                    if parse_it(*x, u16::MAX, template_args[3].as_str()) {
-                                        template_args[3] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U32(x) => {
-                                if !min_found {
-                                    if parse_it(*x, u32::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        min_found = true;
-                                    }
-                                }
-
-                                if !max_found {
-                                    if parse_it(*x, u32::MAX, template_args[3].as_str()) {
-                                        template_args[3] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U64(x) => {
-                                if !min_found {
-                                    if parse_it(*x, u64::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        min_found = true;
-                                    }
-                                }
-
-                                if !max_found {
-                                    if parse_it(*x, u64::MAX, template_args[3].as_str()) {
-                                        template_args[3] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I8(x) => {
-                                if !min_found {
-                                    if parse_it(*x, i8::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        min_found = true;
-                                    }
-                                }
-
-                                if !max_found {
-                                    if parse_it(*x, i8::MAX, template_args[3].as_str()) {
-                                        template_args[3] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I16(x) => {
-                                if !min_found {
-                                    if parse_it(*x, i16::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        min_found = true;
-                                    }
-                                }
-
-                                if !max_found {
-                                    if parse_it(*x, i16::MAX, template_args[3].as_str()) {
-                                        template_args[3] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I32(x) => {
-                                if !min_found {
-                                    if parse_it(*x, i32::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        min_found = true;
-                                    }
-                                }
-
-                                if !max_found {
-                                    if parse_it(*x, i32::MAX, template_args[3].as_str()) {
-                                        template_args[3] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I64(x) => {
-                                if !min_found {
-                                    if parse_it(*x, i64::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        min_found = true;
-                                    }
-                                }
-
-                                if !max_found {
-                                    if parse_it(*x, i64::MAX, template_args[3].as_str()) {
-                                        template_args[3] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    result.type_name = format!("c_enum<{}> {}", template_args.join(","), name_string);
-
-                    return Some(result);
-                }
-
-                if type_definition.type_name.starts_with(format!("c_flags<enum {},", enum_data.name).as_str()) {
-                    let mut result = type_definition.clone();
-                    result.type_name = format!("c_flags<{}", result.type_name.trim_start_matches("c_flags<enum "));
-
-                    let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
-                        panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
-                    };
-
-                    let mut template_args = type_string
-                        .trim_start_matches("c_flags<")
-                        .trim_end_matches(">")
-                        .split(",")
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    assert!(template_args.len() == 3);
-
-                    template_args.iter_mut().for_each(|a| *a = a.trim_start().trim_end().into());
-
-                    let mut max_found = false;
-
-                    for value in enum_data.values.iter() {
-                        if max_found {
-                            break;
-                        }
-
-                        match &value.value {
-                            pdb2::Variant::U8(x) => {
-                                if !max_found {
-                                    if parse_it(*x, u8::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U16(x) => {
-                                if !max_found {
-                                    if parse_it(*x, u16::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U32(x) => {
-                                if !max_found {
-                                    if parse_it(*x, u32::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U64(x) => {
-                                if !max_found {
-                                    if parse_it(*x, u64::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I8(x) => {
-                                if !max_found {
-                                    if parse_it(*x, i8::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I16(x) => {
-                                if !max_found {
-                                    if parse_it(*x, i16::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I32(x) => {
-                                if !max_found {
-                                    if parse_it(*x, i32::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I64(x) => {
-                                if !max_found {
-                                    if parse_it(*x, i64::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    result.type_name = format!("c_flags<{}> {}", template_args.join(","), name_string);
-
-                    return Some(result);
-                }
-
-                if type_definition.type_name.starts_with(format!("c_flags_no_init<enum {},", enum_data.name).as_str()) {
-                    let mut result = type_definition.clone();
-                    result.type_name = format!("c_flags_no_init<{}", result.type_name.trim_start_matches("c_flags_no_init<enum "));
-
-                    let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
-                        panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
-                    };
-
-                    let mut template_args = type_string
-                        .trim_start_matches("c_flags_no_init<")
-                        .trim_end_matches(">")
-                        .split(",")
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    assert!(template_args.len() == 3);
-
-                    template_args.iter_mut().for_each(|a| *a = a.trim_start().trim_end().into());
-
-                    let mut max_found = false;
-
-                    for value in enum_data.values.iter() {
-                        if max_found {
-                            break;
-                        }
-
-                        match &value.value {
-                            pdb2::Variant::U8(x) => {
-                                if !max_found {
-                                    if parse_it(*x, u8::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U16(x) => {
-                                if !max_found {
-                                    if parse_it(*x, u16::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U32(x) => {
-                                if !max_found {
-                                    if parse_it(*x, u32::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::U64(x) => {
-                                if !max_found {
-                                    if parse_it(*x, u64::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I8(x) => {
-                                if !max_found {
-                                    if parse_it(*x, i8::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I16(x) => {
-                                if !max_found {
-                                    if parse_it(*x, i16::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I32(x) => {
-                                if !max_found {
-                                    if parse_it(*x, i32::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-
-                            pdb2::Variant::I64(x) => {
-                                if !max_found {
-                                    if parse_it(*x, i64::MAX, template_args[2].as_str()) {
-                                        template_args[2] = value.name.clone();
-                                        max_found = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    result.type_name = format!("c_flags_no_init<{}> {}", template_args.join(","), name_string);
-
-                    return Some(result);
-                }
-            }
-        }
-
-        None
-    }
-
-    //
-    // Find c_enum and c_flags typedefs
+    // Find `c_enum` and `c_flags` typedefs
     //
 
     let mut compound_enums = vec![];
 
     if options.reorganize {
-        for module in modules.values().cloned().collect::<Vec<_>>() {
-            for member in module.members.clone() {
-                if let cpp::ModuleMember::Enum(enum_definition) = member
-                    && let Some(type_definition) = find_enum_or_flags_typedef(modules, &enum_definition)
-                {
-                    compound_enums.push((enum_definition.clone(), type_definition));
-                }
-            }
-        }
+        reorganize::collect_compound_enums(modules, &mut compound_enums);
     }
     
+    //
+    // Post-process and write modules to file
+    //
+
     for module in modules.values_mut() {
         let path = PathBuf::from(sanitize_path(format!(
             "{}/{}",
@@ -1069,888 +655,19 @@ fn process_modules<'a>(
         )));
 
         //
-        // Sort module members by line number
+        // Reorganize module members if requested
         //
-
-        let mut storage: Vec<(u32, cpp::ModuleMember)> = vec![];
-        let mut prev_line = 0;
-
-        for u in module.members.iter() {
-            match u {
-                cpp::ModuleMember::Class(x) => {
-                    storage.push((x.borrow().line, u.clone()));
-                    prev_line = x.borrow().line;
-                }
-
-                cpp::ModuleMember::Enum(x) => {
-                    storage.push((x.line, u.clone()));
-                    prev_line = x.line;
-                }
-
-                cpp::ModuleMember::Data { line: Some(line), .. } => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                cpp::ModuleMember::ThreadStorage { line: Some(line), .. } => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                cpp::ModuleMember::Procedure(cpp::Procedure { line: Some(line), .. }) => {
-                    storage.push((*line, u.clone()));
-                    prev_line = *line;
-                }
-
-                _ => {
-                    prev_line += 1;
-                    storage.push((prev_line, u.clone()));
-                }
-            }
-        }
-
-        storage.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut members = storage.iter().map(|m| m.1.clone()).collect::<Vec<_>>();
-
-        //
-        // Replace nested type declarations and anonymous field types with their full types
-        //
-        
-        let cloned_members = members.clone();
-        let mut new_members = vec![];
-        let mut remove_class_names = vec![];
-        let mut remove_enum_names = vec![];
-
-        for (i, member) in members.iter_mut().enumerate() {
-            match member {
-                cpp::ModuleMember::Class(class_data) => {
-                    fn fix_class(
-                        module_members: &[cpp::ModuleMember],
-                        i: usize,
-                        class_data: Rc<RefCell<cpp::Class>>,
-                        remove_class_names: &mut Vec<String>,
-                        remove_enum_names: &mut Vec<String>,
-                    ) {
-                        let class_name = class_data.borrow().name.clone();
-                        let mut new_members = class_data.borrow_mut().members.clone();
-
-                        for class_member in new_members.iter_mut() {
-                            match class_member {
-                                cpp::ClassMember::Class(nested_class) => {
-                                    let is_declaration = nested_class.borrow().is_declaration;
-                                    let nested_name = nested_class.borrow().name.clone();
-                                    let full_name = format!("{}::{}", class_name, nested_name);
-
-                                    if is_declaration {
-                                        let found = module_members.iter().enumerate().find(|(ii, m)| {
-                                            if i == *ii {
-                                                return false;
-                                            }
-                                            let cpp::ModuleMember::Class(other_class) = m else {
-                                                return false;
-                                            };
-                                            other_class.borrow().name == full_name
-                                        });
-
-                                        if let Some((_, found_member)) = found {
-                                            let cpp::ModuleMember::Class(other_class) = found_member else {
-                                                unreachable!()
-                                            };
-
-                                            let mut nested_class = nested_class.borrow_mut();
-                                            nested_class.is_declaration = false;
-                                            nested_class.size = other_class.borrow().size;
-                                            nested_class.base_classes = other_class.borrow().base_classes.clone();
-                                            nested_class.members = other_class.borrow().members.clone();
-
-                                            let nested_depth = nested_class.depth + 1;
-
-                                            for member in nested_class.members.iter_mut() {
-                                                match member {
-                                                    cpp::ClassMember::Class(inner_class) => inner_class.borrow_mut().depth = nested_depth,
-                                                    cpp::ClassMember::Enum(inner_enum) => inner_enum.depth = nested_depth,
-                                                    _ => {}
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    fix_class(module_members, i, nested_class.clone(), remove_class_names, remove_enum_names);
-                                    
-                                    if !remove_class_names.contains(&full_name) {
-                                        remove_class_names.push(full_name);
-                                    }
-                                }
-
-                                cpp::ClassMember::Enum(nested_enum) => {
-                                    let full_name = format!("{}::{}", class_name, nested_enum.name);
-                                    
-                                    if nested_enum.is_declaration {
-                                        let found = module_members.iter().enumerate().find(|(ii, m)| {
-                                            if i == *ii {
-                                                return false;
-                                            }
-
-                                            let cpp::ModuleMember::Enum(other_enum) = m else {
-                                                return false;
-                                            };
-
-                                            other_enum.name == full_name
-                                        });
-
-                                        if let Some((_, found_member)) = found {
-                                            let cpp::ModuleMember::Enum(other_enum) = found_member else {
-                                                unreachable!()
-                                            };
-
-                                            nested_enum.is_declaration = false;
-                                            nested_enum.underlying_type_name = other_enum.underlying_type_name.clone();
-                                            nested_enum.size = other_enum.size;
-                                            nested_enum.values = other_enum.values.clone();
-                                        }
-                                    }
-
-                                    if !remove_enum_names.contains(&full_name) {
-                                        remove_enum_names.push(full_name);
-                                    }
-                                }
-
-                                cpp::ClassMember::Field(field) => {
-                                    if field.type_name.contains("::<unnamed") {
-                                        let parts = field.type_name.split("::").collect::<Vec<_>>();
-
-                                        if !parts.is_empty() && parts.last().unwrap().starts_with("<unnamed") {
-                                            let full_name = field.type_name.clone();
-
-                                            let found = module_members.iter().enumerate().find(|(ii, m)| {
-                                                if i == *ii {
-                                                    return false;
-                                                }
-                                                let cpp::ModuleMember::Class(other_class) = m else {
-                                                    return false;
-                                                };
-                                                other_class.borrow().name == full_name
-                                            });
-
-                                            if let Some((_, found_member)) = found {
-                                                let cpp::ModuleMember::Class(other_class) = found_member else {
-                                                    unreachable!()
-                                                };
-
-                                                fix_class(module_members, i, other_class.clone(), remove_class_names, remove_enum_names);
-
-                                                let mut other_class = other_class.borrow().clone();
-                                                other_class.name = String::new();
-                                                other_class.depth = class_data.borrow().depth + 1;
-                                                
-                                                field.type_name = other_class
-                                                    .to_string()
-                                                    .trim_start()
-                                                    .trim_end_matches(";")
-                                                    .to_string();
-                                            
-                                                field.display = format!("{} {}", field.type_name, field.name);
-
-                                                if !remove_class_names.contains(&full_name) {
-                                                    remove_class_names.push(full_name);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                _ => {}
-                            }
-                        }
-                    
-                        class_data.borrow_mut().members = new_members;
-                    }
-                
-                    fix_class(cloned_members.as_slice(), i, class_data.clone(), &mut remove_class_names, &mut remove_enum_names);
-
-                    new_members.push(cpp::ModuleMember::Class(class_data.clone()));
-                }
-
-                _ => {
-                    new_members.push(member.clone());
-                }
-            }
-        }
-
-        members = new_members;
-
-        //
-        // Remove nested types that ended up in toplevel and are now unreferenced
-        //
-
-        for class_name in remove_class_names.into_iter().rev() {
-            for i in (0..module.members.len()).rev() {
-                if let cpp::ModuleMember::Class(class_data) = &module.members[i]
-                    && class_data.borrow().name == class_name
-                {
-                    module.members.remove(i);
-                }
-            }
-        }
-
-        for enum_name in remove_enum_names.into_iter().rev() {
-            for i in (0..module.members.len()).rev() {
-                if let cpp::ModuleMember::Enum(enum_data) = &module.members[i]
-                    && enum_data.name == enum_name
-                {
-                    module.members.remove(i);
-                }
-            }
-        }
 
         if options.reorganize {
-            //
-            // Rebuild module under specific sections
-            //
-
-            let mut new_members = vec![];
-
-            //--------------------------------------------------------------------------------
-            // starting preprocessor statements
-            //--------------------------------------------------------------------------------
-
-            if module.is_header() {
-                let stem = module.path
-                    .file_stem()
-                    .and_then(std::ffi::OsStr::to_str)
-                    .unwrap_or("UNKNOWN")
-                    .to_uppercase();
-
-                new_members.push(cpp::ModuleMember::Preprocessor(format!("ifndef __{}_H__", stem)));
-                new_members.push(cpp::ModuleMember::Preprocessor(format!("define __{}_H__", stem)));
-                new_members.push(cpp::ModuleMember::Preprocessor("pragma once".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
-            }
-            
-            //--------------------------------------------------------------------------------
-            // headers
-            //--------------------------------------------------------------------------------
-
-            new_members.push(cpp::ModuleMember::Comment("---------- headers".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
-
-            if !module.is_header() {
-                new_members.push(cpp::ModuleMember::Include(false, "ares/ares.h".into()));
-            }
-
-            if !module.headers.is_empty() {
-                for (path, global) in module.headers.iter() {
-                    new_members.push(cpp::ModuleMember::Include(*global, path.clone()));
-                }
-
-                new_members.push(cpp::ModuleMember::EmptyLine);
-
-                module.headers.clear();
-            }
-
-            //--------------------------------------------------------------------------------
-            // using namespaces
-            //--------------------------------------------------------------------------------
-
-            let using_namespace_members = members.iter().filter(|m| match m {
-                cpp::ModuleMember::UsingNamespace(_) => true,
-                _ => false,
-            }).cloned().collect::<Vec<_>>();
-
-            if !using_namespace_members.is_empty() {
-                new_members.extend(using_namespace_members);
-                new_members.push(cpp::ModuleMember::EmptyLine);
-            }
-
-            //--------------------------------------------------------------------------------
-            // enums, const vars, macros
-            //--------------------------------------------------------------------------------
-
-            let mut constant_members = members.iter().filter(|m| match m {
-                cpp::ModuleMember::Enum(_) => true,
-                // cpp::ModuleMember::Constant(_) => true,
-                cpp::ModuleMember::Data { signature, .. } => signature.starts_with("const ") && !signature.contains("$"),
-                cpp::ModuleMember::ThreadStorage { signature, .. } => signature.starts_with("const ") && !signature.contains("$"),
-                _ => false,
-            }).cloned().collect::<Vec<_>>();
-
-            constant_members.insert(0, cpp::ModuleMember::EmptyLine);
-            constant_members.insert(0, cpp::ModuleMember::Comment("---------- constants".into()));
-
-            if !constant_members.is_empty() {
-                for member in constant_members {
-                    match member {
-                        cpp::ModuleMember::Enum(enum_data) => {
-                            new_members.push(cpp::ModuleMember::Enum(enum_data.clone()));
-
-                            if let Some((_, type_definition)) = compound_enums.iter().find(|(e, _)| enum_data == *e) {
-                                new_members.push(cpp::ModuleMember::TypeDefinition(type_definition.clone()));
-                            }
-
-                            new_members.push(cpp::ModuleMember::EmptyLine);
-                        }
-
-                        _ => new_members.push(member),
-                    }
-                }
-
-                while let Some(cpp::ModuleMember::EmptyLine) = new_members.last() {
-                    new_members.pop();
-                }
-
-                new_members.push(cpp::ModuleMember::EmptyLine);
-            }
-
-            //--------------------------------------------------------------------------------
-            // structs/unions/classes/typedefs
-            //--------------------------------------------------------------------------------
-
-            let definition_members = members.iter().filter(|m| match m {
-                cpp::ModuleMember::Class(_) => true,
-                cpp::ModuleMember::TypeDefinition(_) => true,
-                _ => false,
-            }).cloned().collect::<Vec<_>>();
-
-            let mut new_definition_members = vec![];
-
-            for member in definition_members {
-                match &member {
-                    cpp::ModuleMember::Class(_) => {
-                        if let Some(cpp::ModuleMember::TypeDefinition(_)) = new_definition_members.last() {
-                            new_definition_members.push(cpp::ModuleMember::EmptyLine);
-                        }
-
-                        new_definition_members.push(member);
-                        new_definition_members.push(cpp::ModuleMember::EmptyLine);
-                    }
-
-                    cpp::ModuleMember::TypeDefinition(_) => {
-                        new_definition_members.push(member);
-                    }
-
-                    _ => todo!()
-                }
-            }
-
-            new_definition_members.insert(0, cpp::ModuleMember::EmptyLine);
-            new_definition_members.insert(0, cpp::ModuleMember::Comment("---------- definitions".into()));
-
-            if !new_definition_members.is_empty() {
-                while let Some(cpp::ModuleMember::EmptyLine) = new_definition_members.last() {
-                    new_definition_members.pop();
-                }
-
-                new_members.extend(new_definition_members);
-                new_members.push(cpp::ModuleMember::EmptyLine);
-            }
-
-            //--------------------------------------------------------------------------------
-            // function prototypes
-            //--------------------------------------------------------------------------------
-
-            let public_code_members = members.iter().filter(|m| match m {
-                cpp::ModuleMember::Procedure(procedure) => {
-                    !procedure.is_static
-                        && !procedure.signature.contains("`")
-                        && !procedure.signature.contains("$")
-                }
-                _ => false,
-            }).cloned().collect::<Vec<_>>();
-
-            let private_code_members = members.iter().filter(|m| match m {
-                cpp::ModuleMember::Procedure(procedure) => {
-                    procedure.is_static
-                        && !procedure.signature.contains("`")
-                        && !procedure.signature.contains("$")
-                }
-                _ => false,
-            }).cloned().collect::<Vec<_>>();
-
-            let mut prototype_members = vec![];
-
-            for member in public_code_members.iter() {
-                if let cpp::ModuleMember::Procedure(procedure) = member {
-                    let mut procedure = procedure.clone();
-
-                    let is_member_function = matches!(
-                        type_finder.find(procedure.type_index)?.parse()?,
-                        pdb2::TypeData::MemberFunction(_)
-                    );
-
-                    procedure.body = None;
-                    procedure.address = 0;
-                    
-                    if !is_member_function {
-                        prototype_members.push(cpp::ModuleMember::Tagged(
-                            "extern".into(),
-                            Box::new(cpp::ModuleMember::Procedure(procedure)),
-                        ));
-                    }
-                }
-            }
-
-            if !public_code_members.is_empty() && !private_code_members.is_empty() {
-                prototype_members.push(cpp::ModuleMember::EmptyLine);
-            }
-
-            for member in private_code_members.iter() {
-                if let cpp::ModuleMember::Procedure(procedure) = member {
-                    let mut procedure = procedure.clone();
-
-                    procedure.body = None;
-                    procedure.address = 0;
-                    procedure.is_static = false;
-
-                    prototype_members.push(cpp::ModuleMember::Tagged(
-                        "_static".into(),
-                        Box::new(cpp::ModuleMember::Procedure(procedure)),
-                    ));
-                }
-            }
-
-            new_members.push(cpp::ModuleMember::Comment("---------- prototypes".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
-
-            if !prototype_members.is_empty() {
-                new_members.extend(prototype_members);
-                new_members.push(cpp::ModuleMember::EmptyLine);
-            }
-
-            //--------------------------------------------------------------------------------
-            // public mutable vars
-            //--------------------------------------------------------------------------------
-
-            let global_members = members.iter().filter(|m| match m {
-                cpp::ModuleMember::Data { is_static: false, signature, .. } => {
-                    !signature.starts_with("const ")
-                        && !signature.contains("`")
-                        && !signature.contains("$")
-                }
-                cpp::ModuleMember::ThreadStorage { signature, .. } => {
-                    !signature.starts_with("const ")
-                        && !signature.contains("`")
-                        && !signature.contains("$")
-                }
-                _ => false,
-            }).cloned().collect::<Vec<_>>();
-
-            let mut new_global_members = vec![];
-
-            for mut member in global_members {
-                let mut create_empty_line = false;
-
-                // Update thread_local variables
-                if let cpp::ModuleMember::ThreadStorage { name, signature, address, .. } = &mut member {
-                    if !matches!(new_global_members.last(), Some(cpp::ModuleMember::EmptyLine)) {
-                        new_global_members.push(cpp::ModuleMember::EmptyLine);
-                    }
-
-                    new_global_members.push(cpp::ModuleMember::FunctionCall(
-                        "static_warning".into(),
-                        vec![
-                            format!("\"TODO: fix {name} declaration\""),
-                        ],
-                    ));
-
-                    let Some((declaration, _comment)) = signature.rsplit_once(';') else {
-                        panic!("Malformed thread storage signature: \"{}\"", signature);
-                    };
-
-                    *signature = format!("{declaration} = tls_get<decltype({name})>(0x{address:X});");
-                    
-                    create_empty_line = true;
-                }
-
-                new_global_members.push(member);
-
-                if create_empty_line {
-                    new_global_members.push(cpp::ModuleMember::EmptyLine);
-                }
-            }
-
-            while let Some(cpp::ModuleMember::EmptyLine) = new_global_members.last() {
-                new_global_members.pop();
-            }
-
-            new_members.push(cpp::ModuleMember::Comment("---------- globals".into()));
-            new_members.push(cpp::ModuleMember::EmptyLine);
-
-            if !new_global_members.is_empty() {
-                for member in new_global_members {
-                    if let cpp::ModuleMember::Data { name, signature, address, line, .. } = member
-                    {
-                        new_members.push(cpp::ModuleMember::Tagged(
-                            "extern".into(),
-                            Box::new(cpp::ModuleMember::Data {
-                                is_static: false,
-                                name: name,
-                                signature: signature,
-                                address: address,
-                                line: line
-                            }),
-                        ));
-                    }
-                    else
-                    {
-                        new_members.push(member)
-                    }
-                }
-
-                while let Some(cpp::ModuleMember::EmptyLine) = new_members.last() {
-                    new_members.pop();
-                }
-
-                new_members.push(cpp::ModuleMember::EmptyLine);
-            }
-            
-            //--------------------------------------------------------------------------------
-            // private mutable vars
-            //--------------------------------------------------------------------------------
-
-            let private_variable_members = members.iter().filter(|m| match m {
-                cpp::ModuleMember::Data { is_static: true, signature, .. } => {
-                    !signature.starts_with("const ")
-                        && !signature.contains("`")
-                        && !signature.contains("$")
-                }
-                _ => false,
-            }).cloned().collect::<Vec<_>>();
-
-            let mut new_private_variable_members = vec![];
-
-            for member in private_variable_members {
-                let cpp::ModuleMember::Data { name, signature, address, line, .. } = member else {
-                    unreachable!("{:#?}", member)
-                };
-
-                new_private_variable_members.push(cpp::ModuleMember::Tagged(
-                    "extern".into(),
-                    Box::new(cpp::ModuleMember::Data {
-                        is_static: false,
-                        name: name,
-                        signature: signature,
-                        address: address,
-                        line: line
-                    }),
-                ));
-            }
-
-            while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
-                new_private_variable_members.pop();
-            }
-
-            if !new_private_variable_members.is_empty() || !module.is_header() {
-                new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
-                new_members.push(cpp::ModuleMember::EmptyLine);
-            }
-
-            if !new_private_variable_members.is_empty() {
-                new_members.push(cpp::ModuleMember::Tagged(
-                    "_static".into(),
-                    Box::new(cpp::ModuleMember::Block {
-                        members: new_private_variable_members,
-                    }),
-                ));
-            }
-            
-            //--------------------------------------------------------------------------------
-            // public functions
-            //--------------------------------------------------------------------------------
-
-            fn comment_block(block: &mut cpp::Block) {
-                for statement in block.statements.iter_mut() {
-                    match statement {
-                        cpp::Statement::Comment(_) | cpp::Statement::Commented(_) => {
-                            continue;
-                        }
-
-                        cpp::Statement::Block(block) => comment_block(block),
-
-                        _ => *statement = cpp::Statement::Commented(Box::new(statement.clone())),
-                    }
-                }
-            }
-
-            let mut new_public_code_members: Vec<cpp::ModuleMember> = vec![];
-
-            for member in public_code_members.iter() {
-                let cpp::ModuleMember::Procedure(procedure) = member else {
-                    unreachable!("{member:#?}")
-                };
-
-                let mut procedure = procedure.clone();
-
-                if procedure.body.is_none() {
-                    procedure.body = Some(cpp::Block::default());
-                }
-
-                comment_block(procedure.body.as_mut().unwrap());
-                
-                if let Some((mangled_name, _address)) = module.mangled_symbols.iter()
-                    .find(|(_, address)| *address == procedure.address)
-                {
-                    if procedure.body.is_none() {
-                        procedure.body = Some(cpp::Block::default());
-                    }
-
-                    procedure.body.as_mut().unwrap().statements.insert(
-                        0,
-                        cpp::Statement::FunctionCall(
-                            "mangled_assert".into(),
-                            vec![
-                                format!("\"{}\"", mangled_name),
-                            ],
-                        ),
-                    );
-
-                    procedure.body.as_mut().unwrap().statements.push(
-                        cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
-                    );
-                }
-
-                let return_type_str = procedure.return_type.map(|return_type| {
-                    cpp::type_name(
-                        class_table,
-                        type_sizes,
-                        machine_type,
-                        type_info,
-                        type_finder,
-                        return_type,
-                        None,
-                        None,
-                        None,
-                        true,
-                    )
-                    .unwrap()
-                }).unwrap_or("void".to_string());
-
-                if matches!(return_type_str.as_str(), "void" | "void const")
-                {
-                    procedure.body.as_mut().unwrap().statements.push(
-                        cpp::Statement::FunctionCall(
-                            format!("_sub_{:X}", procedure.address).into(),
-                            procedure
-                                .arguments
-                                .iter()
-                                .map(|a| a.1.clone().unwrap_or("arg".into()))
-                                .collect(),
-                        ),
-                    );
-                } else {
-                    procedure.body.as_mut().unwrap().statements.push(
-                        cpp::Statement::ReturnWithValue(cpp::ReturnWithValue {
-                            signature: return_type_str,
-                            value: Some(Box::new(cpp::Statement::FunctionCall(
-                                format!("_sub_{:X}", procedure.address).into(),
-                                procedure
-                                    .arguments
-                                    .iter()
-                                    .map(|a| a.1.clone().unwrap_or("arg".into()))
-                                    .collect(),
-                            ))),
-                        }),
-                    );
-                }
-
-                new_public_code_members.push(cpp::ModuleMember::Tagged(
-                    "_extern".into(),
-                    Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
-                        address: 0,
-                        line: procedure.line,
-                        type_index: procedure.type_index,
-                        is_static: procedure.is_static,
-                        name: format!("_sub_{:X}", procedure.address).into(),
-                        signature: cpp::type_name(
-                            class_table,
-                            type_sizes,
-                            machine_type,
-                            type_info,
-                            type_finder,
-                            procedure.type_index,
-                            None,
-                            Some(format!("_sub_{:X}", procedure.address).into()),
-                            None,
-                            true,
-                        )?
-                        .trim_end_matches(" const")
-                        .trim_end_matches(" volatile")
-                        .into(),
-                        body: None,
-                        return_type: procedure.return_type,
-                        arguments: vec![],
-                    })),
-                ));
-
-                if !procedure.is_static {
-                    new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
-                } else {
-                    procedure.is_static = false;
-
-                    new_public_code_members.push(cpp::ModuleMember::Tagged(
-                        "_static".into(),
-                        Box::new(cpp::ModuleMember::Procedure(procedure))));
-                }
-
-                new_public_code_members.push(cpp::ModuleMember::EmptyLine);
-            }
-
-            new_public_code_members.insert(0, cpp::ModuleMember::EmptyLine);
-            new_public_code_members.insert(0, cpp::ModuleMember::Comment("---------- public code".into()));
-
-            if !new_public_code_members.is_empty() {
-                new_members.extend(new_public_code_members);
-            }
-
-            //--------------------------------------------------------------------------------
-            // private functions
-            //--------------------------------------------------------------------------------
-
-            let mut new_private_code_members = vec![];
-
-            for member in private_code_members.iter() {
-                let cpp::ModuleMember::Procedure(procedure) = member else {
-                    unreachable!("{member:#?}")
-                };
-
-                let mut procedure = procedure.clone();
-
-                if procedure.body.is_none() {
-                    procedure.body = Some(cpp::Block::default());
-                }
-
-                comment_block(procedure.body.as_mut().unwrap());
-
-                if procedure.body.is_none() {
-                    procedure.body = Some(cpp::Block::default());
-                }
-
-                procedure.body.as_mut().unwrap().statements.insert(
-                    0,
-                    cpp::Statement::FunctionCall(
-                        "mangled_assert".into(),
-                        vec![
-                            format!("\"{}\"", procedure.name),
-                        ],
-                    ),
-                );
-
-                procedure.body.as_mut().unwrap().statements.push(
-                    cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
-                );
-
-                let return_type_str = procedure.return_type.map(|return_type| {
-                    cpp::type_name(
-                        class_table,
-                        type_sizes,
-                        machine_type,
-                        type_info,
-                        type_finder,
-                        return_type,
-                        None,
-                        None,
-                        None,
-                        true,
-                    )
-                    .unwrap()
-                }).unwrap_or("void".to_string());
-
-                if matches!(return_type_str.as_str(), "void" | "void const")
-                {
-                    procedure.body.as_mut().unwrap().statements.push(
-                        cpp::Statement::FunctionCall(
-                            format!("_sub_{:X}", procedure.address).into(),
-                            procedure
-                                .arguments
-                                .iter()
-                                .map(|a| a.1.clone().unwrap_or("arg".into()))
-                                .collect(),
-                        ),
-                    );
-                } else {
-                    procedure.body.as_mut().unwrap().statements.push(
-                        cpp::Statement::ReturnWithValue(cpp::ReturnWithValue {
-                            signature: return_type_str,
-                            value: Some(Box::new(cpp::Statement::FunctionCall(
-                                format!("_sub_{:X}", procedure.address).into(),
-                                procedure
-                                    .arguments
-                                    .iter()
-                                    .map(|a| a.1.clone().unwrap_or("arg".into()))
-                                    .collect(),
-                            ))),
-                        }),
-                    );
-                }
-
-                new_private_code_members.push(cpp::ModuleMember::Tagged(
-                    "_extern".into(),
-                    Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
-                        address: 0,
-                        line: procedure.line,
-                        type_index: procedure.type_index,
-                        is_static: false,
-                        name: format!("_sub_{:X}", procedure.address).into(),
-                        signature: cpp::type_name(
-                            class_table,
-                            type_sizes,
-                            machine_type,
-                            type_info,
-                            type_finder,
-                            procedure.type_index,
-                            None,
-                            Some(format!("_sub_{:X}", procedure.address).into()),
-                            None,
-                            true,
-                        )?
-                        .trim_end_matches(" const")
-                        .trim_end_matches(" volatile")
-                        .into(),
-                        body: None,
-                        return_type: procedure.return_type,
-                        arguments: vec![],
-                    })),
-                ));
-
-                if !procedure.is_static {
-                    new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
-                } else {
-                    procedure.is_static = false;
-
-                    new_private_code_members.push(cpp::ModuleMember::Tagged(
-                        "_static".into(),
-                        Box::new(cpp::ModuleMember::Procedure(procedure)),
-                    ));
-                }
-
-                new_private_code_members.push(cpp::ModuleMember::EmptyLine);
-            }
-        
-            new_private_code_members.insert(0, cpp::ModuleMember::EmptyLine);
-            new_private_code_members.insert(0, cpp::ModuleMember::Comment("---------- private code".into()));
-
-            if !new_private_code_members.is_empty() {
-                new_members.extend(new_private_code_members);
-            }
-
-            //--------------------------------------------------------------------------------
-            // ending preprocessor statements
-            //--------------------------------------------------------------------------------
-
-            if module.is_header() {
-                let stem = module.path
-                    .file_stem()
-                    .and_then(std::ffi::OsStr::to_str)
-                    .unwrap_or("UNKNOWN")
-                    .to_uppercase();
-
-                new_members.push(cpp::ModuleMember::Preprocessor(format!("endif // __{}_H__", stem)));
-            }
-
-            while let Some(cpp::ModuleMember::EmptyLine) = new_members.last() {
-                new_members.pop();
-            }
-
-            module.members = new_members;
+            reorganize::reorganize_module_members(
+                class_table,
+                type_sizes,
+                machine_type,
+                type_info,
+                type_finder,
+                module,
+                compound_enums.as_slice(),
+            )?;
         }
 
         //
@@ -1981,6 +698,152 @@ fn process_modules<'a>(
     }
 
     Ok(())
+}
+
+fn fix_nested_types(
+    module_members: &[cpp::ModuleMember],
+    module_member_index: usize,
+    class_data: Rc<RefCell<cpp::Class>>,
+    remove_class_names: &mut Vec<String>,
+    remove_enum_names: &mut Vec<String>,
+) {
+    let class_name = class_data.borrow().name.clone();
+    let mut new_members = class_data.borrow_mut().members.clone();
+
+    for class_member in new_members.iter_mut() {
+        match class_member {
+            cpp::ClassMember::Class(nested_class) => {
+                let is_declaration = nested_class.borrow().is_declaration;
+                let nested_name = nested_class.borrow().name.clone();
+                let full_name = format!("{}::{}", class_name, nested_name);
+
+                if is_declaration {
+                    let found = module_members.iter().enumerate().find(|&(i, m)| {
+                        if module_member_index == i {
+                            return false;
+                        }
+
+                        let cpp::ModuleMember::Class(other_class) = m else {
+                            return false;
+                        };
+
+                        other_class.borrow().name == full_name
+                    });
+
+                    if let Some((_, found_member)) = found {
+                        let cpp::ModuleMember::Class(other_class) = found_member else {
+                            unreachable!()
+                        };
+
+                        let mut nested_class = nested_class.borrow_mut();
+                        nested_class.is_declaration = false;
+                        nested_class.size = other_class.borrow().size;
+                        nested_class.base_classes = other_class.borrow().base_classes.clone();
+                        nested_class.members = other_class.borrow().members.clone();
+
+                        let nested_depth = nested_class.depth + 1;
+
+                        for member in nested_class.members.iter_mut() {
+                            match member {
+                                cpp::ClassMember::Class(inner_class) => inner_class.borrow_mut().depth = nested_depth,
+                                cpp::ClassMember::Enum(inner_enum) => inner_enum.depth = nested_depth,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                fix_nested_types(module_members, module_member_index, nested_class.clone(), remove_class_names, remove_enum_names);
+                
+                if !remove_class_names.contains(&full_name) {
+                    remove_class_names.push(full_name);
+                }
+            }
+
+            cpp::ClassMember::Enum(nested_enum) => {
+                let full_name = format!("{}::{}", class_name, nested_enum.name);
+                
+                if nested_enum.is_declaration {
+                    let found = module_members.iter().enumerate().find(|&(i, m)| {
+                        if module_member_index == i {
+                            return false;
+                        }
+
+                        let cpp::ModuleMember::Enum(other_enum) = m else {
+                            return false;
+                        };
+
+                        other_enum.name == full_name
+                    });
+
+                    if let Some((_, found_member)) = found {
+                        let cpp::ModuleMember::Enum(other_enum) = found_member else {
+                            unreachable!()
+                        };
+
+                        nested_enum.is_declaration = false;
+                        nested_enum.underlying_type_name = other_enum.underlying_type_name.clone();
+                        nested_enum.size = other_enum.size;
+                        nested_enum.values = other_enum.values.clone();
+                    }
+                }
+
+                if !remove_enum_names.contains(&full_name) {
+                    remove_enum_names.push(full_name);
+                }
+            }
+
+            cpp::ClassMember::Field(field) => {
+                if field.type_name.contains("::<unnamed") {
+                    let parts = field.type_name.split("::").collect::<Vec<_>>();
+
+                    if !parts.is_empty() && parts.last().unwrap().starts_with("<unnamed") {
+                        let full_name = field.type_name.clone();
+
+                        let found = module_members.iter().enumerate().find(|&(i, m)| {
+                            if module_member_index == i {
+                                return false;
+                            }
+
+                            let cpp::ModuleMember::Class(other_class) = m else {
+                                return false;
+                            };
+
+                            other_class.borrow().name == full_name
+                        });
+
+                        if let Some((_, found_member)) = found {
+                            let cpp::ModuleMember::Class(other_class) = found_member else {
+                                unreachable!()
+                            };
+
+                            fix_nested_types(module_members, module_member_index, other_class.clone(), remove_class_names, remove_enum_names);
+
+                            let mut other_class = other_class.borrow().clone();
+                            other_class.name = String::new();
+                            other_class.depth = class_data.borrow().depth + 1;
+                            
+                            field.type_name = other_class
+                                .to_string()
+                                .trim_start()
+                                .trim_end_matches(";")
+                                .to_string();
+                        
+                            field.display = format!("{} {}", field.type_name, field.name);
+
+                            if !remove_class_names.contains(&full_name) {
+                                remove_class_names.push(full_name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    class_data.borrow_mut().members = new_members;
 }
 
 #[inline(always)]
@@ -2072,6 +935,91 @@ fn process_module(
     for header in module_headers {
         if !module.headers.contains(&header) {
             module.headers.push(header);
+        }
+    }
+
+    //
+    // Sort module members by line number
+    //
+
+    let mut storage: Vec<(u32, cpp::ModuleMember)> = vec![];
+    let mut prev_line = 0;
+
+    for u in module.members.iter() {
+        match u {
+            cpp::ModuleMember::Class(x) => {
+                storage.push((x.borrow().line, u.clone()));
+                prev_line = x.borrow().line;
+            }
+
+            cpp::ModuleMember::Enum(x) => {
+                storage.push((x.line, u.clone()));
+                prev_line = x.line;
+            }
+
+            cpp::ModuleMember::Data { line: Some(line), .. } => {
+                storage.push((*line, u.clone()));
+                prev_line = *line;
+            }
+
+            cpp::ModuleMember::ThreadStorage { line: Some(line), .. } => {
+                storage.push((*line, u.clone()));
+                prev_line = *line;
+            }
+
+            cpp::ModuleMember::Procedure(cpp::Procedure { line: Some(line), .. }) => {
+                storage.push((*line, u.clone()));
+                prev_line = *line;
+            }
+
+            _ => {
+                prev_line += 1;
+                storage.push((prev_line, u.clone()));
+            }
+        }
+    }
+
+    storage.sort_by(|a, b| a.0.cmp(&b.0));
+    module.members = storage.iter().map(|m| m.1.clone()).collect::<Vec<_>>();
+
+    //
+    // Replace nested type declarations and anonymous field types with their full types
+    //
+    
+    let mut new_members = vec![];
+    let mut remove_class_names = vec![];
+    let mut remove_enum_names = vec![];
+
+    for i in 0..module.members.len() {
+        match &module.members[i] {
+            cpp::ModuleMember::Class(class_data) => {
+                fix_nested_types(module.members.as_slice(), i, class_data.clone(), &mut remove_class_names, &mut remove_enum_names);
+                new_members.push(cpp::ModuleMember::Class(class_data.clone()));
+            }
+
+            _ => {
+                new_members.push(module.members[i].clone());
+            }
+        }
+    }
+
+    for class_name in remove_class_names.into_iter().rev() {
+        for i in (0..module.members.len()).rev() {
+            if let cpp::ModuleMember::Class(class_data) = &module.members[i]
+                && class_data.borrow().name == class_name
+            {
+                module.members.remove(i);
+            }
+        }
+    }
+
+    for enum_name in remove_enum_names.into_iter().rev() {
+        for i in (0..module.members.len()).rev() {
+            if let cpp::ModuleMember::Enum(enum_data) = &module.members[i]
+                && enum_data.name == enum_name
+            {
+                module.members.remove(i);
+            }
         }
     }
 
