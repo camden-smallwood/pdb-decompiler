@@ -123,6 +123,7 @@ pub struct Class {
     pub size: u64,
     pub base_classes: Vec<BaseClass>,
     pub members: Vec<ClassMember>,
+    pub properties: Option<pdb2::TypeProperties>,
     pub field_attributes: Option<pdb2::FieldAttributes>,
 }
 
@@ -276,6 +277,7 @@ fn reconstruct_struct_fields(depth: u32, fields: &[&Field]) -> Vec<ClassMember> 
                 size: fields_size as u64,
                 base_classes: vec![],
                 members: fields,
+                properties: None,
                 field_attributes: None,
             }))));
         }
@@ -375,6 +377,7 @@ fn reconstruct_union_fields(depth: u32, fields: &[&Field]) -> Vec<ClassMember> {
                 size: fields_size as u64,
                 base_classes: vec![],
                 members: fields,
+                properties: None,
                 field_attributes: None,
             }))));
         }
@@ -722,6 +725,7 @@ impl Class {
                             size: size,
                             base_classes: vec![],
                             members: vec![],
+                            properties: Some(properties),
                             field_attributes: Some(nested_data.attributes),
                         }));
 
@@ -771,6 +775,7 @@ impl Class {
                             size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?,
                             is_declaration: false,
                             values: vec![],
+                            properties: data.properties,
                             field_attributes: Some(nested_data.attributes),
                         };
         

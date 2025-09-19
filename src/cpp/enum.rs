@@ -16,6 +16,7 @@ pub struct Enum {
     pub size: usize,
     pub is_declaration: bool,
     pub values: Vec<EnumValue>,
+    pub properties: pdb2::TypeProperties,
     pub field_attributes: Option<pdb2::FieldAttributes>,
 }
 
@@ -64,7 +65,7 @@ impl fmt::Display for Enum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "enum")?;
 
-        if !self.name.split("::").last().unwrap().contains("<unnamed") {
+        if self.name != "<unnamed-tag>" {
             write!(f, " {}", self.name)?;
         }
 

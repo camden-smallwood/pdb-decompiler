@@ -405,6 +405,7 @@ impl Module {
                     size: size,
                     base_classes: vec![],
                     members: vec![],
+                    properties: Some(properties),
                     field_attributes: None,
                 }));
 
@@ -485,6 +486,7 @@ impl Module {
                     size,
                     is_declaration: false,
                     values: vec![],
+                    properties: data.properties,
                     field_attributes: None,
                 };
 

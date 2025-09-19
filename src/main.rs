@@ -666,6 +666,38 @@ fn process_modules<'a>(
                 }
             }
         }
+        
+        for i in (0..module.members.len()).rev() {
+            if let cpp::ModuleMember::Class(class_data) = &module.members[i] {
+                let is_nested_type = {
+                    let class_data = class_data.borrow();
+                    if let Some(properties) = class_data.properties.as_ref() {
+                        properties.is_nested_type()
+                    } else {
+                        false
+                    }
+                };
+
+                if is_nested_type {
+                    // let class_kind = match class_data.borrow().kind {
+                    //     Some(pdb2::ClassKind::Class) => "class",
+                    //     Some(pdb2::ClassKind::Struct) => "struct",
+                    //     Some(pdb2::ClassKind::Interface) => "interface",
+                    //     None if class_data.borrow().is_union => "union",
+                    //     None => todo!(),
+                    // };
+                    // println!("WARNING: Removing unreferenced nested {class_kind} in toplevel: \"{}\" in \"{}\"", class_data.borrow().name, module.path.display());
+                    module.members.remove(i);
+                }
+            }
+
+            if let cpp::ModuleMember::Enum(enum_data) = &module.members[i]
+                && enum_data.properties.is_nested_type()
+            {
+                // println!("WARNING: Removing unreferenced nested enum in toplevel: \"{}\" in \"{}\"", enum_data.name, module.path.display());
+                module.members.remove(i);
+            }
+        }
     }
 
     for (k, v) in header_modules {
