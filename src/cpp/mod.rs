@@ -263,21 +263,25 @@ pub fn type_name<'p>(
                 ).as_str()
             );
 
-            match data.return_type {
-                Some(type_index) => type_name(
-                    class_table,
-                    type_sizes,
-                    machine_type,
-                    type_info,
-                    type_finder,
-                    type_index,
-                    None,
-                    Some(name),
-                    None,
-                    false,
-                )?,
+            if data.attributes.is_constructor() || name.starts_with('~') {
+                name
+            } else {
+                match data.return_type {
+                    Some(type_index) => type_name(
+                        class_table,
+                        type_sizes,
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        type_index,
+                        None,
+                        Some(name),
+                        None,
+                        false,
+                    )?,
 
-                None => name,
+                    None => name,
+                }
             }
         }
 
@@ -315,18 +319,22 @@ pub fn type_name<'p>(
                 }
             }
 
-            type_name(
-                class_table,
-                type_sizes,
-                machine_type,
-                type_info,
-                type_finder,
-                data.return_type,
-                None,
-                Some(name),
-                None,
-                false,
-            )?
+            if data.attributes.is_constructor() || name.starts_with('~') {
+                name
+            } else {
+                type_name(
+                    class_table,
+                    type_sizes,
+                    machine_type,
+                    type_info,
+                    type_finder,
+                    data.return_type,
+                    None,
+                    Some(name),
+                    None,
+                    false,
+                )?
+            }
         }
 
         pdb2::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
