@@ -534,19 +534,23 @@ fn process_modules<'a>(
     }
 
     //
-    // Finalize module debug information, clean up include paths
+    // Finalize module debug information
     //
 
-    let mut new_modules = HashMap::new();
+    let mut header_modules = HashMap::new();
 
     for (_, module) in modules.iter_mut() {
+        //
+        // Clean up include paths and generate modules for them
+        //
+
         let mut headers = vec![];
 
         for (header_path, is_global) in module.headers.iter() {
             let header_module_key = header_path.to_string_lossy().to_lowercase().to_string();
 
-            if !new_modules.contains_key(&header_module_key) {
-                new_modules.insert(header_module_key.clone(), cpp::Module::default().with_path(header_path.clone()));
+            if !header_modules.contains_key(&header_module_key) {
+                header_modules.insert(header_module_key.clone(), cpp::Module::default().with_path(header_path.clone()));
             }
 
             if let Some(pch_file_name) = module.pch_file_name.as_ref() {
@@ -577,10 +581,97 @@ fn process_modules<'a>(
 
         module.headers.clear();
         module.headers.extend(headers);
+
+        //
+        // Sort module members by line number
+        //
+
+        let mut storage: Vec<(u32, cpp::ModuleMember)> = vec![];
+        let mut prev_line = 0;
+
+        for u in module.members.iter() {
+            match u {
+                cpp::ModuleMember::Class(x) => {
+                    storage.push((x.borrow().line, u.clone()));
+                    prev_line = x.borrow().line;
+                }
+
+                cpp::ModuleMember::Enum(x) => {
+                    storage.push((x.line, u.clone()));
+                    prev_line = x.line;
+                }
+
+                cpp::ModuleMember::Data { line: Some(line), .. } => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                cpp::ModuleMember::ThreadStorage { line: Some(line), .. } => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                cpp::ModuleMember::Procedure(cpp::Procedure { line: Some(line), .. }) => {
+                    storage.push((*line, u.clone()));
+                    prev_line = *line;
+                }
+
+                _ => {
+                    prev_line += 1;
+                    storage.push((prev_line, u.clone()));
+                }
+            }
+        }
+
+        storage.sort_by(|a, b| a.0.cmp(&b.0));
+        module.members = storage.iter().map(|m| m.1.clone()).collect::<Vec<_>>();
+
+        //
+        // Replace nested type declarations and anonymous field types with their full types
+        //
+        
+        let mut new_members = vec![];
+        let mut remove_class_names = vec![];
+        let mut remove_enum_names = vec![];
+
+        for i in 0..module.members.len() {
+            match &module.members[i] {
+                cpp::ModuleMember::Class(class_data) => {
+                    fix_nested_types(module.members.as_slice(), i, class_data.clone(), &mut remove_class_names, &mut remove_enum_names);
+                    new_members.push(cpp::ModuleMember::Class(class_data.clone()));
+                }
+
+                _ => {
+                    new_members.push(module.members[i].clone());
+                }
+            }
+        }
+
+        for class_name in remove_class_names.into_iter().rev() {
+            for i in (0..module.members.len()).rev() {
+                if let cpp::ModuleMember::Class(class_data) = &module.members[i]
+                    && class_data.borrow().name == class_name
+                {
+                    module.members.remove(i);
+                }
+            }
+        }
+
+        for enum_name in remove_enum_names.into_iter().rev() {
+            for i in (0..module.members.len()).rev() {
+                if let cpp::ModuleMember::Enum(enum_data) = &module.members[i]
+                    && enum_data.name == enum_name
+                {
+                    module.members.remove(i);
+                }
+            }
+        }
     }
 
-    for (k, v) in new_modules {
-        modules.entry(k).or_insert(v);
+    for (k, v) in header_modules {
+        if !modules.contains_key(&k) {
+            modules.insert(k, v);
+        }
     }
 
     //
@@ -937,91 +1028,6 @@ fn process_module(
     for header in module_headers {
         if !module.headers.contains(&header) {
             module.headers.push(header);
-        }
-    }
-
-    //
-    // Sort module members by line number
-    //
-
-    let mut storage: Vec<(u32, cpp::ModuleMember)> = vec![];
-    let mut prev_line = 0;
-
-    for u in module.members.iter() {
-        match u {
-            cpp::ModuleMember::Class(x) => {
-                storage.push((x.borrow().line, u.clone()));
-                prev_line = x.borrow().line;
-            }
-
-            cpp::ModuleMember::Enum(x) => {
-                storage.push((x.line, u.clone()));
-                prev_line = x.line;
-            }
-
-            cpp::ModuleMember::Data { line: Some(line), .. } => {
-                storage.push((*line, u.clone()));
-                prev_line = *line;
-            }
-
-            cpp::ModuleMember::ThreadStorage { line: Some(line), .. } => {
-                storage.push((*line, u.clone()));
-                prev_line = *line;
-            }
-
-            cpp::ModuleMember::Procedure(cpp::Procedure { line: Some(line), .. }) => {
-                storage.push((*line, u.clone()));
-                prev_line = *line;
-            }
-
-            _ => {
-                prev_line += 1;
-                storage.push((prev_line, u.clone()));
-            }
-        }
-    }
-
-    storage.sort_by(|a, b| a.0.cmp(&b.0));
-    module.members = storage.iter().map(|m| m.1.clone()).collect::<Vec<_>>();
-
-    //
-    // Replace nested type declarations and anonymous field types with their full types
-    //
-    
-    let mut new_members = vec![];
-    let mut remove_class_names = vec![];
-    let mut remove_enum_names = vec![];
-
-    for i in 0..module.members.len() {
-        match &module.members[i] {
-            cpp::ModuleMember::Class(class_data) => {
-                fix_nested_types(module.members.as_slice(), i, class_data.clone(), &mut remove_class_names, &mut remove_enum_names);
-                new_members.push(cpp::ModuleMember::Class(class_data.clone()));
-            }
-
-            _ => {
-                new_members.push(module.members[i].clone());
-            }
-        }
-    }
-
-    for class_name in remove_class_names.into_iter().rev() {
-        for i in (0..module.members.len()).rev() {
-            if let cpp::ModuleMember::Class(class_data) = &module.members[i]
-                && class_data.borrow().name == class_name
-            {
-                module.members.remove(i);
-            }
-        }
-    }
-
-    for enum_name in remove_enum_names.into_iter().rev() {
-        for i in (0..module.members.len()).rev() {
-            if let cpp::ModuleMember::Enum(enum_data) = &module.members[i]
-                && enum_data.name == enum_name
-            {
-                module.members.remove(i);
-            }
         }
     }
 
