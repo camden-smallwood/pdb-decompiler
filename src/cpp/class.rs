@@ -630,7 +630,7 @@ impl Class {
                             arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, function_data.argument_list, None)?,
                             field_attributes: Some(data.attributes),
                             function_attributes: function_data.attributes,
-                            modifier: None,
+                            modifier: get_member_function_modifier(&function_data, type_finder),
                         },
             
                         Ok(data) => panic!("Unhandled member function type data in Class::add_member - {:#?}", data),
@@ -661,7 +661,7 @@ impl Class {
                                             arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, function_data.argument_list, None)?,
                                             field_attributes: Some(attributes),
                                             function_attributes: function_data.attributes,
-                                            modifier: None,
+                                            modifier: get_member_function_modifier(&function_data, type_finder),
                                         },
                             
                                         Ok(data) => panic!("Unhandled member function type data in Class::add_member - {:#?}", data),

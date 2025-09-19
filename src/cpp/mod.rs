@@ -806,11 +806,6 @@ pub fn type_size<'p>(
                 }
             }
 
-            if data.name.to_string() == "real_rgb_color" {
-                if data.size == 0 {
-                    panic!("FUCK");
-                }
-            }
             Ok(data.size as usize)
         }
 
@@ -823,12 +818,6 @@ pub fn type_size<'p>(
                 }
             }
 
-            if data.name.to_string() == "real_rgb_color" {
-                if data.size == 0 {
-                    panic!("FUCK");
-                }
-            }
-            
             Ok(data.size as usize)
         }
 
