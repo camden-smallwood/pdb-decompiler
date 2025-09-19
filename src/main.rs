@@ -1573,10 +1573,6 @@ fn process_module_symbol_data(
                             .replace(" class ", " ")
                             .replace(" enum ", " ");
 
-                        if procedure_class_name == "c_static_array<long,20>" {
-                            println!("{class_method_name} == {procedure_name} ? {}", class_method_name == procedure_name);
-                        }
-                        
                         if class_method_name == procedure_name {
                             let mut valid = (class_member_function.argument_list == member_function.argument_list)
                                 && (class_member_function.return_type == member_function.return_type);
@@ -1607,6 +1603,19 @@ fn process_module_symbol_data(
                                     None,
                                     member_function.argument_list,
                                     Some(parameters.clone()),
+                                )?;
+
+                                class_method.signature = cpp::type_name(
+                                    class_table,
+                                    type_sizes,
+                                    machine_type,
+                                    type_info,
+                                    type_finder,
+                                    class_method.type_index,
+                                    class_method.modifier.as_ref(),
+                                    Some(class_method.name.clone()),
+                                    Some(parameters.clone()),
+                                    false,
                                 )?;
                                 break;
                             }

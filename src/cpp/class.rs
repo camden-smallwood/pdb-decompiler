@@ -68,10 +68,11 @@ impl fmt::Display for Field {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Method {
+    pub signature: String,
     pub name: String,
-    pub type_index: pdb2::TypeIndex,
     pub return_type_name: String,
     pub arguments: Vec<String>,
+    pub type_index: pdb2::TypeIndex,
     pub field_attributes: Option<pdb2::FieldAttributes>,
     pub function_attributes: pdb2::FunctionAttributes,
     pub modifier: Option<pdb2::ModifierType>,
@@ -81,7 +82,7 @@ impl fmt::Display for Method {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}{}{}({}){}{};",
+            "{}{}{};",
 
             match self.field_attributes {
                 Some(field_attributes) => {
@@ -97,33 +98,7 @@ impl fmt::Display for Method {
                 None => ""
             },
 
-            if !(self.function_attributes.is_constructor() || self.name.starts_with('~')) {
-                format!("{} ", self.return_type_name)
-            } else {
-                "".to_string()
-            },
-
-            self.name,
-
-            self.arguments.join(", "),
-
-            match self.modifier {
-                Some(modifier) => {
-                    let mut modifier_string = String::new();
-
-                    if modifier.constant {
-                        modifier_string.push_str(" const");
-                    }
-
-                    if modifier.volatile {
-                        modifier_string.push_str(" volatile");
-                    }
-
-                    modifier_string
-                }
-
-                None => String::new()
-            },
+            self.signature,
 
             match self.field_attributes {
                 Some(field_attributes) => if field_attributes.is_pure_virtual() {
@@ -623,15 +598,33 @@ impl Class {
                 
                 _ => {
                     let method = match type_finder.find(data.method_type)?.parse() {
-                        Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
-                            name: data.name.to_string().to_string(),
-                            type_index: data.method_type,
-                            return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, None, false)?,
-                            arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, function_data.argument_list, None)?,
-                            field_attributes: Some(data.attributes),
-                            function_attributes: function_data.attributes,
-                            modifier: get_member_function_modifier(&function_data, type_finder),
-                        },
+                        Ok(pdb2::TypeData::MemberFunction(function_data)) => {
+                            let modifier = get_member_function_modifier(&function_data, type_finder);
+
+                            let signature = type_name(
+                                class_table,
+                                type_sizes,
+                                machine_type,
+                                type_info,
+                                type_finder,
+                                data.method_type,
+                                modifier.as_ref(),
+                                Some(data.name.to_string().to_string()),
+                                None,
+                                false,
+                            )?;
+
+                            Method {
+                                signature,
+                                name: data.name.to_string().to_string(),
+                                return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, None, false)?,
+                                arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, function_data.argument_list, None)?,
+                                type_index: data.method_type,
+                                field_attributes: Some(data.attributes),
+                                function_attributes: function_data.attributes,
+                                modifier,
+                            }
+                        }
             
                         Ok(data) => panic!("Unhandled member function type data in Class::add_member - {:#?}", data),
                         Err(err) => panic!("Unhandled error in Class::add_member - {}", err)
@@ -654,15 +647,33 @@ impl Class {
 
                                 _ => {
                                     let method = match type_finder.find(method_type)?.parse() {
-                                        Ok(pdb2::TypeData::MemberFunction(function_data)) => Method {
-                                            name: data.name.to_string().to_string(),
-                                            type_index: method_type,
-                                            return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, None, false)?,
-                                            arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, function_data.argument_list, None)?,
-                                            field_attributes: Some(attributes),
-                                            function_attributes: function_data.attributes,
-                                            modifier: get_member_function_modifier(&function_data, type_finder),
-                                        },
+                                        Ok(pdb2::TypeData::MemberFunction(function_data)) => {
+                                            let modifier = get_member_function_modifier(&function_data, type_finder);
+
+                                            let signature = type_name(
+                                                class_table,
+                                                type_sizes,
+                                                machine_type,
+                                                type_info,
+                                                type_finder,
+                                                method_type,
+                                                modifier.as_ref(),
+                                                Some(data.name.to_string().to_string()),
+                                                None,
+                                                false,
+                                            )?;
+                                            
+                                            Method {
+                                                signature,
+                                                name: data.name.to_string().to_string(),
+                                                type_index: method_type,
+                                                return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, None, false)?,
+                                                arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, function_data.argument_list, None)?,
+                                                field_attributes: Some(attributes),
+                                                function_attributes: function_data.attributes,
+                                                modifier,
+                                            }
+                                        }
                             
                                         Ok(data) => panic!("Unhandled member function type data in Class::add_member - {:#?}", data),
                                         Err(err) => panic!("Unhandled error in Class::add_member - {}", err)
