@@ -241,58 +241,51 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Procedure(data) => {
-            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.starts_with('~')).unwrap_or(false) {
-                if let Some(field_name) = declaration_name.as_ref() {
-                    field_name.clone()
-                } else {
-                    String::new()
-                }
+            let mut name = if let Some(declaration_name) = declaration_name.as_ref() {
+                declaration_name.clone()
             } else {
-                let mut name = match data.return_type {
-                    Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, false)?,
-                    None => String::new(),
-                };
-
-                if data.return_type.is_some() && !(name.ends_with(' ') || name.ends_with('*') || name.ends_with('&')) {
-                    name.push(' ');
-                }
-
-                if let Some(field_name) = declaration_name {
-                    name.push_str(field_name.as_str());
-                }
-
-                name
+                String::new()
             };
 
             name.push_str(
                 format!(
                     "({})",
-                    argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", ")
+                    argument_list(
+                        class_table,
+                        type_sizes,
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        None,
+                        data.argument_list,
+                        parameter_names,
+                    )?.join(", ")
                 ).as_str()
             );
 
-            name
+            match data.return_type {
+                Some(type_index) => type_name(
+                    class_table,
+                    type_sizes,
+                    machine_type,
+                    type_info,
+                    type_finder,
+                    type_index,
+                    None,
+                    Some(name),
+                    None,
+                    false,
+                )?,
+
+                None => name,
+            }
         }
 
         pdb2::TypeData::MemberFunction(data) => {
-            let mut name = if data.attributes.is_constructor() || declaration_name.as_ref().map(|x| x.starts_with('~')).unwrap_or(false) {
-                if let Some(field_name) = declaration_name.as_ref() {
-                    field_name.clone()
-                } else {
-                    String::new()
-                }
+            let mut name = if let Some(declaration_name) = declaration_name.as_ref() {
+                declaration_name.clone()
             } else {
-                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.return_type, modifier, None, None, false)?;
-
-                if !(name.ends_with(' ') || name.ends_with('*') || name.ends_with('&')) {
-                    name.push(' ');
-                }
-
-                if let Some(field_name) = declaration_name {
-                    name.push_str(field_name.as_str());
-                }
-
-                name
+                String::new()
             };
 
             let mut parameter_names = parameter_names;
@@ -322,7 +315,18 @@ pub fn type_name<'p>(
                 }
             }
 
-            name
+            type_name(
+                class_table,
+                type_sizes,
+                machine_type,
+                type_info,
+                type_finder,
+                data.return_type,
+                None,
+                Some(name),
+                None,
+                false,
+            )?
         }
 
         pdb2::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
@@ -370,11 +374,6 @@ pub fn type_name<'p>(
                     _ => {}
                 }
 
-                // if let Some(field_name) = declaration_name.as_ref() && field_name == "k_speaker_ranges" {
-                //     println!("{field_name} array type: {array_type:#?}");
-                //     println!("{field_name} element type: {name} {element_type:#?}");
-                // }
-                
                 let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, None, None, false)?;
 
                 if data.attributes.is_reference() {
