@@ -1594,17 +1594,6 @@ fn process_module_symbol_data(
                                     parameters.remove(0);
                                 }
                                 
-                                class_method.arguments = cpp::argument_list(
-                                    class_table, 
-                                    type_sizes,
-                                    machine_type,
-                                    type_info,
-                                    type_finder,
-                                    None,
-                                    member_function.argument_list,
-                                    Some(parameters.clone()),
-                                )?;
-
                                 class_method.signature = cpp::type_name(
                                     class_table,
                                     type_sizes,

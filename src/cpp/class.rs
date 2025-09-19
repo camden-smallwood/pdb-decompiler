@@ -70,8 +70,6 @@ impl fmt::Display for Field {
 pub struct Method {
     pub signature: String,
     pub name: String,
-    pub return_type_name: String,
-    pub arguments: Vec<String>,
     pub type_index: pdb2::TypeIndex,
     pub field_attributes: Option<pdb2::FieldAttributes>,
     pub function_attributes: pdb2::FunctionAttributes,
@@ -617,8 +615,6 @@ impl Class {
                             Method {
                                 signature,
                                 name: data.name.to_string().to_string(),
-                                return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, None, false)?,
-                                arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, function_data.argument_list, None)?,
                                 type_index: data.method_type,
                                 field_attributes: Some(data.attributes),
                                 function_attributes: function_data.attributes,
@@ -667,8 +663,6 @@ impl Class {
                                                 signature,
                                                 name: data.name.to_string().to_string(),
                                                 type_index: method_type,
-                                                return_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, function_data.return_type, None, None, None, false)?,
-                                                arguments: argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, function_data.argument_list, None)?,
                                                 field_attributes: Some(attributes),
                                                 function_attributes: function_data.attributes,
                                                 modifier,
