@@ -537,7 +537,6 @@ fn process_modules<'a>(
     // Finalize module debug information, clean up include paths
     //
 
-    let module_paths = modules.keys().cloned().collect::<Vec<_>>();
     let mut new_modules = HashMap::new();
 
     for (_, module) in modules.iter_mut() {
@@ -546,12 +545,13 @@ fn process_modules<'a>(
         for (header_path, is_global) in module.headers.iter() {
             let header_module_key = header_path.to_string_lossy().to_lowercase().to_string();
 
-            if !module_paths.contains(&header_module_key) && !new_modules.contains_key(&header_module_key) {
+            if !new_modules.contains_key(&header_module_key) {
                 new_modules.insert(header_module_key.clone(), cpp::Module::default().with_path(header_path.clone()));
             }
 
             if let Some(pch_file_name) = module.pch_file_name.as_ref() {
                 let pch_module_key = pch_file_name.to_string_lossy().to_lowercase().to_string();
+                
                 if header_module_key == pch_module_key {
                     continue;
                 }
@@ -600,33 +600,35 @@ fn process_modules<'a>(
                             continue;
                         }
 
-                        if let Some(member) = module.members.iter_mut().find(|m| {
+                        let Some(member) = module.members.iter_mut().find(|m| {
                             let cpp::ModuleMember::Procedure(p) = m else {
                                 return false;
                             };
 
                             p.body.is_some() && p.signature == function_scope_procedure.signature
-                        }) {
-                            let cpp::ModuleMember::Procedure(procedure) = member else {
-                                unreachable!()
-                            };
+                        }) else {
+                            continue;
+                        };
 
-                            let Some(procedure_body) = procedure.body.as_mut() else {
-                                unreachable!();
-                            };
-                            
-                            if !procedure_body.statements.is_empty() {
-                                procedure_body.statements.push(cpp::Statement::EmptyLine);
-                            }
+                        let cpp::ModuleMember::Procedure(procedure) = member else {
+                            unreachable!()
+                        };
 
-                            procedure_body.statements.push(cpp::Statement::Comment("DEBUG:".to_string()));
-                            procedure_body.statements.push(cpp::Statement::Commented(Box::new(
-                                cpp::Statement::Block(cpp::Block {
-                                    address: function_scope_procedure.body.as_ref().unwrap().address.clone(),
-                                    statements: function_scope_procedure.body.as_ref().unwrap().statements.clone(),
-                                }),
-                            )));
+                        let Some(procedure_body) = procedure.body.as_mut() else {
+                            unreachable!();
+                        };
+                        
+                        if !procedure_body.statements.is_empty() {
+                            procedure_body.statements.push(cpp::Statement::EmptyLine);
                         }
+
+                        procedure_body.statements.push(cpp::Statement::Comment("DEBUG:".to_string()));
+                        procedure_body.statements.push(cpp::Statement::Commented(Box::new(
+                            cpp::Statement::Block(cpp::Block {
+                                address: function_scope_procedure.body.as_ref().unwrap().address.clone(),
+                                statements: function_scope_procedure.body.as_ref().unwrap().statements.clone(),
+                            }),
+                        )));
                     }
                 }
             }
@@ -921,10 +923,10 @@ fn process_module(
     let mut module_headers = vec![];
 
     for header_path in headers.iter() {
-        let header_key = header_path.to_string_lossy().to_lowercase().to_string();
+        let header_module_key = header_path.to_string_lossy().to_lowercase().to_string();
 
-        if !modules.contains_key(&header_key) {
-            modules.insert(header_key.clone(), cpp::Module::default().with_path(header_path.clone()));
+        if !modules.contains_key(&header_module_key) {
+            modules.insert(header_module_key.clone(), cpp::Module::default().with_path(header_path.clone()));
         }
 
         module_headers.push((header_path.clone(), false));
@@ -1498,6 +1500,26 @@ fn process_module_symbol_data(
                 procedure_symbol,
             )?;
             
+            //
+            // NOTE:
+            //
+            // Some PDBs have all the function parameter names in RegisterVariable symbols,
+            // but still have extra RegisterRelative symbols.
+            //
+            // Other PDBs don't have any RegisterVariable symbols at all, and store all
+            // the function parameter names in RegisterRelative symbols, but can have more
+            // symbols than parameter names.
+            //
+            // In all cases observed so far, the parameter name symbols come first,
+            // then the extra RegisterRelative symbols follow.
+            //
+            // Are these extra RegisterRelative symbols local variable names?
+            //
+            // HACK:
+            //
+            // If we don't have any RegisterVariable symbols, use RegisterRelative symbols.
+            //
+
             let parameters = if register_variable_names.is_empty() {
                 register_relative_names
             } else {
@@ -1530,8 +1552,6 @@ fn process_module_symbol_data(
                     c.name == procedure_class_name && !c.is_declaration
                 }).cloned().collect::<Vec<_>>();
 
-                // let mut found = false;
-
                 for class in full_classes.iter() {
                     for member in class.borrow_mut().members.iter_mut() {
                         let cpp::ClassMember::Method(class_method) = member else {
@@ -1553,18 +1573,23 @@ fn process_module_symbol_data(
                             .replace(" class ", " ")
                             .replace(" enum ", " ");
 
+                        if procedure_class_name == "c_static_array<long,20>" {
+                            println!("{class_method_name} == {procedure_name} ? {}", class_method_name == procedure_name);
+                        }
+                        
                         if class_method_name == procedure_name {
-                            let valid = if class_member_function.argument_list == member_function.argument_list {
-                                class_member_function.return_type == member_function.return_type
-                            } else {
+                            let mut valid = (class_member_function.argument_list == member_function.argument_list)
+                                && (class_member_function.return_type == member_function.return_type);
+
+                            if !valid {
                                 let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, true)?;
                                 let lhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
 
                                 let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, true)?;
                                 let rhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
 
-                                (lhs_return_type == rhs_return_type) && (lhs_arg_list == rhs_arg_list)
-                            };
+                                valid = (lhs_return_type == rhs_return_type) && (lhs_arg_list == rhs_arg_list);
+                            }
 
                             if valid {
                                 let mut parameters = parameters.clone();
@@ -1583,60 +1608,12 @@ fn process_module_symbol_data(
                                     member_function.argument_list,
                                     Some(parameters.clone()),
                                 )?;
-
-                                class_method.modifier = cpp::get_member_function_modifier(&class_member_function, type_finder);
-
-                                // found = true;
                                 break;
                             }
                         }
                     }
                 }
-
-                // procedure_name = procedure_symbol.name.to_string().to_string();
-                
-                // if !found && !(procedure_name.contains("::[") || procedure_name.contains('`')) {
-                //     println!("----------------");
-                //     println!(
-                //         "WARNING: \"{}\" not found in any \"{}\":",
-                //         procedure_symbol.name,
-                //         procedure_class_name,
-                //         // class.borrow().members.iter()
-                //         //     .filter(|m| matches!(m, cpp::ClassMember::Method(_)))
-                //         //     .map(|m| {
-                //         //         let cpp::ClassMember::Method(method) = m else { unreachable!() };
-                //         //         format!("\"{}\"", method.name)
-                //         //     })
-                //         //     .collect::<Vec<_>>()
-                //         //     .join(", ")
-                //     );
-
-                //     for class in full_classes {
-                //         println!("{}", tabbed::TabbedDisplayer(&*class.borrow()));
-                //     }
-                //     println!("----------------");
-                // }
             }
-
-            //
-            // NOTE:
-            //
-            // Some PDBs have all the function parameter names in RegisterVariable symbols,
-            // but still have extra RegisterRelative symbols.
-            //
-            // Other PDBs don't have any RegisterVariable symbols at all, and store all
-            // the function parameter names in RegisterRelative symbols, but can have more
-            // symbols than parameter names.
-            //
-            // In all cases observed so far, the parameter name symbols come first,
-            // then the extra RegisterRelative symbols follow.
-            //
-            // Are these extra RegisterRelative symbols local variable names?
-            //
-            // HACK:
-            //
-            // If we don't have any RegisterVariable symbols, use RegisterRelative symbols.
-            //
 
             let mut file_name_ref = None;
             let mut line_info = None;
