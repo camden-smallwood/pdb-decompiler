@@ -4,7 +4,14 @@ mod tabbed;
 
 use pdb2::FallibleIterator;
 use std::{
-    cell::RefCell, collections::HashMap, error::Error, fs::{self, File, OpenOptions}, io::Write, num, path::{Path, PathBuf}, rc::Rc
+    cell::RefCell,
+    collections::HashMap,
+    error::Error,
+    fs::{self, File, OpenOptions},
+    io::Write,
+    num,
+    path::{Path, PathBuf},
+    rc::Rc,
 };
 use structopt::StructOpt;
 
@@ -17,27 +24,42 @@ struct Options {
 
     /// The file path to the MSVC PDB file to decompile.
     #[structopt(short, long)]
-    pdb: Option<String>,
+    pdb: Option<PathBuf>,
 
     /// The base address to add when resolving an RVA. (Optional)
     #[structopt(short, long, parse(try_from_str = parse_base_address))]
     base_address: Option<u64>,
 
+    /// Whether to generate IDA script statements that export pseudocode to their appropriate source files.
+    #[structopt(long)]
+    export_pseudocode_to_files: bool,
+
+    /// Whether to generate IDA script statements that export pseudocode to a JSON mapping file.
+    #[structopt(long)]
+    export_pseudocode_to_json: bool,
+
+    /// The file containing all function pseudocode in a JSON mapping. (Optional)
+    #[structopt(long)]
+    pseudocode_json_path: Option<PathBuf>,
+
+    /// The loaded JSON value containing the mapping with all function pseudocode.
+    pseudocode_json: Option<serde_json::Value>,
+
     /// Whether to include scope information in decompiled function stubs. (Experimental)
     #[structopt(short, long)]
     unroll_functions: bool,
 
+    /// The file path to the MSVC PDB file to decompile for extra function scope information.
+    #[structopt(long)]
+    function_scopes_pdb: Option<PathBuf>,
+
+    /// The output directory to dump all function scopes C++ code to.
+    #[structopt(long)]
+    function_scopes_out: Option<PathBuf>,
+
     /// Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental)
     #[structopt(short, long)]
     reorganize: bool,
-
-    /// The file path to the MSVC PDB file to decompile for extra function scope information.
-    #[structopt(long)]
-    function_scopes_pdb: Option<String>,
-
-    /// The output directory to dump all function scopes C++ code to.
-    #[structopt(long, parse(from_os_str))]
-    function_scopes_out: Option<PathBuf>,
 }
 
 fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
@@ -127,6 +149,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let pdb_path = options.pdb.clone().ok_or("PDB path not provided")?;
     let pdb = pdb2::PDB::open(File::open(pdb_path)?)?;
 
+    if let Some(pseudocode_json_path) = options.pseudocode_json_path.clone() {
+        let file = std::fs::File::open(pseudocode_json_path)?;
+        let pseudocode_json = serde_json::from_reader(file).ok();
+        options.pseudocode_json = pseudocode_json.unwrap();
+    }
+
     if let Err(error) = decompile_pdb(&options, pdb, function_scopes_modules) {
         println!("ERROR: could not decompile PDB because it {error}");
     }
@@ -160,8 +188,8 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>, function_scopes_mo
     fs::create_dir_all(out_path.clone())?;
 
     let mut script_file = File::create(out_path.join("ida_script.py"))?;
-    writeln!(script_file, include_str!("../ida_script_base.py"))?;
-
+    writeln!(script_file, "{}", include_str!("../ida_script_base.py"))?;
+    
     process_type_information(
         options,
         &mut class_table,
@@ -204,6 +232,22 @@ fn decompile_pdb(options: &Options, mut pdb: pdb2::PDB<File>, function_scopes_mo
         &mut script_file,
         function_scopes_modules,
     )?;
+
+    if options.export_pseudocode_to_json {
+        writeln!(script_file)?;
+        writeln!(script_file, "with open('pseudocode.json', 'wb') as outfile:")?;
+        writeln!(script_file, "    outfile.write('{{'.encode('utf-8'))")?;
+        writeln!(script_file, "    if len(json_lines) > 0:")?;
+        writeln!(script_file, "        last_line = json_lines[-1]")?;
+        writeln!(script_file, "        if last_line.endswith(',\\n'):")?;
+        writeln!(script_file, "            json_lines[-1] = last_line.removesuffix(',\\n') + '\\n'")?;
+        writeln!(script_file, "        for json_line in json_lines:")?;
+        writeln!(script_file, "            outfile.write(json_line.encode('utf-8'))")?;
+        writeln!(script_file, "    outfile.write('}}'.encode('utf-8'))")?;
+        writeln!(script_file)?;
+    }
+
+    writeln!(script_file, "print(\"Done.\")")?;
 
     Ok(modules)
 }
@@ -1441,7 +1485,9 @@ fn process_module_symbol_data(
                 line: line_info.map(|x| x.line_start),
             });
 
-            writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module_file_path.to_string_lossy())?;
+            if options.export_pseudocode_to_files {
+                writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module_file_path.to_string_lossy())?;
+            }
         }
 
         pdb2::SymbolData::ThreadStorage(thread_storage_symbol) => {
@@ -1504,11 +1550,9 @@ fn process_module_symbol_data(
                 line: line_info.map(|x| x.line_start),
             });
 
-            writeln!(
-                script_file,
-                "decompile_to_file(0x{address:X}, \"{}\")",
-                module_file_path.to_string_lossy(),
-            )?;
+            if options.export_pseudocode_to_files {
+                writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module_file_path.to_string_lossy())?;
+            }
         }
 
         pdb2::SymbolData::Procedure(procedure_symbol) => {
@@ -1523,7 +1567,7 @@ fn process_module_symbol_data(
             let (
                 register_variable_names,
                 register_relative_names,
-                body
+                mut body
             ) = parse_procedure_symbols(
                 options,
                 class_table,
@@ -1681,6 +1725,59 @@ fn process_module_symbol_data(
 
             let address = base_address.unwrap_or(0) + rva.0 as u64;
 
+            if options.unroll_functions
+                && let Some(pseudocode_value) = options.pseudocode_json.as_ref()
+            {
+                let serde_json::Value::Object(pseudocode_map) = pseudocode_value else {
+                    panic!("Invalid pseudocode map");
+                };
+
+                if let Some(pseudocode_entry) = pseudocode_map.get(&format!("0x{address:X}")) {
+                    let serde_json::Value::String(pseudocode_string) = pseudocode_entry else {
+                        panic!("Invalid pseudocode entry");
+                    };
+
+                    if body.is_none() {
+                        body = Some(Default::default());
+                    }
+
+                    let mut lines = pseudocode_string.lines();
+
+                    while let Some(line) = lines.next() {
+                        if line == "{" {
+                            break;
+                        }
+                    }
+
+                    let mut line_count = 0;
+                    let mut pseudocode = String::new();
+
+                    while let Some(line) = lines.next() {
+                        if line == "}" {
+                            break;
+                        }
+
+                        if line == "  ;" {
+                            continue;
+                        }
+
+                        if line_count > 0 {
+                            pseudocode.push_str("\n");
+                        }
+
+                        pseudocode.push_str("  ");
+                        pseudocode.push_str(line);
+                        line_count += 1;
+                    }
+
+                    let body = body.as_mut().unwrap();
+                    if !pseudocode.is_empty() {
+                        body.statements.insert(0, cpp::Statement::Comment(format!("pseudocode:\n{pseudocode}")));
+                    }
+                    body.statements.insert(0, cpp::Statement::Comment(format!("line count: {line_count}")));
+                }
+            }
+
             if module.members.iter().any(|member| match member {
                 cpp::ModuleMember::Data { address: a, .. } if *a == address => true,
                 _ => false,
@@ -1746,11 +1843,13 @@ fn process_module_symbol_data(
                 }),
             );
 
-            writeln!(
-                script_file,
-                "decompile_to_file(0x{address:X}, \"{}\")",
-                module_file_path.to_string_lossy(),
-            )?;
+            if options.export_pseudocode_to_files {
+                writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module_file_path.to_string_lossy())?;
+            }
+
+            if options.export_pseudocode_to_json {
+                writeln!(script_file, "decompile_to_json(0x{address:X})")?;
+            }
         }
 
         pdb2::SymbolData::Thunk(_) => {

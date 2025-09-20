@@ -23,7 +23,11 @@ impl TabbedDisplay for Statement {
     fn tabbed_fmt(&self, depth: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Statement::Comment(x) => {
-                write!(f, "// {x}")?;
+                if x.lines().count() > 1 {
+                    write!(f, "/* {x} */")?;
+                } else {
+                    write!(f, "// {x}")?;
+                }
             }
 
             Statement::Commented(x) => {

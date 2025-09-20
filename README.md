@@ -20,19 +20,23 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 
 | Short | Long | Description |
 |-|-|-|
+| | `--export-pseudocode-to-files` | Whether to generate IDA script statements that export pseudocode to their appropriate source files. |
+| | `--export-pseudocode-to-json` | Whether to generate IDA script statements that export pseudocode to a JSON mapping file. |
 | `-h` | `--help` | Prints help information. |
 | `-r` | `--reorganize` | Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental) |
-| `-V` | `--version` | Prints version information. |
 | `-u` | `--unroll-functions` | Whether to include scope information in decompiled function stubs. (Experimental) |
-| `-f` | `--function-scopes-pdb` | The file path to the MSVC PDB file to decompile for extra function scope information. |
+| `-V` | `--version` | Prints version information. |
 
 ### Options
 
 | Short | Long | Description |
 |-|-|-|
 | `-b` | `--base-address <base-address>` | The base address to add when resolving an RVA. (Optional) |
+| | `--function-scopes-out <function-scopes-out>` | The output directory to dump all function scopes C++ code to. |
+| | `--function-scopes-pdb <function-scopes-pdb>` | The file path to the MSVC PDB file to decompile for extra function scope information. |
 | `-o` | `--out <out>` | The output directory to dump all C++ code to. |
 | `-p` | `--pdb <pdb>` | The file path to the MSVC PDB file to decompile. |
+| | `--pseudocode-json-path <pseudocode-json-path>` | The file containing all function pseudocode in a JSON mapping. (Optional) |
 
 ## Contributing
 
