@@ -1844,7 +1844,6 @@ fn parse_procedure_symbols(
     symbols: &mut pdb2::SymbolIter,
     procedure_symbol: &pdb2::ProcedureSymbol,
 ) -> pdb2::Result<(Vec<String>, Vec<String>, Option<cpp::Block>)> {
-    use std::{cell::RefCell, rc::Rc};
     let register_variable_names = Rc::new(RefCell::new(vec![]));
     let register_relative_names = Rc::new(RefCell::new(vec![]));
     

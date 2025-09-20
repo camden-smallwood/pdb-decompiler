@@ -562,10 +562,10 @@ impl Class {
                     type_name: format!(
                         "{}{}",
                         match data.attributes.access() {
-                            0 => "private ",
-                            1 => "protected ",
-                            2 => "public ",
-                            _ => ""
+                            1 => "private ",
+                            2 => "protected ",
+                            3 => "public ",
+                            _ => "",
                         },
                         type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, false)?
                     ),
@@ -579,9 +579,9 @@ impl Class {
                     type_name: format!(
                         "{}virtual {}",
                         match data.attributes.access() {
-                            0 => "private ",
-                            1 => "protected ",
-                            2 => "public ",
+                            1 => "private ",
+                            2 => "protected ",
+                            3 => "public ",
                             _ => ""
                         },
                         type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, false)?
@@ -591,7 +591,10 @@ impl Class {
                 });
             }
 
-            pdb2::TypeData::VirtualFunctionTablePointer(_) => (), // TODO: does this need handling?
+            pdb2::TypeData::VirtualFunctionTablePointer(_data) => {
+                // panic!("{data:#?}")
+                // TODO: does this need handling?
+            }
 
             pdb2::TypeData::Method(ref data) => match data.name.to_string().to_string().as_str() {
                 // Ignore compiler-generated functions:
