@@ -278,8 +278,8 @@ fn process_type_information<'a>(
         
         let type_data = match type_item.parse() {
             Ok(x) => x,
-            Err(_) => {
-                // println!("WARNING: Failed to parse type: {e} - {type_item:#?}");
+            Err(e) => {
+                println!("WARNING: Failed to parse type: {e} - {type_item:#?}");
                 continue;
             }
         };
@@ -378,8 +378,8 @@ fn process_id_information<'a>(
 
         let id_data = match id.parse() {
             Ok(id_data) => id_data,
-            Err(_) => {
-                // println!("WARNING: failed to parse id: {e}");
+            Err(e) => {
+                println!("WARNING: failed to parse id: {e}");
                 continue;
             }
         };
@@ -472,8 +472,8 @@ fn load_module_global_symbols<'a>(
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            Err(_) => {
-                // println!("WARNING: failed to parse symbol data, skipping: {error}");
+            Err(e) => {
+                println!("WARNING: failed to parse symbol data, skipping 1: {e}");
                 continue;
             }
         };
@@ -520,7 +520,7 @@ fn load_module_global_symbols<'a>(
             pdb2::SymbolData::Constant(_) => {}
 
             _ => {
-                // println!("found global symbol {symbol_data:?}");
+                println!("WARNING: found unused global symbol {symbol_data:?}");
             }
         }
     }
@@ -1298,8 +1298,8 @@ fn process_module_local_symbols(
     while let Some(symbol) = module_symbols.next()? {
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            Err(_) => {
-                // println!("WARNING: failed to parse symbol data, skipping: {err}");
+            Err(e) => {
+                println!("WARNING: failed to parse symbol data, skipping 2: {e}");
                 continue;
             }
         };
@@ -1582,6 +1582,7 @@ fn process_module_symbol_data(
                 machine_type,
                 base_address.clone(),
                 address_map,
+                string_table,
                 id_finder,
                 type_info,
                 type_finder,
@@ -1972,6 +1973,7 @@ fn parse_procedure_symbols(
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
+    string_table: Option<&pdb2::StringTable>,
     id_finder: &mut pdb2::IdFinder,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder,
@@ -1990,6 +1992,7 @@ fn parse_procedure_symbols(
             machine_type,
             base_address,
             address_map,
+            string_table,
             id_finder,
             type_info,
             type_finder,
@@ -2101,6 +2104,7 @@ fn parse_block_symbols(
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
+    string_table: Option<&pdb2::StringTable>,
     id_finder: &mut pdb2::IdFinder,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder,
@@ -2115,6 +2119,7 @@ fn parse_block_symbols(
             machine_type,
             base_address,
             address_map,
+            string_table,
             id_finder,
             type_info,
             type_finder,
@@ -2131,6 +2136,7 @@ fn parse_inline_site_symbols(
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
+    string_table: Option<&pdb2::StringTable>,
     id_finder: &mut pdb2::IdFinder,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder,
@@ -2158,6 +2164,7 @@ fn parse_inline_site_symbols(
         machine_type,
         base_address,
         address_map,
+        string_table,
         id_finder,
         type_info,
         type_finder,
@@ -2177,6 +2184,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
     machine_type: pdb2::MachineType,
     base_address: Option<u64>,
     address_map: &pdb2::AddressMap,
+    string_table: Option<&pdb2::StringTable>,
     id_finder: &mut pdb2::IdFinder,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder,
@@ -2196,7 +2204,10 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            _ => continue,
+            Err(e) => {
+                println!("WARNING: failed to parse symbol data, skipping 3: {e}");
+                continue;
+            }
         };
 
         f.clone()(&symbol_data)?;
@@ -2249,6 +2260,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     machine_type,
                     base_address.clone(),
                     address_map,
+                    string_table,
                     id_finder,
                     type_info,
                     type_finder,
@@ -2264,6 +2276,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     machine_type,
                     base_address.clone(),
                     address_map,
+                    string_table,
                     id_finder,
                     type_info,
                     type_finder,
@@ -2434,7 +2447,8 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
             | pdb2::SymbolData::DefRangeSubFieldRegister(_)
             | pdb2::SymbolData::DefRangeRegisterRelative(_)
             | pdb2::SymbolData::FrameProcedure(_)
-            | pdb2::SymbolData::FrameCookie(_) => {
+            | pdb2::SymbolData::FrameCookie(_)
+            | pdb2::SymbolData::FileStatic(_) => {
                 // println!("WARNING: Unused {symbol_data:#?}");
             }
             
@@ -2458,7 +2472,10 @@ fn parse_thunk_symbols(symbols: &mut pdb2::SymbolIter) {
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            _ => continue,
+            Err(e) => {
+                println!("WARNING: failed to parse symbol data, skipping 4: {e}");
+                continue;
+            }
         };
 
         match symbol_data {
@@ -2478,7 +2495,8 @@ fn parse_thunk_symbols(symbols: &mut pdb2::SymbolIter) {
             | pdb2::SymbolData::CallSiteInfo(_)
             | pdb2::SymbolData::FrameCookie(_)
             | pdb2::SymbolData::Callees(_)
-            | pdb2::SymbolData::Callers(_) => {
+            | pdb2::SymbolData::Callers(_)
+            | pdb2::SymbolData::FileStatic(_) => {
                 // println!("WARNING: Unused {symbol_data:#?}");
             }
 
@@ -2500,7 +2518,10 @@ fn parse_separated_code_symbols(symbols: &mut pdb2::SymbolIter) {
 
         let symbol_data = match symbol.parse() {
             Ok(symbol_data) => symbol_data,
-            _ => continue,
+            Err(e) => {
+                println!("WARNING: failed to parse symbol data, skipping 5: {e}");
+                continue;
+            }
         };
 
         match symbol_data {
@@ -2520,7 +2541,8 @@ fn parse_separated_code_symbols(symbols: &mut pdb2::SymbolIter) {
             | pdb2::SymbolData::CallSiteInfo(_)
             | pdb2::SymbolData::FrameCookie(_)
             | pdb2::SymbolData::Callees(_)
-            | pdb2::SymbolData::Callers(_) => {
+            | pdb2::SymbolData::Callers(_)
+            | pdb2::SymbolData::FileStatic(_) => {
                 // println!("WARNING: Unused {symbol_data:#?}");
             }
 

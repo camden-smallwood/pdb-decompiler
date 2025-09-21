@@ -469,8 +469,8 @@ impl Class {
 
             Ok(other) => panic!("Unexpected type in Class::add_members, got {} -> {:?}", type_index, other),
 
-            Err(_) => {
-                // println!("WARNING: failed to find type in Class::add_members, skipping: {err}");
+            Err(e) => {
+                println!("WARNING: failed to find type in Class::add_members, skipping: {e}");
             }
         }
 
@@ -914,7 +914,10 @@ impl Class {
             
                                 let current_type_data = match current_type_item.parse() {
                                     Ok(current_type_data) => current_type_data,
-                                    Err(_) => continue,
+                                    Err(e) => {
+                                        println!("WARNING: failed to parse type data, skipping: {e}");
+                                        continue;
+                                    }
                                 };
             
                                 match &current_type_data {

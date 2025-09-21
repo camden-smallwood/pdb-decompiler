@@ -512,7 +512,7 @@ pub fn type_name<'p>(
                     name
                 }
                 
-                _ => {
+                Ok(_) => {
                     let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false)?;
 
                     if data.attributes.is_reference() {
@@ -528,6 +528,10 @@ pub fn type_name<'p>(
                     }
 
                     name
+                }
+
+                Err(e) => {
+                    panic!("failed to parse type data: {e}");
                 }
             }
         }
@@ -587,7 +591,10 @@ pub fn type_size_explicit<'p>(
 
         let current_type_data = match current_type_item.parse() {
             Ok(current_type_data) => current_type_data,
-            Err(_) => continue,
+            Err(e) => {
+                println!("WARNING: failed to parse type data, skipping: {e}");
+                continue;
+            }
         };
 
         match &current_type_data {
