@@ -133,8 +133,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     if options.function_scopes_pdb.is_some() {
         let mut options2 = options.clone();
         options2.pdb = options2.function_scopes_pdb.take();
-        options2.reorganize = false;
+        options2.export_pseudocode_to_files = false;
+        options2.export_pseudocode_to_json = false;
+        options2.pseudocode_json_path = None;
+        options2.pseudocode_json = None;
         options2.unroll_functions = true;
+        options2.function_scopes_pdb = None;
+        options2.function_scopes_out = None;
+        options2.reorganize = false;
         options2.out = options.function_scopes_out.take();
         
         let pdb_path = options2.pdb.clone().ok_or("PDB path not provided")?;
@@ -1725,9 +1731,7 @@ fn process_module_symbol_data(
 
             let address = base_address.unwrap_or(0) + rva.0 as u64;
 
-            if options.unroll_functions
-                && let Some(pseudocode_value) = options.pseudocode_json.as_ref()
-            {
+            if let Some(pseudocode_value) = options.pseudocode_json.as_ref() {
                 let serde_json::Value::Object(pseudocode_map) = pseudocode_value else {
                     panic!("Invalid pseudocode map");
                 };
@@ -1743,6 +1747,7 @@ fn process_module_symbol_data(
 
                     let mut lines = pseudocode_string.lines();
 
+                    // Skip opening lines until we encounter the functions opening brace
                     while let Some(line) = lines.next() {
                         if line == "{" {
                             break;
@@ -1753,10 +1758,12 @@ fn process_module_symbol_data(
                     let mut pseudocode = String::new();
 
                     while let Some(line) = lines.next() {
+                        // Don't collect the function's closing brace or anything after it
                         if line == "}" {
                             break;
                         }
 
+                        // Skip ineffectual toplevel statements (empty functions)
                         if line == "  ;" {
                             continue;
                         }
@@ -1765,16 +1772,20 @@ fn process_module_symbol_data(
                             pseudocode.push_str("\n");
                         }
 
+                        // IDA uses 2 spaces, so prepend 2 more to match ours
                         pseudocode.push_str("  ");
+                        
                         pseudocode.push_str(line);
                         line_count += 1;
                     }
 
                     let body = body.as_mut().unwrap();
+                    
+                    body.statements.push(cpp::Statement::Comment(format!("line count: {line_count}")));
+
                     if !pseudocode.is_empty() {
-                        body.statements.insert(0, cpp::Statement::Comment(format!("pseudocode:\n{pseudocode}")));
+                        body.statements.push(cpp::Statement::Comment(format!("pseudocode:\n{pseudocode}")));
                     }
-                    body.statements.insert(0, cpp::Statement::Comment(format!("line count: {line_count}")));
                 }
             }
 
