@@ -68,6 +68,8 @@ impl fmt::Display for Field {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Method {
+    pub is_inline: bool,
+    pub declspecs: Vec<String>,
     pub signature: String,
     pub name: String,
     pub type_index: pdb2::TypeIndex,
@@ -80,7 +82,7 @@ impl fmt::Display for Method {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}{}{};",
+            "{}{}{}{}{};",
 
             match self.field_attributes {
                 Some(field_attributes) => {
@@ -94,6 +96,18 @@ impl fmt::Display for Method {
                 },
 
                 None => ""
+            },
+
+            if self.is_inline {
+                "inline "
+            } else {
+                ""
+            },
+
+            if !self.declspecs.is_empty() {
+                format!("__declspec({}) ", self.declspecs.join(", "))
+            } else {
+                String::new()
             },
 
             self.signature,
@@ -619,6 +633,8 @@ impl Class {
                             )?;
 
                             Method {
+                                is_inline: false,
+                                declspecs: vec![],
                                 signature,
                                 name: data.name.to_string().to_string(),
                                 type_index: data.method_type,
@@ -666,6 +682,8 @@ impl Class {
                                             )?;
                                             
                                             Method {
+                                                is_inline: false,
+                                                declspecs: vec![],
                                                 signature,
                                                 name: data.name.to_string().to_string(),
                                                 type_index: method_type,

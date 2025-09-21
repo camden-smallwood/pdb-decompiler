@@ -192,6 +192,8 @@ pub struct Procedure {
     pub line: Option<u32>,
     pub type_index: pdb2::TypeIndex,
     pub is_static: bool,
+    pub is_inline: bool,
+    pub declspecs: Vec<String>,
     pub name: String,
     pub signature: String,
     pub body: Option<Block>,
@@ -203,6 +205,14 @@ impl Display for Procedure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_static {
             write!(f, "static ")?;
+        }
+
+        if self.is_inline {
+            write!(f, "inline ")?;
+        }
+
+        if !self.declspecs.is_empty() {
+            write!(f, "__declspec({}) ", self.declspecs.join(", "))?;
         }
         
         write!(f, "{}", self.signature)?;

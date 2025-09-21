@@ -855,8 +855,7 @@ pub fn reorganize_module_members(
             .unwrap()
         }).unwrap_or("void".to_string());
 
-        if matches!(return_type_str.as_str(), "void" | "void const")
-        {
+        if matches!(return_type_str.as_str(), "void" | "void const") {
             procedure.body.as_mut().unwrap().statements.push(
                 cpp::Statement::FunctionCall(
                     format!("_sub_{:X}", procedure.address).into(),
@@ -889,7 +888,9 @@ pub fn reorganize_module_members(
                 address: 0,
                 line: procedure.line,
                 type_index: procedure.type_index,
-                is_static: procedure.is_static,
+                is_static: false,
+                is_inline: false,
+                declspecs: procedure.declspecs.clone(),
                 name: format!("_sub_{:X}", procedure.address).into(),
                 signature: cpp::type_name(
                     class_table,
@@ -1020,6 +1021,8 @@ pub fn reorganize_module_members(
                 line: procedure.line,
                 type_index: procedure.type_index,
                 is_static: false,
+                is_inline: false,
+                declspecs: procedure.declspecs.clone(),
                 name: format!("_sub_{:X}", procedure.address).into(),
                 signature: cpp::type_name(
                     class_table,

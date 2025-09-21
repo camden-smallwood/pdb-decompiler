@@ -1573,6 +1573,7 @@ fn process_module_symbol_data(
             let (
                 register_variable_names,
                 register_relative_names,
+                frame_procedure,
                 mut body
             ) = parse_procedure_symbols(
                 options,
@@ -1588,6 +1589,25 @@ fn process_module_symbol_data(
                 procedure_symbol,
             )?;
             
+            let is_static = !procedure_symbol.global;
+            let is_inline = frame_procedure.as_ref().map(|x| x.flags.inline_spec).unwrap_or(false);
+
+            let mut declspecs = vec![];
+
+            if let Some(frame_procedure) = frame_procedure.as_ref() {
+                if frame_procedure.flags.naked {
+                    declspecs.push("naked".into());
+                }
+
+                if frame_procedure.flags.gs_check {
+                    declspecs.push("struct_gs_check".into());
+                }
+
+                if frame_procedure.flags.safe_buffers {
+                    declspecs.push("safebuffers".into());
+                }
+            }
+
             //
             // NOTE:
             //
@@ -1681,7 +1701,9 @@ fn process_module_symbol_data(
                                 if !parameters.is_empty() && parameters[0] == "this" {
                                     parameters.remove(0);
                                 }
-                                
+
+                                class_method.is_inline = is_inline;
+                                class_method.declspecs = declspecs.clone();
                                 class_method.signature = cpp::type_name(
                                     class_table,
                                     type_sizes,
@@ -1790,13 +1812,13 @@ fn process_module_symbol_data(
             }
 
             if module.members.iter().any(|member| match member {
-                cpp::ModuleMember::Data { address: a, .. } if *a == address => true,
+                cpp::ModuleMember::Procedure(cpp::Procedure { address: a, .. }) if *a == address => true,
                 _ => false,
             }) {
                 return Ok(());
             }
 
-            let procedure = cpp::type_name(
+            let procedure_signature = cpp::type_name(
                 class_table,
                 type_sizes,
                 machine_type,
@@ -1809,7 +1831,7 @@ fn process_module_symbol_data(
                 false,
             )?;
 
-            if procedure.starts_with("...") || procedure.contains('$') || procedure.contains('`') {
+            if procedure_signature.starts_with("...") || procedure_signature.contains('$') || procedure_signature.contains('`') {
                 return Ok(());
             }
             
@@ -1837,9 +1859,11 @@ fn process_module_symbol_data(
                     address,
                     line: line_info.map(|x| x.line_start),
                     type_index: procedure_symbol.type_index,
-                    is_static: !procedure_symbol.global,
+                    is_static,
+                    is_inline,
+                    declspecs,
                     name: procedure_symbol.name.to_string().to_string(),
-                    signature: procedure,
+                    signature: procedure_signature,
                     body,
                     return_type:match type_finder.find(procedure_symbol.type_index)?.parse()? {
                         pdb2::TypeData::Procedure(data) => {
@@ -1953,9 +1977,10 @@ fn parse_procedure_symbols(
     type_finder: &pdb2::TypeFinder,
     symbols: &mut pdb2::SymbolIter,
     procedure_symbol: &pdb2::ProcedureSymbol,
-) -> pdb2::Result<(Vec<String>, Vec<String>, Option<cpp::Block>)> {
+) -> pdb2::Result<(Vec<String>, Vec<String>, Option<pdb2::FrameProcedureSymbol>, Option<cpp::Block>)> {
     let register_variable_names = Rc::new(RefCell::new(vec![]));
     let register_relative_names = Rc::new(RefCell::new(vec![]));
+    let frame_procedures = Rc::new(RefCell::new(vec![]));
     
     let mut block = cpp::Block {
         address: None,
@@ -1978,6 +2003,10 @@ fn parse_procedure_symbols(
                     pdb2::SymbolData::RegisterRelative(x) => {
                         register_relative_names.borrow_mut().push(x.name.to_string().to_string());
                     }
+
+                    pdb2::SymbolData::FrameProcedure(x) => {
+                        frame_procedures.borrow_mut().push(x.clone());
+                    }
         
                     _ => {}
                 }
@@ -1986,6 +2015,12 @@ fn parse_procedure_symbols(
             },
         )?,
     };
+
+    let frame_procedures = frame_procedures.borrow().clone();
+
+    if !frame_procedures.is_empty() {
+        assert!(frame_procedures.len() == 1);
+    }
 
     let mut flags = vec![];
     if procedure_symbol.flags.nofpo {
@@ -2050,6 +2085,7 @@ fn parse_procedure_symbols(
     Ok((
         register_variable_names,
         register_relative_names,
+        frame_procedures.last().cloned(),
         if !options.unroll_functions {
             None
         } else {
@@ -2362,6 +2398,33 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                 }));
             }
 
+            pdb2::SymbolData::CallSiteInfo(call_site_info) => {
+                let address = call_site_info.offset
+                    .to_rva(address_map)
+                    .map(|rva| base_address.unwrap_or(0) + rva.0 as u64)
+                    .unwrap();
+
+                let type_name = cpp::type_name(
+                    class_table,
+                    type_sizes,
+                    machine_type,
+                    type_info,
+                    type_finder,
+                    call_site_info.type_index,
+                    None,
+                    None,
+                    None,
+                    false,
+                )?;
+
+                statements.push(cpp::Statement::Comment(format!("function call @ 0x{:X}: {}", address, type_name)));
+            }
+
+            pdb2::SymbolData::Callees(_)
+            | pdb2::SymbolData::Callers(_) => {
+                // println!("WARNING: Unused {symbol_data:#?}");
+            }
+
             pdb2::SymbolData::UserDefinedType(_)
             | pdb2::SymbolData::DefRange(_)
             | pdb2::SymbolData::DefRangeSubField(_)
@@ -2371,13 +2434,10 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
             | pdb2::SymbolData::DefRangeSubFieldRegister(_)
             | pdb2::SymbolData::DefRangeRegisterRelative(_)
             | pdb2::SymbolData::FrameProcedure(_)
-            | pdb2::SymbolData::CallSiteInfo(_)
-            | pdb2::SymbolData::FrameCookie(_)
-            | pdb2::SymbolData::Callees(_)
-            | pdb2::SymbolData::Callers(_) => {
+            | pdb2::SymbolData::FrameCookie(_) => {
                 // println!("WARNING: Unused {symbol_data:#?}");
             }
-
+            
             _ => panic!("Unhandled symbol data in parse_statement_symbols - {symbol_data:?}"),
         }
     }

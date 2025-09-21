@@ -263,7 +263,7 @@ pub fn type_name<'p>(
                 ).as_str()
             );
 
-            if data.attributes.is_constructor() || name.starts_with('~') {
+            if data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~") {
                 name
             } else {
                 match data.return_type {
@@ -319,7 +319,7 @@ pub fn type_name<'p>(
                 }
             }
 
-            if data.attributes.is_constructor() || name.starts_with('~') {
+            if data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~") {
                 name
             } else {
                 type_name(
