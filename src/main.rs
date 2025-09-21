@@ -2362,7 +2362,19 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                 }));
             }
 
-            pdb2::SymbolData::UserDefinedType(_) => {
+            pdb2::SymbolData::UserDefinedType(_)
+            | pdb2::SymbolData::DefRange(_)
+            | pdb2::SymbolData::DefRangeSubField(_)
+            | pdb2::SymbolData::DefRangeRegister(_)
+            | pdb2::SymbolData::DefRangeFramePointerRelative(_)
+            | pdb2::SymbolData::DefRangeFramePointerRelativeFullScope(_)
+            | pdb2::SymbolData::DefRangeSubFieldRegister(_)
+            | pdb2::SymbolData::DefRangeRegisterRelative(_)
+            | pdb2::SymbolData::FrameProcedure(_)
+            | pdb2::SymbolData::CallSiteInfo(_)
+            | pdb2::SymbolData::FrameCookie(_)
+            | pdb2::SymbolData::Callees(_)
+            | pdb2::SymbolData::Callers(_) => {
                 // println!("WARNING: Unused {symbol_data:#?}");
             }
 
@@ -2394,6 +2406,22 @@ fn parse_thunk_symbols(symbols: &mut pdb2::SymbolIter) {
                 break;
             }
 
+            pdb2::SymbolData::UserDefinedType(_)
+            | pdb2::SymbolData::DefRange(_)
+            | pdb2::SymbolData::DefRangeSubField(_)
+            | pdb2::SymbolData::DefRangeRegister(_)
+            | pdb2::SymbolData::DefRangeFramePointerRelative(_)
+            | pdb2::SymbolData::DefRangeFramePointerRelativeFullScope(_)
+            | pdb2::SymbolData::DefRangeSubFieldRegister(_)
+            | pdb2::SymbolData::DefRangeRegisterRelative(_)
+            | pdb2::SymbolData::FrameProcedure(_)
+            | pdb2::SymbolData::CallSiteInfo(_)
+            | pdb2::SymbolData::FrameCookie(_)
+            | pdb2::SymbolData::Callees(_)
+            | pdb2::SymbolData::Callers(_) => {
+                // println!("WARNING: Unused {symbol_data:#?}");
+            }
+
             _ => panic!("Unhandled symbol data in parse_thunk_symbols - {symbol_data:?}"),
         }
     }
@@ -2418,6 +2446,22 @@ fn parse_separated_code_symbols(symbols: &mut pdb2::SymbolIter) {
         match symbol_data {
             pdb2::SymbolData::ScopeEnd => {
                 break;
+            }
+
+            pdb2::SymbolData::UserDefinedType(_)
+            | pdb2::SymbolData::DefRange(_)
+            | pdb2::SymbolData::DefRangeSubField(_)
+            | pdb2::SymbolData::DefRangeRegister(_)
+            | pdb2::SymbolData::DefRangeFramePointerRelative(_)
+            | pdb2::SymbolData::DefRangeFramePointerRelativeFullScope(_)
+            | pdb2::SymbolData::DefRangeSubFieldRegister(_)
+            | pdb2::SymbolData::DefRangeRegisterRelative(_)
+            | pdb2::SymbolData::FrameProcedure(_)
+            | pdb2::SymbolData::CallSiteInfo(_)
+            | pdb2::SymbolData::FrameCookie(_)
+            | pdb2::SymbolData::Callees(_)
+            | pdb2::SymbolData::Callers(_) => {
+                // println!("WARNING: Unused {symbol_data:#?}");
             }
 
             _ => panic!("Unhandled symbol data in parse_separated_code_symbols - {symbol_data:?}"),

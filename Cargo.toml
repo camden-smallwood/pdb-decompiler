@@ -9,6 +9,6 @@ lto = true
 opt-level = "s"
 
 [dependencies]
-pdb2 = "0.9.2"
+pdb2 = { git = "https://github.com/afranchuk/pdb.git", rev = "384c165" }
 serde_json = "1.0"
 structopt = { version = "0.3", default-features = false }
