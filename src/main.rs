@@ -1895,7 +1895,7 @@ fn process_module_symbol_data(
                     return Ok(());
                 }
             };
-                            
+            
             parse_thunk_symbols(module_symbols)
         }
 

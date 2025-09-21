@@ -337,204 +337,200 @@ pub fn type_name<'p>(
             }
         }
 
-        pdb2::TypeData::Pointer(data) => match type_finder.find(data.underlying_type)?.parse() {
-            Ok(pdb2::TypeData::Array(array_type)) => {
-                let mut dimensions = vec![];
-                let mut element_type = array_type.element_type;
+        pdb2::TypeData::Pointer(data) => {
+            let apply_pointer_attributes = |name: &mut String| {
+                let mut attribute_string = String::new();
 
-                match type_finder.find(array_type.element_type)?.parse()? {
-                    pdb2::TypeData::Array(array_type) => {
-                        match type_finder.find(array_type.element_type)?.parse()? {
-                            pdb2::TypeData::Array(_) => todo!(),
-                            
-                            pdb2::TypeData::Modifier(modifier_type) => match type_finder.find(modifier_type.underlying_type)?.parse()? {
+                if data.attributes.is_const() || modifier.as_ref().map(|x| x.constant).unwrap_or(false) {
+                    attribute_string.push_str("const ");
+                }
+
+                if data.attributes.is_volatile() || modifier.as_ref().map(|x| x.volatile).unwrap_or(false) {
+                    attribute_string.push_str("volatile ");
+                }
+
+                if data.attributes.is_unaligned() {
+                    attribute_string.push_str("__unaligned ");
+                }
+
+                if data.attributes.is_restrict() {
+                    attribute_string.push_str("__restrict ");
+                }
+
+                if declaration_name.is_none() {
+                    attribute_string = attribute_string.trim_end().into();
+                }
+
+                name.push_str(attribute_string.as_str());
+            };
+
+            match type_finder.find(data.underlying_type)?.parse() {
+                Ok(pdb2::TypeData::Array(array_type)) => {
+                    let mut dimensions = vec![];
+                    let mut element_type = array_type.element_type;
+
+                    match type_finder.find(array_type.element_type)?.parse()? {
+                        pdb2::TypeData::Array(array_type) => {
+                            match type_finder.find(array_type.element_type)?.parse()? {
                                 pdb2::TypeData::Array(_) => todo!(),
-                                pdb2::TypeData::Modifier(_) => todo!(),
+                                
+                                pdb2::TypeData::Modifier(modifier_type) => match type_finder.find(modifier_type.underlying_type)?.parse()? {
+                                    pdb2::TypeData::Array(_) => todo!(),
+                                    pdb2::TypeData::Modifier(_) => todo!(),
+
+                                    _ => {}
+                                }
 
                                 _ => {}
                             }
 
+                            element_type = array_type.element_type;
+
+                            let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
+                            
+                            if element_size == 0 {
+                                element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
+                            }
+
+                            assert!(element_size != 0);
+                            
+                            for &size in array_type.dimensions.iter() {
+                                dimensions.push(if element_size == 0 { size } else { size / element_size as u32 });
+                                element_size = size as usize;
+                            }
+                        }
+
+                        pdb2::TypeData::Modifier(modifier_data) => match type_finder.find(modifier_data.underlying_type)?.parse()? {
+                            pdb2::TypeData::Array(_) => todo!(),
+                            pdb2::TypeData::Modifier(_) => todo!(),
                             _ => {}
                         }
 
-                        element_type = array_type.element_type;
-
-                        let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
-                        
-                        if element_size == 0 {
-                            element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
-                        }
-
-                        assert!(element_size != 0);
-                        
-                        for &size in array_type.dimensions.iter() {
-                            dimensions.push(if element_size == 0 { size } else { size / element_size as u32 });
-                            element_size = size as usize;
-                        }
-                    }
-
-                    pdb2::TypeData::Modifier(modifier_data) => match type_finder.find(modifier_data.underlying_type)?.parse()? {
-                        pdb2::TypeData::Array(_) => todo!(),
-                        pdb2::TypeData::Modifier(_) => todo!(),
                         _ => {}
                     }
 
-                    _ => {}
-                }
+                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, None, None, false)?;
 
-                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, None, None, false)?;
-
-                if data.attributes.is_reference() {
-                    name.push_str(" (&");
-                } else {
-                    name.push_str(" (*");
-                }
-
-                if let Some(modifier) = modifier {
-                    if modifier.constant {
-                        name.push_str("const ");
+                    if data.attributes.is_reference() {
+                        name.push_str(" (&");
+                    } else {
+                        name.push_str(" (*");
                     }
 
-                    if modifier.volatile {
-                        name.push_str("volatile ");
+                    apply_pointer_attributes(&mut name);
+
+                    if let Some(field_name) = declaration_name {
+                        name.push_str(field_name.as_str());
                     }
+                    
+                    name.push_str(format!("){}", dimensions.iter().map(|d| format!("[{d}]")).collect::<Vec<_>>().join("")).as_str());
+
+                    let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
+                    
+                    if element_size == 0 {
+                        element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
+                    }
+
+                    assert!(element_size != 0);
+                    
+                    for &size in array_type.dimensions.iter() {
+                        name = format!("{}[{}]", name, if element_size == 0 { size } else { size / element_size as u32 });
+                        element_size = size as usize;
+                    }
+                    
+                    name
                 }
 
-                if let Some(field_name) = declaration_name {
-                    name.push_str(field_name.as_str());
+                Ok(pdb2::TypeData::Procedure(procedure_data)) => {
+                    let mut name = match procedure_data.return_type {
+                        Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, false)?,
+                        None => String::new(),
+                    };
+
+                    if data.attributes.is_reference() {
+                        name.push_str("(&");
+                    } else {
+                        name.push_str("(*");
+                    }
+
+                    apply_pointer_attributes(&mut name);
+
+                    if let Some(field_name) = declaration_name {
+                        name.push_str(field_name.as_str());
+                    }
+
+                    name.push(')');
+
+                    name.push_str(
+                        format!(
+                            "({})",
+                            argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, procedure_data.argument_list, parameter_names)?.join(", ")
+                        ).as_str()
+                    );
+
+                    name
+                }
+
+                Ok(pdb2::TypeData::MemberFunction(member_function_data)) => {
+                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function_data.return_type, modifier, None, None, false)?;
+
+                    if data.attributes.is_reference() {
+                        name.push_str("(&");
+                    } else {
+                        name.push_str("(*");
+                    }
+
+                    apply_pointer_attributes(&mut name);
+
+                    if let Some(field_name) = declaration_name {
+                        name.push_str(field_name.as_str());
+                    }
+
+                    name.push(')');
+
+                    name = format!("{}({})", name, argument_list(
+                        class_table,
+                        type_sizes,
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        member_function_data.this_pointer_type,
+                        member_function_data.argument_list,
+                        None,
+                    )?.join(", "));
+
+                    if let Some(modifier) = get_member_function_modifier(&member_function_data, type_finder) {
+                        if modifier.constant {
+                            name.push_str(" const");
+                        }
+
+                        if modifier.volatile {
+                            name.push_str(" volatile");
+                        }
+                    }
+
+                    name
                 }
                 
-                name.push_str(format!("){}", dimensions.iter().map(|d| format!("[{d}]")).collect::<Vec<_>>().join("")).as_str());
+                _ => {
+                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false)?;
 
-                let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
-                
-                if element_size == 0 {
-                    element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, array_type.element_type)?;
-                }
+                    if data.attributes.is_reference() {
+                        name.push_str(" &");
+                    } else {
+                        name.push_str(" *");
+                    }
 
-                assert!(element_size != 0);
-                
-                for &size in array_type.dimensions.iter() {
-                    name = format!("{}[{}]", name, if element_size == 0 { size } else { size / element_size as u32 });
-                    element_size = size as usize;
+                    apply_pointer_attributes(&mut name);
+
+                    if let Some(field_name) = declaration_name {
+                        name.push_str(field_name.as_str());
+                    }
+
+                    name
                 }
-                
-                name
             }
-
-            Ok(pdb2::TypeData::Procedure(procedure_data)) => {
-                let mut name = match procedure_data.return_type {
-                    Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, false)?,
-                    None => String::new(),
-                };
-
-                if data.attributes.is_reference() {
-                    name.push_str("(&");
-                } else {
-                    name.push_str("(*");
-                }
-
-                if let Some(modifier) = modifier {
-                    if modifier.constant {
-                        name.push_str("const ");
-                    }
-
-                    if modifier.volatile {
-                        name.push_str("volatile ");
-                    }
-                }
-
-                if let Some(field_name) = declaration_name {
-                    name.push_str(field_name.as_str());
-                }
-
-                name.push(')');
-
-                name.push_str(
-                    format!(
-                        "({})",
-                        argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, procedure_data.argument_list, parameter_names)?.join(", ")
-                    ).as_str()
-                );
-
-                name
-            }
-
-            Ok(pdb2::TypeData::MemberFunction(member_function_data)) => {
-                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function_data.return_type, modifier, None, None, false)?;
-
-                if data.attributes.is_reference() {
-                    name.push_str("(&");
-                } else {
-                    name.push_str("(*");
-                }
-
-                if let Some(modifier) = modifier {
-                    if modifier.constant {
-                        name.push_str("const ");
-                    }
-
-                    if modifier.volatile {
-                        name.push_str("volatile ");
-                    }
-                }
-
-                if let Some(field_name) = declaration_name {
-                    name.push_str(field_name.as_str());
-                }
-
-                name.push(')');
-
-                name = format!("{}({})", name, argument_list(
-                    class_table,
-                    type_sizes,
-                    machine_type,
-                    type_info,
-                    type_finder,
-                    member_function_data.this_pointer_type,
-                    member_function_data.argument_list,
-                    None,
-                )?.join(", "));
-
-                if let Some(modifier) = get_member_function_modifier(&member_function_data, type_finder) {
-                    if modifier.constant {
-                        name.push_str(" const");
-                    }
-
-                    if modifier.volatile {
-                        name.push_str(" volatile");
-                    }
-                }
-
-                name
-            }
-            
-            _ => {
-                let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false)?;
-
-                if data.attributes.is_reference() {
-                    name.push_str(" &");
-                } else {
-                    name.push_str(" *");
-                }
-
-                if let Some(modifier) = modifier {
-                    if modifier.constant {
-                        name.push_str("const ");
-                    }
-
-                    if modifier.volatile {
-                        name.push_str("volatile ");
-                    }
-                }
-
-                if let Some(field_name) = declaration_name {
-                    name.push_str(field_name.as_str());
-                }
-
-                name
-            }
-        },
+        }
 
         pdb2::TypeData::MethodList(_) => {
             // println!("WARNING: Encountered method list in type_name, using `...`");
