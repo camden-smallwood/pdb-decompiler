@@ -1365,19 +1365,21 @@ fn process_module_symbol_data(
             let module_key = module_file_path.to_string_lossy().to_lowercase().to_string();
             let module = modules.entry(module_key).or_insert_with(|| cpp::Module::default().with_path(module_file_path.clone()));
 
+            let type_name = cpp::type_name(
+                class_table,
+                type_sizes,
+                machine_type,
+                type_info,
+                type_finder,
+                udt_symbol.type_index,
+                None,
+                Some(udt_symbol.name.to_string().to_string()),
+                None,
+                false
+            )?;
+
             let user_defined_type = cpp::ModuleMember::TypeDefinition(cpp::TypeDefinition {
-                type_name: cpp::type_name(
-                    class_table,
-                    type_sizes,
-                    machine_type,
-                    type_info,
-                    type_finder,
-                    udt_symbol.type_index,
-                    None,
-                    Some(udt_symbol.name.to_string().to_string()),
-                    None,
-                    false
-                )?,
+                type_name,
                 underlying_type: udt_symbol.type_index,
                 field_attributes: None,
                 pointer_attributes: None,
