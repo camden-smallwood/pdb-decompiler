@@ -469,8 +469,8 @@ impl Class {
 
             Ok(other) => panic!("Unexpected type in Class::add_members, got {} -> {:?}", type_index, other),
 
-            Err(_) => {
-                // println!("WARNING: failed to find type in Class::add_members, skipping: {err}");
+            Err(e) => {
+                println!("WARNING: failed to find type in Class::add_members, skipping: {e}");
             }
         }
 
@@ -829,154 +829,12 @@ impl Class {
                         }
                     }
         
-                    pdb2::TypeData::Pointer(data) => {
-                        let type_name = type_name(
-                            class_table,
-                            type_sizes,
-                            machine_type,
-                            type_info,
-                            type_finder,
-                            data.underlying_type,
-                            None,
-                            Some(nested_data.name.to_string().to_string()),
-                            None,
-                            false, 
-                            false
-                        )?;
-
-                        self.members.push(ClassMember::TypeDefinition(TypeDefinition {
-                            type_name,
-                            underlying_type: data.underlying_type,
-                            field_attributes: Some(nested_data.attributes),
-                            pointer_attributes: Some(data.attributes),
-                            containing_class: data.containing_class,
-                        }));
-                    }
-
-                    pdb2::TypeData::Modifier(data) => {
-                        let mut type_name = self::type_name(
-                            class_table,
-                            type_sizes,
-                            machine_type,
-                            type_info,
-                            type_finder,
-                            data.underlying_type,
-                            Some(data),
-                            Some(nested_data.name.to_string().to_string()),
-                            None,
-                            false, 
-                            false
-                        )?;
-
-                        if data.constant {
-                            type_name.push_str("const");
-                        }
-
-                        if data.volatile {
-                            type_name.push_str("volatile ");
-                        }
-
-                        self.members.push(ClassMember::TypeDefinition(TypeDefinition {
-                            type_name,
-                            underlying_type: data.underlying_type,
-                            field_attributes: Some(nested_data.attributes),
-                            pointer_attributes: None,
-                            containing_class: None,
-                        }));
-                    }
-
-                    pdb2::TypeData::Primitive(data) => {
-                        let mut type_name = primitive_name(data.kind).to_string();
-
-                        if data.indirection.is_some() {
-                            type_name.push_str(" *");
-                        } else {
-                            type_name.push(' ');
-                        }
-
-                        type_name.push_str(nested_data.name.to_string().to_string().as_str());
-
-                        self.members.push(ClassMember::TypeDefinition(TypeDefinition {
-                            type_name,
-                            underlying_type: nested_data.nested_type,
-                            field_attributes: Some(nested_data.attributes),
-                            pointer_attributes: None,
-                            containing_class: None,
-                        }));
-                    }
-
-                    pdb2::TypeData::Array(data) => {
-                        let mut type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, None, Some(nested_data.name.to_string().to_string()), None, false, false)?;
-                        let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
-            
-                        if element_size == 0 {
-                            let element_type_data = type_finder.find(data.element_type)?.parse()?;
-            
-                            let mut type_iter = type_info.iter();
-            
-                            loop {
-                                let current_type_item = match type_iter.next() {
-                                    Ok(Some(current_type_item)) => current_type_item,
-                                    Ok(None) | Err(_) => break,
-                                };
-            
-                                let current_type_data = match current_type_item.parse() {
-                                    Ok(current_type_data) => current_type_data,
-                                    Err(_) => continue,
-                                };
-            
-                                match &current_type_data {
-                                    pdb2::TypeData::Primitive(_) if matches!(element_type_data, pdb2::TypeData::Primitive(_)) => (),
-                                    pdb2::TypeData::Class(_) if matches!(element_type_data, pdb2::TypeData::Class(_)) => (),
-                                    pdb2::TypeData::Member(_) if matches!(element_type_data, pdb2::TypeData::Member(_)) => (),
-                                    pdb2::TypeData::MemberFunction(_) if matches!(element_type_data, pdb2::TypeData::MemberFunction(_)) => (),
-                                    pdb2::TypeData::OverloadedMethod(_) if matches!(element_type_data, pdb2::TypeData::OverloadedMethod(_)) => (),
-                                    pdb2::TypeData::Method(_) if matches!(element_type_data, pdb2::TypeData::Method(_)) => (),
-                                    pdb2::TypeData::StaticMember(_) if matches!(element_type_data, pdb2::TypeData::StaticMember(_)) => (),
-                                    pdb2::TypeData::Nested(_) if matches!(element_type_data, pdb2::TypeData::Nested(_)) => (),
-                                    pdb2::TypeData::BaseClass(_) if matches!(element_type_data, pdb2::TypeData::BaseClass(_)) => (),
-                                    pdb2::TypeData::VirtualBaseClass(_) if matches!(element_type_data, pdb2::TypeData::VirtualBaseClass(_)) => (),
-                                    pdb2::TypeData::VirtualFunctionTablePointer(_) if matches!(element_type_data, pdb2::TypeData::VirtualFunctionTablePointer(_)) => (),
-                                    pdb2::TypeData::Procedure(_) if matches!(element_type_data, pdb2::TypeData::Procedure(_)) => (),
-                                    pdb2::TypeData::Pointer(_) if matches!(element_type_data, pdb2::TypeData::Pointer(_)) => (),
-                                    pdb2::TypeData::Modifier(_) if matches!(element_type_data, pdb2::TypeData::Modifier(_)) => (),
-                                    pdb2::TypeData::Enumeration(_) if matches!(element_type_data, pdb2::TypeData::Enumeration(_)) => (),
-                                    pdb2::TypeData::Enumerate(_) if matches!(element_type_data, pdb2::TypeData::Enumerate(_)) => (),
-                                    pdb2::TypeData::Array(_) if matches!(element_type_data, pdb2::TypeData::Array(_)) => (),
-                                    pdb2::TypeData::Union(_) if matches!(element_type_data, pdb2::TypeData::Union(_)) => (),
-                                    pdb2::TypeData::Bitfield(_) if matches!(element_type_data, pdb2::TypeData::Bitfield(_)) => (),
-                                    pdb2::TypeData::FieldList(_) if matches!(element_type_data, pdb2::TypeData::FieldList(_)) => (),
-                                    pdb2::TypeData::ArgumentList(_) if matches!(element_type_data, pdb2::TypeData::ArgumentList(_)) => (),
-                                    pdb2::TypeData::MethodList(_) if matches!(element_type_data, pdb2::TypeData::MethodList(_)) => (),
-                                    _ => continue
-                                }
-                                
-                                if current_type_data.name() == element_type_data.name()
-                                    && let Ok(current_type_size) = type_size(class_table, type_sizes, machine_type, type_info, type_finder, current_type_item.index())
-                                    && current_type_size != 0
-                                {
-                                    element_size = current_type_size;
-                                    break;
-                                }
-                            }
-                        }
-            
-                        for &size in data.dimensions.iter() {
-                            type_name = format!("{}[{}]", type_name, if element_size == 0 { size } else { size / element_size as u32 });
-                            element_size = size as usize;
-                        }
-
-                        self.members.push(ClassMember::TypeDefinition(TypeDefinition {
-                            type_name,
-                            underlying_type: nested_data.nested_type,
-                            field_attributes: Some(nested_data.attributes),
-                            pointer_attributes: None,
-                            containing_class: None,
-                        }));
-                    }
-
-                    pdb2::TypeData::Procedure(_) => {
-                        let type_name = type_name(
+                    pdb2::TypeData::Pointer(_)
+                    | pdb2::TypeData::Modifier(_)
+                    | pdb2::TypeData::Primitive(_)
+                    | pdb2::TypeData::Array(_)
+                    | pdb2::TypeData::Procedure(_) => {
+                        let type_name = self::type_name(
                             class_table,
                             type_sizes,
                             machine_type,

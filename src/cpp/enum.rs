@@ -52,8 +52,8 @@ impl Enum {
 
             Ok(data) => panic!("Unexpected type data in Enum::add_members - {:#?}", data),
 
-            Err(_) => {
-                // println!("WARNING: unhandled error in Enum::add_members, skipping: {err}");
+            Err(e) => {
+                println!("WARNING: unhandled error in Enum::add_members, skipping: {e}");
             }
         }
 

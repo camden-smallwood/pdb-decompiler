@@ -225,7 +225,7 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Array(data) => {
-            let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, declaration_name, None, false, false)?;
+            let mut name = declaration_name.clone().unwrap_or_default();
             let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             
             if element_size == 0 {
@@ -239,7 +239,7 @@ pub fn type_name<'p>(
                 element_size = size as usize;
             }
             
-            name
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, false)?
         }
 
         pdb2::TypeData::Procedure(data) => {
@@ -426,7 +426,7 @@ pub fn type_name<'p>(
                         _ => {}
                     }
 
-                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, None, None, false, false)?;
+                    let mut name = declaration_name.clone().unwrap_or_default();
 
                     if data.attributes.is_reference() {
                         name.push_str(" (&");
@@ -455,7 +455,7 @@ pub fn type_name<'p>(
                         element_size = size as usize;
                     }
                     
-                    name
+                    type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, Some(name), None, false)?
                 }
 
                 Ok(pdb2::TypeData::Procedure(procedure_data)) => {
@@ -529,8 +529,8 @@ pub fn type_name<'p>(
                     name
                 }
                 
-                _ => {
-                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false, false)?;
+                Ok(_) => {
+                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false)?;
 
                     if data.attributes.is_reference() {
                         name.push_str(" &");
@@ -545,6 +545,10 @@ pub fn type_name<'p>(
                     }
 
                     name
+                }
+
+                Err(e) => {
+                    panic!("failed to parse type data: {e}");
                 }
             }
         }
@@ -604,7 +608,10 @@ pub fn type_size_explicit<'p>(
 
         let current_type_data = match current_type_item.parse() {
             Ok(current_type_data) => current_type_data,
-            Err(_) => continue,
+            Err(e) => {
+                println!("WARNING: failed to parse type data, skipping: {e}");
+                continue;
+            }
         };
 
         match &current_type_data {

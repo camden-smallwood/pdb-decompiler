@@ -547,8 +547,8 @@ impl Module {
             let id_data = match id_item.parse() {
                 Ok(pdb2::IdData::String(id_data)) => id_data,
                 Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
-                Err(_) => {
-                    // println!("WARNING: failed to parse id {id_index}: {e}");
+                Err(e) => {
+                    println!("WARNING: failed to parse id {id_index}: {e}");
                     continue;
                 }
             };
@@ -569,8 +569,8 @@ impl Module {
 
                     Ok(id_data) => panic!("Failed to parse id {id_index}: Expected StringList, got {id_data:?}"),
 
-                    Err(_) => {
-                        // println!("WARNING: failed to parse id {id_index}: {e}");
+                    Err(e) => {
+                        println!("WARNING: failed to parse id {id_index}: {e}");
                         continue;
                     }
                 };
@@ -594,8 +594,8 @@ impl Module {
 
                         Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
                         
-                        Err(_) => {
-                            // println!("WARNING: failed to parse id {id_index}: {e}");
+                        Err(e) => {
+                            println!("WARNING: failed to parse id {id_index}: {e}");
                             continue;
                         }
                     }
