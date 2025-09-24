@@ -791,7 +791,7 @@ pub fn reorganize_module_members(
     fn comment_block(block: &mut cpp::Block) {
         for statement in block.statements.iter_mut() {
             match statement {
-                cpp::Statement::Comment(_) | cpp::Statement::Commented(_) => {
+                cpp::Statement::Comment(_) | cpp::Statement::Commented(_) | cpp::Statement::EmptyLine => {
                     continue;
                 }
 
@@ -851,6 +851,7 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 true,
+                    false
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -903,10 +904,12 @@ pub fn reorganize_module_members(
                     Some(format!("_sub_{:X}", procedure.address).into()),
                     None,
                     true,
+                    false
                 )?
                 .trim_end_matches(" const")
                 .trim_end_matches(" volatile")
                 .into(),
+                ida_signature: None,
                 body: None,
                 return_type: procedure.return_type,
                 arguments: vec![],
@@ -982,6 +985,7 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 true,
+                    false
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -1035,10 +1039,12 @@ pub fn reorganize_module_members(
                     Some(format!("_sub_{:X}", procedure.address).into()),
                     None,
                     true,
+                    false
                 )?
                 .trim_end_matches(" const")
                 .trim_end_matches(" volatile")
                 .into(),
+                ida_signature: None,
                 body: None,
                 return_type: procedure.return_type,
                 arguments: vec![],

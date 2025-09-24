@@ -16,6 +16,7 @@ pub enum Statement {
     #[allow(unused)]
     Return(Return),
     ReturnWithValue(ReturnWithValue),
+    String(String),
     EmptyLine,
 }
 
@@ -34,20 +35,20 @@ impl TabbedDisplay for Statement {
                 let s = TabbedDisplayer(0, x.as_ref()).to_string();
                 
                 if s.lines().count() > 1 {
-                    write!(f, "/*")?;
+                    // write!(f, "/*")?;
                     let lines = s.lines().collect::<Vec<_>>();
                     for (i, line) in lines.iter().enumerate() {
                         if i > 0 {
                             "".tabbed_fmt(depth, f)?;
                         }
-
+                        write!(f, "// ")?;
                         if i < lines.len() - 1 {
                             writeln!(f, "{}", line)?;
                         } else {
                             write!(f, "{}", line)?;
                         }
                     }
-                    write!(f, "*/")?;
+                    // write!(f, "*/")?;
                 } else {
                     write!(f, "// {s}")?;
                 }
@@ -97,6 +98,10 @@ impl TabbedDisplay for Statement {
                 }
             }
 
+            Statement::String(s) => {
+                write!(f, "{}", s)?;
+            }
+
             Statement::EmptyLine => {
                 write!(f, "")?;
             }
@@ -125,10 +130,15 @@ pub struct Variable {
     pub signature: String,
     pub value: Option<String>,
     pub comment: Option<String>,
+    pub prefix: Option<String>,
 }
 
 impl Display for Variable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(prefix) = self.prefix.as_ref() {
+            write!(f, "{prefix}")?;
+        }
+
         write!(f, "{}", self.signature)?;
 
         if let Some(value) = self.value.as_ref() {
@@ -155,9 +165,9 @@ impl TabbedDisplay for Block {
     fn tabbed_fmt(&self, depth: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{")?;
         
-        if let Some(address) = self.address {
-            write!(f, " // block start @ 0x{address:X}")?;
-        }
+        // if let Some(address) = self.address {
+        //     write!(f, " // block start @ 0x{address:X}")?;
+        // }
 
         writeln!(f)?;
         
@@ -196,6 +206,7 @@ pub struct Procedure {
     pub declspecs: Vec<String>,
     pub name: String,
     pub signature: String,
+    pub ida_signature: Option<String>,
     pub body: Option<Block>,
     pub return_type: Option<pdb2::TypeIndex>,
     pub arguments: Vec<(pdb2::TypeIndex, Option<String>)>
@@ -208,7 +219,7 @@ impl Display for Procedure {
         }
 
         if self.is_inline {
-            write!(f, "inline ")?;
+            write!(f, "_inline ")?;
         }
 
         if !self.declspecs.is_empty() {

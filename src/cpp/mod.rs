@@ -32,7 +32,7 @@ pub fn argument_list<'p>(
                     names.as_mut().map(|names| names.remove(0));
                 }
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, false)?);
+                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, false, false)?);
             }
 
             for (i, &arg_type) in data.arguments.iter().enumerate() {
@@ -41,7 +41,7 @@ pub fn argument_list<'p>(
                     _ => None
                 };
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, false)?);
+                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, false, false)?);
             }
 
             Ok(args)
@@ -145,6 +145,7 @@ pub fn type_name<'p>(
     declaration_name: Option<String>,
     parameter_names: Option<Vec<String>>,
     include_this: bool,
+    force_return_type: bool,
 ) -> pdb2::Result<String> {
     let type_item = type_finder.find(type_index)?;
     let type_data = type_item.parse()?;
@@ -161,12 +162,13 @@ pub fn type_name<'p>(
                 Some(data),
                 declaration_name,
                 None,
+                false,
                 false
             )?
         }
 
         pdb2::TypeData::Bitfield(data) => {
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, false)?
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, false, false)?
         }
 
         pdb2::TypeData::Primitive(data) => {
@@ -223,7 +225,7 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Array(data) => {
-            let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, declaration_name, None, false)?;
+            let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, declaration_name, None, false, false)?;
             let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             
             if element_size == 0 {
@@ -278,6 +280,7 @@ pub fn type_name<'p>(
                         Some(name),
                         None,
                         false,
+                        false
                     )?,
 
                     None => name,
@@ -318,9 +321,22 @@ pub fn type_name<'p>(
                     name.push_str(" volatile");
                 }
             }
-
-            if data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~") {
+            
+            if !force_return_type && (data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~")) {
                 name
+            } else if force_return_type && data.attributes.is_constructor() {
+                let type_item = type_finder.find(data.class_type)?;
+                let type_data = type_item.parse()?;
+
+                match &type_data {
+                    pdb2::TypeData::Class(class_name) => {
+                        name = format!("{}* {}", class_name.name, name);
+
+                        name
+                    }
+
+                    _ => name
+                }
             } else {
                 type_name(
                     class_table,
@@ -333,6 +349,7 @@ pub fn type_name<'p>(
                     Some(name),
                     None,
                     false,
+                    false
                 )?
             }
         }
@@ -409,7 +426,7 @@ pub fn type_name<'p>(
                         _ => {}
                     }
 
-                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, None, None, false)?;
+                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, None, None, false, false)?;
 
                     if data.attributes.is_reference() {
                         name.push_str(" (&");
@@ -443,7 +460,7 @@ pub fn type_name<'p>(
 
                 Ok(pdb2::TypeData::Procedure(procedure_data)) => {
                     let mut name = match procedure_data.return_type {
-                        Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, false)?,
+                        Some(index) => type_name(class_table, type_sizes, machine_type, type_info, type_finder, index, modifier, None, None, false, false)?,
                         None => String::new(),
                     };
 
@@ -472,7 +489,7 @@ pub fn type_name<'p>(
                 }
 
                 Ok(pdb2::TypeData::MemberFunction(member_function_data)) => {
-                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function_data.return_type, modifier, None, None, false)?;
+                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function_data.return_type, modifier, None, None, false, false)?;
 
                     if data.attributes.is_reference() {
                         name.push_str("(&");
@@ -513,7 +530,7 @@ pub fn type_name<'p>(
                 }
                 
                 _ => {
-                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false)?;
+                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false, false)?;
 
                     if data.attributes.is_reference() {
                         name.push_str(" &");

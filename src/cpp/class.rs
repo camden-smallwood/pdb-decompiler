@@ -99,7 +99,7 @@ impl fmt::Display for Method {
             },
 
             if self.is_inline {
-                "inline "
+                "_inline "
             } else {
                 ""
             },
@@ -504,7 +504,8 @@ impl Class {
                         None,
                         None,
                         None,
-                        false
+                        false,
+                    false
                     )?,
                     name: data.name.to_string().to_string(),
                     display: type_name(
@@ -517,6 +518,7 @@ impl Class {
                         None,
                         Some(data.name.to_string().to_string()),
                         None,
+                        false,
                         false
                     )?,
                     offset: data.offset,
@@ -545,6 +547,7 @@ impl Class {
                             None,
                             None,
                             None,
+                            false,
                             false
                         )?
                     ),
@@ -561,6 +564,7 @@ impl Class {
                             None,
                             Some(data.name.to_string().to_string()),
                             None,
+                            false,
                             false
                         )?
                     ),
@@ -581,7 +585,7 @@ impl Class {
                             3 => "public ",
                             _ => "",
                         },
-                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, false)?
+                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, false, false)?
                     ),
                     offset: data.offset,
                     index: data.base_class
@@ -598,7 +602,7 @@ impl Class {
                             3 => "public ",
                             _ => ""
                         },
-                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, false)?
+                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, false, false)?
                     ),
                     offset: data.base_pointer_offset,
                     index: data.base_class
@@ -630,6 +634,7 @@ impl Class {
                                 Some(data.name.to_string().to_string()),
                                 None,
                                 false,
+                                false
                             )?;
 
                             Method {
@@ -679,6 +684,7 @@ impl Class {
                                                 Some(data.name.to_string().to_string()),
                                                 None,
                                                 false,
+                                                false
                                             )?;
                                             
                                             Method {
@@ -792,7 +798,7 @@ impl Class {
                             index: nested_data.nested_type,
                             depth: self.depth + 1,
                             line: 0,
-                            underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, None, false)?,
+                            underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, None, false, false)?,
                             size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?,
                             is_declaration: false,
                             values: vec![],
@@ -834,7 +840,8 @@ impl Class {
                             None,
                             Some(nested_data.name.to_string().to_string()),
                             None,
-                            false,
+                            false, 
+                            false
                         )?;
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
@@ -857,6 +864,7 @@ impl Class {
                             Some(data),
                             Some(nested_data.name.to_string().to_string()),
                             None,
+                            false, 
                             false
                         )?;
 
@@ -898,7 +906,7 @@ impl Class {
                     }
 
                     pdb2::TypeData::Array(data) => {
-                        let mut type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, None, Some(nested_data.name.to_string().to_string()), None, false)?;
+                        let mut type_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, None, Some(nested_data.name.to_string().to_string()), None, false, false)?;
                         let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             
                         if element_size == 0 {
@@ -978,6 +986,7 @@ impl Class {
                             None,
                             Some(nested_data.name.to_string().to_string()),
                             None,
+                            false, 
                             false
                         )?;
 
