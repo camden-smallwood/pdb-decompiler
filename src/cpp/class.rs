@@ -505,7 +505,7 @@ impl Class {
                         None,
                         None,
                         false,
-                    false
+                        false
                     )?,
                     name: data.name.to_string().to_string(),
                     display: type_name(

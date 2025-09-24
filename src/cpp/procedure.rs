@@ -165,9 +165,9 @@ impl TabbedDisplay for Block {
     fn tabbed_fmt(&self, depth: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{")?;
         
-        // if let Some(address) = self.address {
-        //     write!(f, " // block start @ 0x{address:X}")?;
-        // }
+        if let Some(address) = self.address {
+            write!(f, " // block start @ 0x{address:X}")?;
+        }
 
         writeln!(f)?;
         

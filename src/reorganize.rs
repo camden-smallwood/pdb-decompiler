@@ -851,7 +851,7 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 true,
-                    false
+                false
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -985,7 +985,7 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 true,
-                    false
+                false
             )
             .unwrap()
         }).unwrap_or("void".to_string());

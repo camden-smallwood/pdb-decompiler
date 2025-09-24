@@ -42,6 +42,10 @@ struct Options {
     #[structopt(long)]
     export_function_types: bool,
 
+    /// Whether to write extra block level information.
+    #[structopt(long)]
+    verbose_blocks: bool,
+
     /// The file containing all function pseudocode in a JSON mapping. (Optional)
     #[structopt(long)]
     pseudocode_json_path: Option<PathBuf>,
@@ -140,6 +144,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         options2.export_pseudocode_to_files = false;
         options2.export_pseudocode_to_json = false;
         options2.export_function_types = false;
+        options2.verbose_blocks = false;
         options2.pseudocode_json_path = None;
         options2.pseudocode_json = None;
         options2.unroll_functions = true;
@@ -803,7 +808,11 @@ fn process_modules<'a>(
                         procedure_body.statements.push(cpp::Statement::Comment("debug:".to_string()));
                         procedure_body.statements.push(cpp::Statement::Commented(Box::new(
                             cpp::Statement::Block(cpp::Block {
-                                address: function_scope_procedure.body.as_ref().unwrap().address.clone(),
+                                address: if options.verbose_blocks {
+                                    function_scope_procedure.body.as_ref().unwrap().address.clone()
+                                } else {
+                                    None
+                                },
                                 statements: function_scope_procedure.body.as_ref().unwrap().statements.clone(),
                             }),
                         )));
