@@ -239,7 +239,7 @@ pub fn type_name<'p>(
                 element_size = size as usize;
             }
             
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, false)?
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, false, false)?
         }
 
         pdb2::TypeData::Procedure(data) => {
@@ -455,7 +455,7 @@ pub fn type_name<'p>(
                         element_size = size as usize;
                     }
                     
-                    type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, Some(name), None, false)?
+                    type_name(class_table, type_sizes, machine_type, type_info, type_finder, element_type, modifier, Some(name), None, false, false)?
                 }
 
                 Ok(pdb2::TypeData::Procedure(procedure_data)) => {
@@ -530,7 +530,7 @@ pub fn type_name<'p>(
                 }
                 
                 Ok(_) => {
-                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false)?;
+                    let mut name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, None, None, false, false)?;
 
                     if data.attributes.is_reference() {
                         name.push_str(" &");

@@ -1389,6 +1389,7 @@ fn process_module_symbol_data(
                 None,
                 Some(udt_symbol.name.to_string().to_string()),
                 None,
+                false,
                 false
             )?;
 
