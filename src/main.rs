@@ -2038,6 +2038,7 @@ fn parse_procedure_symbols(
     let mut block = cpp::Block {
         address: None,
         statements: parse_statement_symbols(
+            options,
             class_table,
             type_sizes,
             machine_type,
@@ -2149,6 +2150,7 @@ fn parse_procedure_symbols(
 
 #[inline(always)]
 fn parse_block_symbols(
+    options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
@@ -2161,8 +2163,9 @@ fn parse_block_symbols(
     address: Option<u64>,
 ) -> pdb2::Result<cpp::Block> {
     Ok(cpp::Block {
-        address,
+        address: if options.verbose_blocks { address } else { None },
         statements: parse_statement_symbols(
+            options,
             class_table,
             type_sizes,
             machine_type,
@@ -2179,6 +2182,7 @@ fn parse_block_symbols(
 
 #[inline(always)]
 fn parse_inline_site_symbols(
+    options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
@@ -2206,6 +2210,7 @@ fn parse_inline_site_symbols(
     // }
 
     let mut statements = parse_statement_symbols(
+        options,
         class_table,
         type_sizes,
         machine_type,
@@ -2225,6 +2230,7 @@ fn parse_inline_site_symbols(
 }
 
 fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<()>>(
+    options: &Options,
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     type_sizes: &mut HashMap<String, u64>,
     machine_type: pdb2::MachineType,
@@ -2302,6 +2308,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Block(block_symbol) => {
                 statements.push(cpp::Statement::Block(parse_block_symbols(
+                    options,
                     class_table,
                     type_sizes,
                     machine_type,
@@ -2317,6 +2324,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::InlineSite(inline_site_symbol) => {
                 statements.extend(parse_inline_site_symbols(
+                    options,
                     class_table,
                     type_sizes,
                     machine_type,
