@@ -409,12 +409,12 @@ pub fn type_name<'p>(
                         _ => {}
                     }
 
-                    let mut name = declaration_name.clone().unwrap_or_default();
+                    let mut name = String::new();
 
                     if data.attributes.is_reference() {
-                        name.push_str(" (&");
+                        name.push_str("(&");
                     } else {
-                        name.push_str(" (*");
+                        name.push_str("(*");
                     }
 
                     apply_pointer_attributes(&mut name);
