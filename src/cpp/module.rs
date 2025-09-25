@@ -1727,6 +1727,10 @@ impl fmt::Display for Module {
             }
         }
 
+        if !self.headers.is_empty() && !self.members.is_empty() && !matches!(self.members.first(), Some(ModuleMember::Include(_, _))) {
+            writeln!(f)?;
+        }
+
         let mut prev_item: Option<&ModuleMember> = None;
 
         for item in self.members.iter() {

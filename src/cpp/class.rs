@@ -46,7 +46,7 @@ impl fmt::Display for Field {
             write!(f, "static ")?;
         }
 
-        if self.attributes.is_virtual() || self.attributes.is_pure_virtual() || self.attributes.is_intro_virtual() {
+        if self.attributes.is_virtual() || self.attributes.is_intro() || self.attributes.is_pure_virtual() || self.attributes.is_pure_intro() {
             write!(f, "virtual ")?;
         }
 
@@ -56,7 +56,7 @@ impl fmt::Display for Field {
             write!(f, " : {}", bitfield_length)?;
         }
 
-        if self.attributes.is_pure_virtual() || self.attributes.is_intro_virtual() {
+        if self.attributes.is_pure_virtual() || self.attributes.is_pure_intro() {
             write!(f, " = 0")?;
         }
 
@@ -86,7 +86,7 @@ impl fmt::Display for Method {
 
             match self.field_attributes {
                 Some(field_attributes) => {
-                    if field_attributes.is_virtual() || field_attributes.is_pure_virtual() || field_attributes.is_intro_virtual() {
+                    if field_attributes.is_virtual() || field_attributes.is_intro() || field_attributes.is_pure_virtual() || field_attributes.is_pure_intro() {
                         "virtual "
                     } else if field_attributes.is_static() {
                         "static "
@@ -113,7 +113,7 @@ impl fmt::Display for Method {
             self.signature,
 
             match self.field_attributes {
-                Some(field_attributes) => if field_attributes.is_pure_virtual() || field_attributes.is_intro_virtual() {
+                Some(field_attributes) => if field_attributes.is_pure_virtual() || field_attributes.is_pure_intro() {
                     " = 0"
                 } else {
                     ""
