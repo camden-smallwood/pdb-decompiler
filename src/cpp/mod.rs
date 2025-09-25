@@ -151,6 +151,10 @@ pub fn type_name<'p>(
 
     let mut name = match &type_data {
         pdb2::TypeData::Modifier(data) => {
+            assert!(modifier.is_none());
+            assert!(parameter_names.is_none());
+            assert!(!include_this);
+
             type_name(
                 class_table,
                 type_sizes,
@@ -166,34 +170,62 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Bitfield(data) => {
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, declaration_name, None, false)?
+            assert!(parameter_names.is_none());
+            assert!(!include_this);
+
+            type_name(
+                class_table,
+                type_sizes,
+                machine_type,
+                type_info,
+                type_finder,
+                data.underlying_type,
+                modifier,
+                declaration_name,
+                None,
+                false,
+            )?
         }
 
         pdb2::TypeData::Primitive(data) => {
-            let mut name = primitive_name(data.kind).to_string();
-
-            if let Some(modifier) = modifier {
-                if modifier.constant {
-                    name.push_str(" const");
-                }
-
-                if modifier.volatile {
-                    name.push_str(" volatile");
-                }
+            if let pdb2::PrimitiveKind::NoType = &data.kind {
+                return Ok("...".into());
             }
 
+            let mut name = primitive_name(data.kind).to_string();
+
             if data.indirection.is_some() {
-                if name.ends_with(' ') {
-                    name.push('*');
-                }
                 name.push_str(" *");
             }
 
-            if name != "..."
-                && let Some(field_name) = declaration_name
-            {
-                name.push(' ');
+            if let Some(modifier) = modifier {
+                if (modifier.constant || modifier.volatile || modifier.unaligned)
+                    && !(name.ends_with(' ') || name.ends_with('*'))
+                {
+                    name.push(' ');
+                }
+
+                if modifier.constant {
+                    name.push_str("const ");
+                }
+
+                if modifier.volatile {
+                    name.push_str("volatile ");
+                }
+
+                if modifier.unaligned {
+                    name.push_str("__unaligned ");
+                }
+            }
+
+            if let Some(field_name) = declaration_name {
+                if !(name.ends_with(' ') || name.ends_with('*')) {
+                    name.push(' ');
+                }
+
                 name.push_str(field_name.as_str());
+            } else {
+                name = name.trim_end().into();
             }
 
             name
@@ -202,6 +234,9 @@ pub fn type_name<'p>(
         pdb2::TypeData::Class(pdb2::ClassType { name, .. })
         | pdb2::TypeData::Enumeration(pdb2::EnumerationType { name, .. })
         | pdb2::TypeData::Union(pdb2::UnionType { name, .. }) => {
+            assert!(parameter_names.is_none());
+            assert!(!include_this);
+
             let mut name = name.to_string().to_string();
 
             if let Some(modifier) = modifier {
@@ -211,6 +246,10 @@ pub fn type_name<'p>(
 
                 if modifier.volatile {
                     name.push_str(" volatile");
+                }
+
+                if modifier.unaligned {
+                    name.push_str(" __unaligned");
                 }
             }
 
@@ -223,7 +262,13 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Array(data) => {
-            let mut name = declaration_name.clone().unwrap_or_default();
+            assert!(parameter_names.is_none());
+            assert!(!include_this);
+
+            let mut name = String::new();
+
+            name.push_str(&declaration_name.clone().unwrap_or_default());
+
             let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             
             if element_size == 0 {
@@ -240,7 +285,53 @@ pub fn type_name<'p>(
             type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, false)?
         }
 
+        pdb2::TypeData::Pointer(data) => {
+            assert!(parameter_names.is_none());
+            assert!(!include_this);
+
+            let mut name = String::new();
+
+            if data.attributes.is_reference() {
+                name.push_str("&");
+            } else {
+                name.push_str("*");
+            }
+
+            let mut attribute_string = String::new();
+
+            if data.attributes.is_const() {
+                attribute_string.push_str("const ");
+            }
+
+            if data.attributes.is_volatile() {
+                attribute_string.push_str("volatile ");
+            }
+
+            if data.attributes.is_unaligned() {
+                attribute_string.push_str("__unaligned ");
+            }
+
+            if data.attributes.is_restrict() {
+                attribute_string.push_str("__restrict ");
+            }
+
+            if declaration_name.is_none() {
+                attribute_string = attribute_string.trim_end().into();
+            }
+
+            name.push_str(attribute_string.as_str());
+
+            if let Some(field_name) = declaration_name {
+                name.push_str(field_name.as_str());
+            }
+
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, false)?
+        }
+
         pdb2::TypeData::Procedure(data) => {
+            assert!(modifier.is_none());
+            assert!(!include_this);
+
             let mut name = if let Some(declaration_name) = declaration_name.as_ref() {
                 if declaration_name.starts_with('*') || declaration_name.starts_with('&') {
                     format!("({})", declaration_name)
@@ -321,6 +412,10 @@ pub fn type_name<'p>(
                 if modifier.volatile {
                     name.push_str(" volatile");
                 }
+
+                if modifier.unaligned {
+                    name.push_str(" __unaligned");
+                }
             }
 
             if data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~") {
@@ -339,50 +434,6 @@ pub fn type_name<'p>(
                     false,
                 )?
             }
-        }
-
-        pdb2::TypeData::Pointer(data) => {
-            let apply_pointer_attributes = |name: &mut String| {
-                let mut attribute_string = String::new();
-
-                if data.attributes.is_const() || modifier.as_ref().map(|x| x.constant).unwrap_or(false) {
-                    attribute_string.push_str("const ");
-                }
-
-                if data.attributes.is_volatile() || modifier.as_ref().map(|x| x.volatile).unwrap_or(false) {
-                    attribute_string.push_str("volatile ");
-                }
-
-                if data.attributes.is_unaligned() {
-                    attribute_string.push_str("__unaligned ");
-                }
-
-                if data.attributes.is_restrict() {
-                    attribute_string.push_str("__restrict ");
-                }
-
-                if declaration_name.is_none() {
-                    attribute_string = attribute_string.trim_end().into();
-                }
-
-                name.push_str(attribute_string.as_str());
-            };
-
-            let mut name = String::new();
-
-            if data.attributes.is_reference() {
-                name.push_str("&");
-            } else {
-                name.push_str("*");
-            }
-
-            apply_pointer_attributes(&mut name);
-
-            if let Some(field_name) = declaration_name {
-                name.push_str(field_name.as_str());
-            }
-
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, false)?
         }
 
         pdb2::TypeData::MethodList(_) => {
