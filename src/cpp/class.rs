@@ -56,7 +56,7 @@ impl fmt::Display for Field {
             write!(f, " : {}", bitfield_length)?;
         }
 
-        if self.attributes.is_pure_virtual() {
+        if self.attributes.is_pure_virtual() || self.attributes.is_intro_virtual() {
             write!(f, " = 0")?;
         }
 
@@ -113,7 +113,7 @@ impl fmt::Display for Method {
             self.signature,
 
             match self.field_attributes {
-                Some(field_attributes) => if field_attributes.is_pure_virtual() {
+                Some(field_attributes) => if field_attributes.is_pure_virtual() || field_attributes.is_intro_virtual() {
                     " = 0"
                 } else {
                     ""
