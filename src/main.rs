@@ -1707,10 +1707,10 @@ fn process_module_symbol_data(
                                 && (class_member_function.return_type == member_function.return_type);
 
                             if !valid {
-                                let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, true, false)?;
+                                let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, false, false)?;
                                 let lhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
 
-                                let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, true, false)?;
+                                let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, false, false)?;
                                 let rhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
 
                                 valid = (lhs_return_type == rhs_return_type) && (lhs_arg_list == rhs_arg_list);
