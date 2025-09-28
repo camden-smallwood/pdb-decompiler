@@ -1,14 +1,14 @@
 use super::*;
 use std::{cell::RefCell, collections::BTreeMap, fmt, ops::Range, rc::Rc};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BaseClass {
     pub type_name: String,
     pub index: pdb2::TypeIndex,
     pub offset: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClassMember {
     Class(Rc<RefCell<Class>>),
     Enum(Enum),
@@ -29,7 +29,7 @@ impl fmt::Display for ClassMember {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Field {
     pub type_name: String,
     pub name: String,
@@ -66,7 +66,7 @@ impl fmt::Display for Field {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Method {
     pub is_inline: bool,
     pub declspecs: Vec<String>,
@@ -125,7 +125,7 @@ impl fmt::Display for Method {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Class {
     pub kind: Option<pdb2::ClassKind>,
     pub is_union: bool,

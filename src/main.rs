@@ -1639,16 +1639,10 @@ fn process_module_symbol_data(
 
             let procedure_type = type_finder.find(procedure_symbol.type_index)?.parse()?;
 
-            let mut declaring_class = None;
-            let mut this_pointer_type = None;
-            let mut this_adjustment = None;
+            let mut member_method_data = None;
             
             // If the procedure is a member function, propagate its attributes
             if let pdb2::TypeData::MemberFunction(member_function) = procedure_type {
-                if let Some(this_pointer_type_index) = member_function.this_pointer_type.as_ref() {
-                    this_pointer_type = Some(cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, *this_pointer_type_index, None, None, None, None)?);
-                }
-
                 let procedure_name_full = procedure_symbol.name.to_string().to_string();
                 let (mut procedure_class_name, end_offset) = cpp::parse_type_name(&procedure_name_full, true);
                 let (mut procedure_name, _end_offset) = cpp::parse_type_name(&procedure_name_full[end_offset..], true);
@@ -1722,13 +1716,34 @@ fn process_module_symbol_data(
                 }
             
                 if let Some((class, class_method_index)) = found_class_and_method {
-                    if member_function.this_adjustment != 0 {
-                        if let Some(found_base_class) = cpp::find_class_declaring_intro_method(class_table, type_sizes, machine_type, type_info, type_finder, class.clone(), &procedure_name)? {
-                            declaring_class = Some(found_base_class.borrow().name.clone());
-                        };
-                        
-                        this_adjustment = Some(member_function.this_adjustment);
-                    }
+                    //
+                    // Set up member method data
+                    //
+
+                    let class_type = class.borrow().name.clone();
+
+                    let declaring_class = if let Some(found_base_class) = cpp::find_class_declaring_intro_method(class_table, type_sizes, machine_type, type_info, type_finder, class.clone(), &procedure_name)? {
+                        found_base_class.borrow().name.clone()
+                    } else {
+                        class_type.clone()
+                    };
+                    
+                    let this_pointer_type = member_function.this_pointer_type.as_ref().map(|t| {
+                        cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, *t, None, None, None, None).unwrap()
+                    });
+
+                    let this_adjustment = member_function.this_adjustment;
+
+                    member_method_data = Some(cpp::MemberMethodData {
+                        class_type,
+                        declaring_class,
+                        this_pointer_type,
+                        this_adjustment,
+                    });
+
+                    //
+                    // Propagate method attributes into their declaration
+                    //
 
                     let mut borrowed_class = class.borrow_mut();
 
@@ -1898,9 +1913,7 @@ fn process_module_symbol_data(
                     type_index: procedure_symbol.type_index,
                     is_static,
                     is_inline,
-                    declaring_class,
-                    this_pointer_type,
-                    this_adjustment,
+                    member_method_data,
                     declspecs,
                     name: procedure_symbol.name.to_string().to_string(),
                     signature: procedure_signature,

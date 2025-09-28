@@ -815,9 +815,9 @@ pub fn reorganize_module_members(
             procedure.body = Some(cpp::Block::default());
         }
 
-        if let Some(this_adjustment) = procedure.this_adjustment.as_ref() {
-            assert!(procedure.declaring_class.is_some());
-            
+        if let Some(cpp::MemberMethodData { class_type, this_adjustment, .. }) = procedure.member_method_data.as_ref()
+            && *this_adjustment != 0
+        {
             if procedure.body.is_none() {
                 procedure.body = Some(cpp::Block::default());
             }
@@ -825,7 +825,7 @@ pub fn reorganize_module_members(
             procedure.body.as_mut().unwrap().statements.insert(
                 0,
                 cpp::Statement::FunctionCall("__shifted".into(), vec![
-                    procedure.this_pointer_type.clone().unwrap(),
+                    class_type.clone(),
                     this_adjustment.to_string(),
                 ]),
             );
@@ -866,7 +866,7 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 None,
-                procedure.declaring_class.clone().or(Some(String::new())),
+                procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -906,9 +906,7 @@ pub fn reorganize_module_members(
                 type_index: procedure.type_index,
                 is_static: false,
                 is_inline: false,
-                declaring_class: procedure.declaring_class.clone(),
-                this_pointer_type: procedure.this_pointer_type.clone(),
-                this_adjustment: procedure.this_adjustment.clone(),
+                member_method_data: procedure.member_method_data.clone(),
                 declspecs: procedure.declspecs.clone(),
                 name: format!("_sub_{:X}", procedure.address).into(),
                 signature: cpp::type_name(
@@ -921,7 +919,7 @@ pub fn reorganize_module_members(
                     None,
                     Some(format!("_sub_{:X}", procedure.address).into()),
                     None,
-                    procedure.declaring_class.clone().or(Some(String::new())),
+                    procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
                 )?
                 .trim_end_matches(" const")
                 .trim_end_matches(" volatile")
@@ -969,9 +967,9 @@ pub fn reorganize_module_members(
             procedure.body = Some(cpp::Block::default());
         }
 
-        if let Some(this_adjustment) = procedure.this_adjustment.as_ref() {
-            assert!(procedure.declaring_class.is_some());
-            
+        if let Some(cpp::MemberMethodData { class_type, this_adjustment, .. }) = procedure.member_method_data.as_ref()
+            && *this_adjustment != 0
+        {
             if procedure.body.is_none() {
                 procedure.body = Some(cpp::Block::default());
             }
@@ -979,7 +977,7 @@ pub fn reorganize_module_members(
             procedure.body.as_mut().unwrap().statements.insert(
                 0,
                 cpp::Statement::FunctionCall("__shifted".into(), vec![
-                    procedure.this_pointer_type.clone().unwrap(),
+                    class_type.clone(),
                     this_adjustment.to_string(),
                 ]),
             );
@@ -1016,7 +1014,7 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 None,
-                procedure.declaring_class.clone().or(Some(String::new())),
+                procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -1057,9 +1055,7 @@ pub fn reorganize_module_members(
                 type_index: procedure.type_index,
                 is_static: false,
                 is_inline: false,
-                declaring_class: procedure.declaring_class.clone(),
-                this_pointer_type: procedure.this_pointer_type.clone(),
-                this_adjustment: procedure.this_adjustment.clone(),
+                member_method_data: procedure.member_method_data.clone(),
                 declspecs: procedure.declspecs.clone(),
                 name: format!("_sub_{:X}", procedure.address).into(),
                 signature: cpp::type_name(
@@ -1072,7 +1068,7 @@ pub fn reorganize_module_members(
                     None,
                     Some(format!("_sub_{:X}", procedure.address).into()),
                     None,
-                    procedure.declaring_class.clone().or(Some(String::new())),
+                    procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
                 )?
                 .trim_end_matches(" const")
                 .trim_end_matches(" volatile")
