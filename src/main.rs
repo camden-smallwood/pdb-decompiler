@@ -1375,7 +1375,7 @@ fn process_module_symbol_data(
                 None,
                 Some(udt_symbol.name.to_string().to_string()),
                 None,
-                false
+                None,
             )?;
 
             let user_defined_type = cpp::ModuleMember::TypeDefinition(cpp::TypeDefinition {
@@ -1405,7 +1405,7 @@ fn process_module_symbol_data(
                 None,
                 Some(constant_symbol.name.to_string().to_string()),
                 None,
-                false,
+                None,
             )?;
 
             if type_name.starts_with("float const ") {
@@ -1486,7 +1486,7 @@ fn process_module_symbol_data(
                         None,
                         Some(data_symbol.name.to_string().to_string()),
                         None,
-                        false,
+                        None,
                     )?,
                 ),
                 address,
@@ -1551,7 +1551,7 @@ fn process_module_symbol_data(
                         None,
                         Some(thread_storage_symbol.name.to_string().to_string()),
                         None,
-                        false,
+                        None,
                     )?,
                 ),
                 address,
@@ -1638,8 +1638,17 @@ fn process_module_symbol_data(
             };
 
             let procedure_type = type_finder.find(procedure_symbol.type_index)?.parse()?;
+
+            let mut declaring_class = None;
+            let mut this_pointer_type = None;
+            let mut this_adjustment = None;
             
+            // If the procedure is a member function, propagate its attributes
             if let pdb2::TypeData::MemberFunction(member_function) = procedure_type {
+                if let Some(this_pointer_type_index) = member_function.this_pointer_type.as_ref() {
+                    this_pointer_type = Some(cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, *this_pointer_type_index, None, None, None, None)?);
+                }
+
                 let procedure_name_full = procedure_symbol.name.to_string().to_string();
                 let (mut procedure_class_name, end_offset) = cpp::parse_type_name(&procedure_name_full, true);
                 let (mut procedure_name, _end_offset) = cpp::parse_type_name(&procedure_name_full[end_offset..], true);
@@ -1657,14 +1666,18 @@ fn process_module_symbol_data(
                     .replace(" union ", " ")
                     .replace(" class ", " ")
                     .replace(" enum ", " ");
-
+                
                 let full_classes = class_table.iter().filter(|c| {
                     let c = c.borrow();
                     c.name == procedure_class_name && !c.is_declaration
                 }).cloned().collect::<Vec<_>>();
 
+                let mut found_class_and_method = None;
+
                 for class in full_classes.iter() {
-                    for member in class.borrow_mut().members.iter_mut() {
+                    let borrowed_class = class.borrow();
+
+                    for (i, member) in borrowed_class.members.iter().enumerate() {
                         let cpp::ClassMember::Method(class_method) = member else {
                             continue;
                         };
@@ -1684,45 +1697,65 @@ fn process_module_symbol_data(
                             .replace(" class ", " ")
                             .replace(" enum ", " ");
 
-                        if class_method_name == procedure_name {
-                            let mut valid = (class_member_function.argument_list == member_function.argument_list)
-                                && (class_member_function.return_type == member_function.return_type);
+                        if class_method_name != procedure_name {
+                            continue;
+                        }
 
-                            if !valid {
-                                let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, false)?;
-                                let lhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
+                        let mut valid = (class_member_function.argument_list == member_function.argument_list)
+                            && (class_member_function.return_type == member_function.return_type);
 
-                                let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, false)?;
-                                let rhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
+                        if !valid {
+                            let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, None)?;
+                            let lhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
 
-                                valid = (lhs_return_type == rhs_return_type) && (lhs_arg_list == rhs_arg_list);
-                            }
+                            let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, None)?;
+                            let rhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
 
-                            if valid {
-                                let mut parameters = parameters.clone();
-                                
-                                if !parameters.is_empty() && parameters[0] == "this" {
-                                    parameters.remove(0);
-                                }
+                            valid = (lhs_return_type == rhs_return_type) && (lhs_arg_list == rhs_arg_list);
+                        }
 
-                                class_method.is_inline = is_inline;
-                                class_method.declspecs = declspecs.clone();
-                                class_method.signature = cpp::type_name(
-                                    class_table,
-                                    type_sizes,
-                                    machine_type,
-                                    type_info,
-                                    type_finder,
-                                    class_method.type_index,
-                                    class_method.modifier.as_ref(),
-                                    Some(class_method.name.clone()),
-                                    Some(parameters.clone()),
-                                    false,
-                                )?;
-                                break;
-                            }
+                        if valid {
+                            found_class_and_method = Some((class.clone(), i));
+                            break;
                         }
                     }
+                }
+            
+                if let Some((class, class_method_index)) = found_class_and_method {
+                    if member_function.this_adjustment != 0 {
+                        if let Some(found_base_class) = cpp::find_class_declaring_intro_method(class_table, type_sizes, machine_type, type_info, type_finder, class.clone(), &procedure_name)? {
+                            declaring_class = Some(found_base_class.borrow().name.clone());
+                        };
+                        
+                        this_adjustment = Some(member_function.this_adjustment);
+                    }
+
+                    let mut borrowed_class = class.borrow_mut();
+
+                    let cpp::ClassMember::Method(class_method) = &mut borrowed_class.members[class_method_index] else {
+                        unreachable!()
+                    };
+
+                    let mut parameters = parameters.clone();
+                    
+                    if !parameters.is_empty() && parameters[0] == "this" {
+                        parameters.remove(0);
+                    }
+
+                    class_method.is_inline = is_inline;
+                    class_method.declspecs = declspecs.clone();
+                    class_method.signature = cpp::type_name(
+                        class_table,
+                        type_sizes,
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        class_method.type_index,
+                        class_method.modifier.as_ref(),
+                        Some(class_method.name.clone()),
+                        Some(parameters.clone()),
+                        None,
+                    )?;
                 }
             }
 
@@ -1831,7 +1864,7 @@ fn process_module_symbol_data(
                 None,
                 Some(procedure_symbol.name.to_string().to_string()),
                 Some(parameters.clone()),
-                false,
+                None,
             )?;
 
             if procedure_signature.starts_with("...") || procedure_signature.contains('$') || procedure_signature.contains('`') {
@@ -1840,7 +1873,8 @@ fn process_module_symbol_data(
             
             let type_item = type_finder.find(procedure_symbol.type_index)?;
             let type_data = type_item.parse()?;
-            let (this_pointer_type, argument_list) = match type_data {
+            
+            let (this_pointer_type_index, argument_list_type_index) = match type_data {
                 pdb2::TypeData::Procedure(data) => {
                     (None, data.argument_list)
                 }
@@ -1852,8 +1886,8 @@ fn process_module_symbol_data(
 
             let arguments = cpp::argument_type_list(
                 type_finder, 
-                this_pointer_type,
-                argument_list, 
+                this_pointer_type_index,
+                argument_list_type_index, 
                 Some(parameters),
             ).unwrap();
 
@@ -1864,6 +1898,9 @@ fn process_module_symbol_data(
                     type_index: procedure_symbol.type_index,
                     is_static,
                     is_inline,
+                    declaring_class,
+                    this_pointer_type,
+                    this_adjustment,
                     declspecs,
                     name: procedure_symbol.name.to_string().to_string(),
                     signature: procedure_signature,
@@ -2229,7 +2266,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         Some(register_variable_symbol.name.to_string().to_string()),
                         None,
-                        false,
+                        None,
                     )?,
                     value: None,
                     comment: Some(format!("r{}", register_variable_symbol.register.0))
@@ -2248,7 +2285,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         Some(register_relative_symbol.name.to_string().to_string()),
                         None,
-                        false,
+                        None,
                     )?,
                     value: None,
                     comment: Some(format!("r{} offset {}", register_relative_symbol.register.0, register_relative_symbol.offset))
@@ -2313,7 +2350,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         Some(constant_symbol.name.to_string().to_string()),
                         None,
-                        false,
+                        None,
                     )?,
                     value: None,
                     comment: Some(format!(
@@ -2344,7 +2381,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         Some(data_symbol.name.to_string().to_string()),
                         None,
-                        false,
+                        None,
                     )?,
                     value: None,
                     comment: data_symbol.offset.to_rva(address_map).map(|rva| {
@@ -2365,7 +2402,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         Some(local_symbol.name.to_string().to_string()),
                         None,
-                        false,
+                        None,
                     )?,
                     value: None,
                     comment: Some("local".into()),
@@ -2403,7 +2440,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                             None,
                             Some(tls_symbol.name.to_string().to_string()),
                             None,
-                            false,
+                            None,
                         )?,
                     ),
                     value: None,
@@ -2429,15 +2466,38 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     None,
                     None,
                     None,
-                    false,
+                    None,
                 )?;
 
                 statements.push(cpp::Statement::Comment(format!("function call @ 0x{:X}: {}", address, type_name)));
             }
 
-            pdb2::SymbolData::Callees(_)
-            | pdb2::SymbolData::Callers(_) => {
-                // println!("WARNING: Unused {symbol_data:#?}");
+            pdb2::SymbolData::Callees(function_list) => {
+                let mut function_types = vec![];
+
+                for function_type_index in function_list.functions.iter() {
+                    let function_type_data = type_finder.find(*function_type_index)?.parse()?;
+                    function_types.push(function_type_data);
+                }
+
+                statements.push(cpp::Statement::Comment(format!(
+                    "function callee list:\n{}",
+                    function_types.iter().map(|t| format!("{t:#?}")).collect::<Vec<_>>().join("\n"),
+                )));
+            }
+
+            pdb2::SymbolData::Callers(function_list) => {
+                let mut function_types = vec![];
+
+                for function_type_index in function_list.functions.iter() {
+                    let function_type_data = type_finder.find(*function_type_index)?.parse()?;
+                    function_types.push(function_type_data);
+                }
+
+                statements.push(cpp::Statement::Comment(format!(
+                    "function caller list:\n{}",
+                    function_types.iter().map(|t| format!("{t:#?}")).collect::<Vec<_>>().join("\n"),
+                )));
             }
 
             pdb2::SymbolData::UserDefinedType(_)
@@ -2451,10 +2511,10 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
             | pdb2::SymbolData::FrameProcedure(_)
             | pdb2::SymbolData::FrameCookie(_)
             | pdb2::SymbolData::FileStatic(_) => {
-                // println!("WARNING: Unused {symbol_data:#?}");
+                // println!("WARNING: Unused symbol data in parse_statement_symbols: {symbol_data:#?}");
             }
             
-            _ => panic!("Unhandled symbol data in parse_statement_symbols - {symbol_data:?}"),
+            _ => panic!("Unhandled symbol data in parse_statement_symbols - {symbol_data:#?}"),
         }
     }
 
@@ -2499,10 +2559,10 @@ fn parse_thunk_symbols(symbols: &mut pdb2::SymbolIter) {
             | pdb2::SymbolData::Callees(_)
             | pdb2::SymbolData::Callers(_)
             | pdb2::SymbolData::FileStatic(_) => {
-                // println!("WARNING: Unused {symbol_data:#?}");
+                // println!("WARNING: Unused symbol data in parse_thunk_symbols: {symbol_data:#?}");
             }
 
-            _ => panic!("Unhandled symbol data in parse_thunk_symbols - {symbol_data:?}"),
+            _ => panic!("Unhandled symbol data in parse_thunk_symbols: {symbol_data:#?}"),
         }
     }
 }
@@ -2545,10 +2605,10 @@ fn parse_separated_code_symbols(symbols: &mut pdb2::SymbolIter) {
             | pdb2::SymbolData::Callees(_)
             | pdb2::SymbolData::Callers(_)
             | pdb2::SymbolData::FileStatic(_) => {
-                // println!("WARNING: Unused {symbol_data:#?}");
+                // println!("WARNING: Unused symbol data in parse_separated_code_symbols: {symbol_data:#?}");
             }
 
-            _ => panic!("Unhandled symbol data in parse_separated_code_symbols - {symbol_data:?}"),
+            _ => panic!("Unhandled symbol data in parse_separated_code_symbols - {symbol_data:#?}"),
         }
     }
 }

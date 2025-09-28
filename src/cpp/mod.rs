@@ -32,7 +32,7 @@ pub fn argument_list<'p>(
                     names.as_mut().map(|names| names.remove(0));
                 }
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, false)?);
+                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, None)?);
             }
 
             for (i, &arg_type) in data.arguments.iter().enumerate() {
@@ -41,7 +41,7 @@ pub fn argument_list<'p>(
                     _ => None
                 };
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, false)?);
+                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, None)?);
             }
 
             Ok(args)
@@ -144,7 +144,7 @@ pub fn type_name<'p>(
     modifier: Option<&pdb2::ModifierType>,
     declaration_name: Option<String>,
     parameter_names: Option<Vec<String>>,
-    include_this: bool,
+    include_this: Option<String>,
 ) -> pdb2::Result<String> {
     let type_item = type_finder.find(type_index)?;
     let type_data = type_item.parse()?;
@@ -153,7 +153,6 @@ pub fn type_name<'p>(
         pdb2::TypeData::Modifier(data) => {
             assert!(modifier.is_none());
             assert!(parameter_names.is_none());
-            assert!(!include_this);
 
             type_name(
                 class_table,
@@ -165,13 +164,12 @@ pub fn type_name<'p>(
                 Some(data),
                 declaration_name,
                 None,
-                false
+                None,
             )?
         }
 
         pdb2::TypeData::Bitfield(data) => {
             assert!(parameter_names.is_none());
-            assert!(!include_this);
 
             type_name(
                 class_table,
@@ -183,7 +181,7 @@ pub fn type_name<'p>(
                 modifier,
                 declaration_name,
                 None,
-                false,
+                None,
             )?
         }
 
@@ -235,7 +233,6 @@ pub fn type_name<'p>(
         | pdb2::TypeData::Enumeration(pdb2::EnumerationType { name, .. })
         | pdb2::TypeData::Union(pdb2::UnionType { name, .. }) => {
             assert!(parameter_names.is_none());
-            assert!(!include_this);
 
             let mut name = name.to_string().to_string();
 
@@ -263,7 +260,6 @@ pub fn type_name<'p>(
 
         pdb2::TypeData::Array(data) => {
             assert!(parameter_names.is_none());
-            assert!(!include_this);
 
             let mut name = String::new();
 
@@ -282,12 +278,11 @@ pub fn type_name<'p>(
                 element_size = size as usize;
             }
             
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, false)?
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, None)?
         }
 
         pdb2::TypeData::Pointer(data) => {
             assert!(parameter_names.is_none());
-            assert!(!include_this);
 
             let mut name = String::new();
 
@@ -325,12 +320,11 @@ pub fn type_name<'p>(
                 name.push_str(field_name.as_str());
             }
 
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, false)?
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, None)?
         }
 
         pdb2::TypeData::Procedure(data) => {
             assert!(modifier.is_none());
-            assert!(!include_this);
 
             let mut name = if let Some(declaration_name) = declaration_name.as_ref() {
                 if declaration_name.starts_with('*') || declaration_name.starts_with('&') {
@@ -372,7 +366,7 @@ pub fn type_name<'p>(
                         None,
                         Some(name),
                         None,
-                        false,
+                        None,
                     )?,
 
                     None => name,
@@ -389,8 +383,63 @@ pub fn type_name<'p>(
 
             let mut parameter_names = parameter_names;
 
-            if include_this && let Some(this_pointer_type) = data.this_pointer_type {
-                name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, Some(this_pointer_type), data.argument_list, parameter_names)?.join(", "));
+            if let Some(include_this) = include_this.as_ref() && let Some(this_pointer_type) = data.this_pointer_type {
+                if !include_this.is_empty() {
+                    name.push('(');
+                    
+                    name.push_str(&include_this);
+
+                    let pdb2::TypeData::Pointer(this_pointer_data) = type_finder.find(this_pointer_type)?.parse()? else {
+                        unreachable!()
+                    };
+
+                    if this_pointer_data.attributes.is_reference() {
+                        name.push_str(" &");
+                    } else {
+                        name.push_str(" *");
+                    }
+
+                    let mut attribute_string = String::new();
+
+                    if this_pointer_data.attributes.is_const() {
+                        attribute_string.push_str(" const");
+                    }
+
+                    if this_pointer_data.attributes.is_volatile() {
+                        attribute_string.push_str(" volatile");
+                    }
+
+                    if this_pointer_data.attributes.is_unaligned() {
+                        attribute_string.push_str(" __unaligned");
+                    }
+
+                    if this_pointer_data.attributes.is_restrict() {
+                        attribute_string.push_str(" __restrict");
+                    }
+
+                    name.push_str(attribute_string.as_str());
+
+                    if let Some(parameter_names) = parameter_names.as_mut() {
+                        if !(name.ends_with(' ') || name.ends_with('*') || name.ends_with('&')) {
+                            name.push(' ');
+                        }
+
+                        name.push_str(parameter_names[0].as_str());
+                        parameter_names.remove(0);
+                    }
+
+                    let mut argument_list = argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", ");
+
+                    if !argument_list.is_empty() {
+                        argument_list = format!(", {}", argument_list);
+                    }
+
+                    name.push_str(&argument_list);
+
+                    name.push(')');
+                } else {
+                    name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, Some(this_pointer_type), data.argument_list, parameter_names)?.join(", "));
+                }
             }
             else {
                 if let Some(parameter_names) = parameter_names.as_mut()
@@ -431,7 +480,7 @@ pub fn type_name<'p>(
                     None,
                     Some(name),
                     None,
-                    false,
+                    None,
                 )?
             }
         }
@@ -828,4 +877,52 @@ pub fn parse_type_name(name: &str, keep_template: bool) -> (String, usize) {
     result = result.replace(" __ptr64", "");
 
     (result, offset + 1)
+}
+
+pub fn find_class_declaring_intro_method(
+    class_table: &mut Vec<Rc<RefCell<Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
+    machine_type: pdb2::MachineType,
+    type_info: &pdb2::TypeInformation,
+    type_finder: &pdb2::TypeFinder,
+    class: Rc<RefCell<Class>>,
+    procedure_name: &str,
+) -> pdb2::Result<Option<Rc<RefCell<Class>>>> {
+    let borrowed_class = class.borrow();
+
+    for base_class in borrowed_class.base_classes.iter() {
+        let base_class_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, base_class.index, None, None, None, None)?;
+
+        let full_base_classes = class_table.iter().filter(|c| {
+            if **c == class {
+                return false;
+            }
+            let c = c.borrow();
+            c.name == base_class_name && !c.is_declaration
+        }).cloned().collect::<Vec<_>>();
+
+        for base_class in full_base_classes {
+            {
+                let borrowed_base_class = base_class.borrow();
+
+                for member in borrowed_base_class.members.iter() {
+                    let ClassMember::Method(base_method) = member else {
+                        continue;
+                    };
+
+                    if base_method.name == procedure_name {
+                        if base_method.field_attributes.as_ref().map(|f| f.is_intro() || f.is_pure_intro() || f.is_pure_virtual()).unwrap_or(false) {
+                            return Ok(Some(base_class.clone()));
+                        }
+                    }
+                }
+            }
+
+            if let Some(result) = find_class_declaring_intro_method(class_table, type_sizes, machine_type, type_info, type_finder, base_class.clone(), procedure_name)? {
+                return Ok(Some(result));
+            }
+        }
+    }
+
+    Ok(None)
 }

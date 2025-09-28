@@ -504,7 +504,7 @@ impl Class {
                         None,
                         None,
                         None,
-                        false
+                        None,
                     )?,
                     name: data.name.to_string().to_string(),
                     display: type_name(
@@ -517,7 +517,7 @@ impl Class {
                         None,
                         Some(data.name.to_string().to_string()),
                         None,
-                        false
+                        None,
                     )?,
                     offset: data.offset,
                     size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
@@ -545,7 +545,7 @@ impl Class {
                             None,
                             None,
                             None,
-                            false
+                            None,
                         )?
                     ),
                     name: data.name.to_string().to_string(),
@@ -561,7 +561,7 @@ impl Class {
                             None,
                             Some(data.name.to_string().to_string()),
                             None,
-                            false
+                            None,
                         )?
                     ),
                     offset: std::u64::MAX,
@@ -581,7 +581,7 @@ impl Class {
                             3 => "public ",
                             _ => "",
                         },
-                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, false)?
+                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, None)?
                     ),
                     offset: data.offset,
                     index: data.base_class
@@ -598,7 +598,7 @@ impl Class {
                             3 => "public ",
                             _ => ""
                         },
-                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, false)?
+                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, None)?
                     ),
                     offset: data.base_pointer_offset,
                     index: data.base_class
@@ -629,7 +629,7 @@ impl Class {
                                 modifier.as_ref(),
                                 Some(data.name.to_string().to_string()),
                                 None,
-                                false,
+                                None,
                             )?;
 
                             Method {
@@ -678,7 +678,7 @@ impl Class {
                                                 modifier.as_ref(),
                                                 Some(data.name.to_string().to_string()),
                                                 None,
-                                                false,
+                                                None,
                                             )?;
                                             
                                             Method {
@@ -792,7 +792,7 @@ impl Class {
                             index: nested_data.nested_type,
                             depth: self.depth + 1,
                             line: 0,
-                            underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, None, false)?,
+                            underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, None, None)?,
                             size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?,
                             is_declaration: false,
                             values: vec![],
@@ -838,7 +838,7 @@ impl Class {
                             None,
                             Some(nested_data.name.to_string().to_string()),
                             None,
-                            false
+                            None,
                         )?;
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {

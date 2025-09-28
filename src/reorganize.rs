@@ -55,9 +55,9 @@ fn find_enum_or_flags_typedef<'a>(
                     panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
                 };
 
+                let (type_string, suffix) = type_string.trim_start_matches("c_enum<").rsplit_once('>').unwrap();
+
                 let mut template_args = type_string
-                    .trim_start_matches("c_enum<")
-                    .trim_end_matches(">")
                     .split(",")
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>();
@@ -205,7 +205,7 @@ fn find_enum_or_flags_typedef<'a>(
                     }
                 }
 
-                result.type_name = format!("c_enum<{}> {}", template_args.join(","), name_string);
+                result.type_name = format!("c_enum<{}>{} {}", template_args.join(","), suffix, name_string);
 
                 return Some(result);
             }
@@ -218,9 +218,9 @@ fn find_enum_or_flags_typedef<'a>(
                     panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
                 };
 
+                let (type_string, suffix) = type_string.trim_start_matches("c_flags<").rsplit_once('>').unwrap();
+
                 let mut template_args = type_string
-                    .trim_start_matches("c_flags<")
-                    .trim_end_matches(">")
                     .split(",")
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>();
@@ -310,7 +310,7 @@ fn find_enum_or_flags_typedef<'a>(
                     }
                 }
 
-                result.type_name = format!("c_flags<{}> {}", template_args.join(","), name_string);
+                result.type_name = format!("c_flags<{}>{} {}", template_args.join(","), suffix, name_string);
 
                 return Some(result);
             }
@@ -323,9 +323,9 @@ fn find_enum_or_flags_typedef<'a>(
                     panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
                 };
 
+                let (type_string, suffix) = type_string.trim_start_matches("c_flags_no_init<").rsplit_once('>').unwrap();
+
                 let mut template_args = type_string
-                    .trim_start_matches("c_flags_no_init<")
-                    .trim_end_matches(">")
                     .split(",")
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>();
@@ -415,7 +415,7 @@ fn find_enum_or_flags_typedef<'a>(
                     }
                 }
 
-                result.type_name = format!("c_flags_no_init<{}> {}", template_args.join(","), name_string);
+                result.type_name = format!("c_flags_no_init<{}>{} {}", template_args.join(","), suffix, name_string);
 
                 return Some(result);
             }
@@ -815,8 +815,24 @@ pub fn reorganize_module_members(
             procedure.body = Some(cpp::Block::default());
         }
 
-        comment_block(procedure.body.as_mut().unwrap());
+        if let Some(this_adjustment) = procedure.this_adjustment.as_ref() {
+            assert!(procedure.declaring_class.is_some());
+            
+            if procedure.body.is_none() {
+                procedure.body = Some(cpp::Block::default());
+            }
+
+            procedure.body.as_mut().unwrap().statements.insert(
+                0,
+                cpp::Statement::FunctionCall("__shifted".into(), vec![
+                    procedure.this_pointer_type.clone().unwrap(),
+                    this_adjustment.to_string(),
+                ]),
+            );
+        }
         
+        comment_block(procedure.body.as_mut().unwrap());
+
         if let Some((mangled_name, _address)) = module.mangled_symbols.iter()
             .find(|(_, address)| *address == procedure.address)
         {
@@ -850,7 +866,7 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 None,
-                true,
+                procedure.declaring_class.clone().or(Some(String::new())),
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -890,6 +906,9 @@ pub fn reorganize_module_members(
                 type_index: procedure.type_index,
                 is_static: false,
                 is_inline: false,
+                declaring_class: procedure.declaring_class.clone(),
+                this_pointer_type: procedure.this_pointer_type.clone(),
+                this_adjustment: procedure.this_adjustment.clone(),
                 declspecs: procedure.declspecs.clone(),
                 name: format!("_sub_{:X}", procedure.address).into(),
                 signature: cpp::type_name(
@@ -902,7 +921,7 @@ pub fn reorganize_module_members(
                     None,
                     Some(format!("_sub_{:X}", procedure.address).into()),
                     None,
-                    true,
+                    procedure.declaring_class.clone().or(Some(String::new())),
                 )?
                 .trim_end_matches(" const")
                 .trim_end_matches(" volatile")
@@ -950,6 +969,22 @@ pub fn reorganize_module_members(
             procedure.body = Some(cpp::Block::default());
         }
 
+        if let Some(this_adjustment) = procedure.this_adjustment.as_ref() {
+            assert!(procedure.declaring_class.is_some());
+            
+            if procedure.body.is_none() {
+                procedure.body = Some(cpp::Block::default());
+            }
+
+            procedure.body.as_mut().unwrap().statements.insert(
+                0,
+                cpp::Statement::FunctionCall("__shifted".into(), vec![
+                    procedure.this_pointer_type.clone().unwrap(),
+                    this_adjustment.to_string(),
+                ]),
+            );
+        }
+        
         comment_block(procedure.body.as_mut().unwrap());
 
         if procedure.body.is_none() {
@@ -981,7 +1016,7 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 None,
-                true,
+                procedure.declaring_class.clone().or(Some(String::new())),
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -1022,6 +1057,9 @@ pub fn reorganize_module_members(
                 type_index: procedure.type_index,
                 is_static: false,
                 is_inline: false,
+                declaring_class: procedure.declaring_class.clone(),
+                this_pointer_type: procedure.this_pointer_type.clone(),
+                this_adjustment: procedure.this_adjustment.clone(),
                 declspecs: procedure.declspecs.clone(),
                 name: format!("_sub_{:X}", procedure.address).into(),
                 signature: cpp::type_name(
@@ -1034,7 +1072,7 @@ pub fn reorganize_module_members(
                     None,
                     Some(format!("_sub_{:X}", procedure.address).into()),
                     None,
-                    true,
+                    procedure.declaring_class.clone().or(Some(String::new())),
                 )?
                 .trim_end_matches(" const")
                 .trim_end_matches(" volatile")
