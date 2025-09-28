@@ -5,7 +5,7 @@ use crate::tabbed::{TabbedDisplay, TabbedDisplayer};
 // TODO: Separate signature into separate return_type, name, and parameters fields
 //
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
     Comment(String),
     Commented(Box<Statement>),
@@ -111,7 +111,7 @@ impl TabbedDisplay for Statement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Label {
     pub address: u64,
     pub name: String,
@@ -125,7 +125,7 @@ impl Display for Label {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Variable {
     pub signature: String,
     pub value: Option<String>,
@@ -155,7 +155,7 @@ impl Display for Variable {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Block {
     pub address: Option<u64>,
     pub statements: Vec<Statement>,
@@ -185,24 +185,33 @@ impl TabbedDisplay for Block {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Return {
     pub value: Option<Box<Statement>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReturnWithValue {
     pub signature: String,
     pub value: Option<Box<Statement>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MemberMethodData {
+    pub class_type: String,
+    pub declaring_class: String,
+    pub this_pointer_type: Option<String>,
+    pub this_adjustment: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Procedure {
     pub address: u64,
     pub line: Option<u32>,
     pub type_index: pdb2::TypeIndex,
     pub is_static: bool,
     pub is_inline: bool,
+    pub member_method_data: Option<MemberMethodData>,
     pub declspecs: Vec<String>,
     pub name: String,
     pub signature: String,

@@ -1,12 +1,12 @@
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnumValue {
     pub name: String,
     pub value: pdb2::Variant,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Enum {
     pub name: String,
     pub index: pdb2::TypeIndex,

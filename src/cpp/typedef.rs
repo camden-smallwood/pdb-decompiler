@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeDefinition {
     pub type_name: String,
     pub underlying_type: pdb2::TypeIndex,

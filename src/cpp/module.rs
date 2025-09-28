@@ -13,7 +13,7 @@ pub static SOURCE_FILE_EXTS: &[&str] = &[
     "c", "cc", "cpp", "cxx", "pch", "asm", "fasm", "masm", "res", "exp",
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ModuleMember {
     EmptyLine,
     Preprocessor(String),
@@ -230,7 +230,7 @@ pub enum ModuleSecondaryFlags {
     ListingFileUtf8 = 1 << 41,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Module {
     pub path: PathBuf,
     pub compiler_path: PathBuf,
@@ -466,8 +466,7 @@ impl Module {
                     None,
                     None,
                     None,
-                    false,
-                    false
+                    None
                 ) {
                     Ok(name) => name,
                     Err(_) => {
