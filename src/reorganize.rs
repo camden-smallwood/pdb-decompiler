@@ -850,7 +850,12 @@ pub fn reorganize_module_members(
                 None,
                 None,
                 None,
-                true,
+                match type_finder.find(procedure.type_index).expect("").parse() {
+                    Ok(pdb2::TypeData::MemberFunction(data)) => {
+                        true
+                    },
+                    _ => false
+                },
                 false
             )
             .unwrap()

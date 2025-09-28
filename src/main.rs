@@ -1879,7 +1879,12 @@ fn process_module_symbol_data(
                 None,
                 Some(procedure_symbol.name.to_string().to_string()),
                 Some(parameters.clone()),
-                true, 
+                match type_finder.find(procedure_symbol.type_index)?.parse()? {
+                    pdb2::TypeData::MemberFunction(data) => {
+                        true
+                    },
+                    _ => false
+                },
                 true
             )?;
             

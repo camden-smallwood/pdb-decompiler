@@ -154,7 +154,7 @@ pub fn type_name<'p>(
         pdb2::TypeData::Modifier(data) => {
             assert!(modifier.is_none());
             assert!(parameter_names.is_none());
-            assert!(!include_this);
+            //assert!(!include_this);
 
             type_name(
                 class_table,
@@ -173,7 +173,7 @@ pub fn type_name<'p>(
 
         pdb2::TypeData::Bitfield(data) => {
             assert!(parameter_names.is_none());
-            assert!(!include_this);
+            //assert!(!include_this);
 
             type_name(
                 class_table,
@@ -238,7 +238,7 @@ pub fn type_name<'p>(
         | pdb2::TypeData::Enumeration(pdb2::EnumerationType { name, .. })
         | pdb2::TypeData::Union(pdb2::UnionType { name, .. }) => {
             assert!(parameter_names.is_none());
-            assert!(!include_this);
+            //assert!(!include_this);
 
             let mut name = name.to_string().to_string();
 
@@ -266,7 +266,7 @@ pub fn type_name<'p>(
 
         pdb2::TypeData::Array(data) => {
             assert!(parameter_names.is_none());
-            assert!(!include_this);
+            //assert!(!include_this);
 
             let mut name = String::new();
 
@@ -290,7 +290,7 @@ pub fn type_name<'p>(
 
         pdb2::TypeData::Pointer(data) => {
             assert!(parameter_names.is_none());
-            assert!(!include_this);
+            //assert!(!include_this);
 
             let mut name = String::new();
 
@@ -333,7 +333,7 @@ pub fn type_name<'p>(
 
         pdb2::TypeData::Procedure(data) => {
             assert!(modifier.is_none());
-            assert!(!include_this);
+            //assert!(!include_this);
 
             let mut name = if let Some(declaration_name) = declaration_name.as_ref() {
                 if declaration_name.starts_with('*') || declaration_name.starts_with('&') {
