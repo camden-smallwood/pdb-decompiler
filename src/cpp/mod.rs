@@ -32,7 +32,7 @@ pub fn argument_list<'p>(
                     names.as_mut().map(|names| names.remove(0));
                 }
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, None)?);
+                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, None, false)?);
             }
 
             for (i, &arg_type) in data.arguments.iter().enumerate() {
@@ -41,7 +41,7 @@ pub fn argument_list<'p>(
                     _ => None
                 };
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, None)?);
+                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, None, false)?);
             }
 
             Ok(args)
@@ -166,6 +166,7 @@ pub fn type_name<'p>(
                 declaration_name,
                 None,
                 None,
+                false
             )?
         }
 
@@ -183,6 +184,7 @@ pub fn type_name<'p>(
                 declaration_name,
                 None,
                 None,
+                false
             )?
         }
 
@@ -279,7 +281,7 @@ pub fn type_name<'p>(
                 element_size = size as usize;
             }
             
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, None)?
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, None, false)?
         }
 
         pdb2::TypeData::Pointer(data) => {
@@ -321,7 +323,7 @@ pub fn type_name<'p>(
                 name.push_str(field_name.as_str());
             }
 
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, None)?
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, None, false)?
         }
 
         pdb2::TypeData::Procedure(data) => {
@@ -368,6 +370,7 @@ pub fn type_name<'p>(
                         Some(name),
                         None,
                         None,
+                        false
                     )?,
 
                     None => name,
@@ -495,6 +498,7 @@ pub fn type_name<'p>(
                     Some(name),
                     None,
                     None,
+                    false
                 )?
             }
         }
@@ -905,7 +909,7 @@ pub fn find_class_declaring_intro_method(
     let borrowed_class = class.borrow();
 
     for base_class in borrowed_class.base_classes.iter() {
-        let base_class_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, base_class.index, None, None, None, None)?;
+        let base_class_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, base_class.index, None, None, None, None, false)?;
 
         let full_base_classes = class_table.iter().filter(|c| {
             if **c == class {

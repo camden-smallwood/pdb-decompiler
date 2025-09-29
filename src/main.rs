@@ -1390,6 +1390,7 @@ fn process_module_symbol_data(
                 Some(udt_symbol.name.to_string().to_string()),
                 None,
                 None,
+                false
             )?;
 
             let user_defined_type = cpp::ModuleMember::TypeDefinition(cpp::TypeDefinition {
@@ -1420,6 +1421,7 @@ fn process_module_symbol_data(
                 Some(constant_symbol.name.to_string().to_string()),
                 None,
                 None,
+                false
             )?;
 
             if type_name.starts_with("float const ") {
@@ -1501,6 +1503,7 @@ fn process_module_symbol_data(
                         Some(data_symbol.name.to_string().to_string()),
                         None,
                         None,
+                        false
                     )?,
                 ),
                 address,
@@ -1566,6 +1569,7 @@ fn process_module_symbol_data(
                         Some(thread_storage_symbol.name.to_string().to_string()),
                         None,
                         None,
+                        false
                     )?,
                 ),
                 address,
@@ -1713,10 +1717,10 @@ fn process_module_symbol_data(
                             && (class_member_function.return_type == member_function.return_type);
 
                         if !valid {
-                            let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, None)?;
+                            let lhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, class_member_function.return_type, None, None, None, None, false)?;
                             let lhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, class_member_function.argument_list, None)?;
 
-                            let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, None)?;
+                            let rhs_return_type = cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, member_function.return_type, None, None, None, None, false)?;
                             let rhs_arg_list = cpp::argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, member_function.argument_list, None)?;
 
                             valid = (lhs_return_type == rhs_return_type) && (lhs_arg_list == rhs_arg_list);
@@ -1743,7 +1747,7 @@ fn process_module_symbol_data(
                     };
                     
                     let this_pointer_type = member_function.this_pointer_type.as_ref().map(|t| {
-                        cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, *t, None, None, None, None).unwrap()
+                        cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, *t, None, None, None, None, false).unwrap()
                     });
 
                     let this_adjustment = member_function.this_adjustment;
@@ -1784,6 +1788,7 @@ fn process_module_symbol_data(
                         Some(class_method.name.clone()),
                         Some(parameters.clone()),
                         None,
+                        false
                     )?;
                 }
             }
@@ -1905,6 +1910,7 @@ fn process_module_symbol_data(
                 Some(procedure_symbol.name.to_string().to_string()),
                 Some(parameters.clone()),
                 None,
+                false
             )?;
 
             if procedure_signature.starts_with("...") || procedure_signature.contains('$') || procedure_signature.contains('`') {
@@ -1921,12 +1927,7 @@ fn process_module_symbol_data(
                 None,
                 Some(procedure_symbol.name.to_string().to_string()),
                 Some(parameters.clone()),
-                match type_finder.find(procedure_symbol.type_index)?.parse()? {
-                    pdb2::TypeData::MemberFunction(data) => {
-                        true
-                    },
-                    _ => false
-                },
+                member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
                 true
             )?;
             
@@ -2338,6 +2339,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(register_variable_symbol.name.to_string().to_string()),
                         None,
                         None,
+                        false
                     )?,
                     value: None,
                     comment: Some(format!("r{}", register_variable_symbol.register.0)),
@@ -2358,6 +2360,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(register_relative_symbol.name.to_string().to_string()),
                         None,
                         None,
+                        false
                     )?,
                     value: None,
                     // comment: Some(format!("r{} offset {}", register_relative_symbol.register.0, register_relative_symbol.offset))
@@ -2427,6 +2430,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(constant_symbol.name.to_string().to_string()),
                         None,
                         None,
+                        false
                     )?,
                     value: None,
                     comment: Some(format!(
@@ -2459,6 +2463,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(data_symbol.name.to_string().to_string()),
                         None,
                         None,
+                        false
                     )?,
                     value: None,
                     comment: data_symbol.offset.to_rva(address_map).map(|rva| {
@@ -2481,6 +2486,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         Some(local_symbol.name.to_string().to_string()),
                         None,
                         None,
+                        false
                     )?,
                     value: None,
                     comment: Some("local".into()),
@@ -2520,6 +2526,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                             Some(tls_symbol.name.to_string().to_string()),
                             None,
                             None,
+                            false
                         )?,
                     ),
                     value: None,
@@ -2547,6 +2554,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     None,
                     None,
                     None,
+                    false
                 )?;
 
                 //statements.push(cpp::Statement::Comment(format!("function call @ 0x{:X}: {}", address, type_name)));

@@ -466,7 +466,8 @@ impl Module {
                     None,
                     None,
                     None,
-                    None
+                    None,
+                    false
                 ) {
                     Ok(name) => name,
                     Err(_) => {
