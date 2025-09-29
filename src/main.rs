@@ -2343,7 +2343,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     )?,
                     value: None,
                     comment: Some(format!("r{}", register_variable_symbol.register.0)),
-                    prefix: None
                 }));
             }
 
@@ -2365,7 +2364,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     value: None,
                     // comment: Some(format!("r{} offset {}", register_relative_symbol.register.0, register_relative_symbol.offset))
                     comment: None,
-                    prefix: None
                 }));
             }
 
@@ -2419,7 +2417,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Constant(constant_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(
+                    signature: format!("constexpr {}", cpp::type_name(
                         class_table,
                         type_sizes,
                         machine_type,
@@ -2431,7 +2429,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         None,
                         false
-                    )?,
+                    )?),
                     value: None,
                     comment: Some(format!(
                         "constant == {}",
@@ -2446,13 +2444,12 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                             pdb2::Variant::I64(x) => format!("{x}"),
                         },
                     )),
-                    prefix: Some("constexpr".to_string())
                 }));
             }
 
             pdb2::SymbolData::Data(data_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(
+                    signature: format!("static {}", cpp::type_name(
                         class_table,
                         type_sizes,
                         machine_type,
@@ -2464,12 +2461,11 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         None,
                         false
-                    )?,
+                    )?),
                     value: None,
                     comment: data_symbol.offset.to_rva(address_map).map(|rva| {
                         format!("0x{:X}", base_address.unwrap_or(0) + rva.0 as u64)
                     }),
-                    prefix: Some("static ".to_string())
                 }));
             }
 
@@ -2490,7 +2486,6 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     )?,
                     value: None,
                     comment: Some("local".into()),
-                    prefix: None
                 }));
             }
 
@@ -2533,12 +2528,11 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                     comment: tls_symbol.offset.to_rva(address_map).map(|rva| {
                         format!("0x{:X}", base_address.unwrap_or(0) + rva.0 as u64)
                     }),
-                    prefix: Some("thread_local".to_string())
                 }));
             }
 
             pdb2::SymbolData::CallSiteInfo(call_site_info) => {
-                let address = call_site_info.offset
+                let _address = call_site_info.offset
                     .to_rva(address_map)
                     .map(|rva| base_address.unwrap_or(0) + rva.0 as u64)
                     .unwrap();

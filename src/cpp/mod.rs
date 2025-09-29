@@ -297,15 +297,15 @@ pub fn type_name<'p>(
 
             let mut attribute_string = String::new();
 
-            if data.attributes.is_const() {
+            if data.attributes.is_const() || modifier.as_ref().map(|m| m.constant).unwrap_or(false) {
                 attribute_string.push_str("const ");
             }
 
-            if data.attributes.is_volatile() {
+            if data.attributes.is_volatile() || modifier.as_ref().map(|m| m.volatile).unwrap_or(false) {
                 attribute_string.push_str("volatile ");
             }
 
-            if data.attributes.is_unaligned() {
+            if data.attributes.is_unaligned() || modifier.as_ref().map(|m| m.unaligned).unwrap_or(false) {
                 attribute_string.push_str("__unaligned ");
             }
 

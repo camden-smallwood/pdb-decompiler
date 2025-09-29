@@ -130,15 +130,10 @@ pub struct Variable {
     pub signature: String,
     pub value: Option<String>,
     pub comment: Option<String>,
-    pub prefix: Option<String>,
 }
 
 impl Display for Variable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(prefix) = self.prefix.as_ref() {
-            write!(f, "{prefix}")?;
-        }
-
         write!(f, "{}", self.signature)?;
 
         if let Some(value) = self.value.as_ref() {
@@ -228,7 +223,7 @@ impl Display for Procedure {
         }
 
         if self.is_inline {
-            write!(f, "_inline ")?;
+            write!(f, "inline ")?;
         }
 
         if !self.declspecs.is_empty() {

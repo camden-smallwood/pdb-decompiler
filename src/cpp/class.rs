@@ -99,7 +99,7 @@ impl fmt::Display for Method {
             },
 
             if self.is_inline {
-                "_inline "
+                "inline /*is_inline: true*/ "
             } else {
                 ""
             },

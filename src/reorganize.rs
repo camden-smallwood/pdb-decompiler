@@ -439,6 +439,80 @@ pub fn reorganize_module_members(
     // Rebuild module under specific sections
     //
 
+    for member in module.members.iter_mut() {
+        let cpp::ModuleMember::Class(class) = member else {
+            continue;
+        };
+
+        let mut class = class.borrow_mut();
+
+        fn check_subclass(class: Rc<RefCell<cpp::Class>>) {
+            let mut class = class.borrow_mut();
+
+            for member in class.members.iter_mut() {
+                if let cpp::ClassMember::Class(subclass) = member {
+                    check_subclass(subclass.clone());
+                    continue;
+                }
+                
+                let cpp::ClassMember::Method(method) = member else {
+                    continue;
+                };
+
+                let is_inline = method.is_inline;
+                method.is_inline = false;
+                
+                let is_static = method.signature.starts_with("static ");
+                method.signature = method.signature.trim_start_matches("static ").into();
+
+                method.signature = format!(
+                    "{}{}",
+                    if is_static && is_inline {
+                        "static _inline "
+                    } else if is_static {
+                        "static "
+                    } else if is_inline {
+                        "_inline "
+                    } else {
+                        ""
+                    },
+                    method.signature,
+                );
+            }
+        }
+        
+        for member in class.members.iter_mut() {
+            if let cpp::ClassMember::Class(subclass) = member {
+                check_subclass(subclass.clone());
+                continue;
+            }
+
+            let cpp::ClassMember::Method(method) = member else {
+                continue;
+            };
+
+            let is_inline = method.is_inline;
+            method.is_inline = false;
+            
+            let is_static = method.signature.starts_with("static ");
+            method.signature = method.signature.trim_start_matches("static ").into();
+
+            method.signature = format!(
+                "{}{}",
+                if is_static && is_inline {
+                    "static _inline "
+                } else if is_static {
+                    "static "
+                } else if is_inline {
+                    "_inline "
+                } else {
+                    ""
+                },
+                method.signature,
+            );
+        }
+    }
+
     let mut new_members = vec![];
 
     //--------------------------------------------------------------------------------
@@ -602,6 +676,11 @@ pub fn reorganize_module_members(
     for member in public_code_members.iter() {
         if let cpp::ModuleMember::Procedure(procedure) = member {
             let mut procedure = procedure.clone();
+            if let Some(member_method_data) = procedure.member_method_data.as_mut() {
+                if member_method_data.this_adjustment == 0 {
+                    member_method_data.declaring_class.clear();
+                }
+            }
 
             let is_member_function = matches!(
                 type_finder.find(procedure.type_index)?.parse()?,
@@ -610,10 +689,13 @@ pub fn reorganize_module_members(
 
             procedure.body = None;
             procedure.address = 0;
+
+            let is_inline = procedure.is_inline;
+            procedure.is_inline = false;
             
             if !is_member_function {
                 prototype_members.push(cpp::ModuleMember::Tagged(
-                    "extern".into(),
+                    if is_inline { "extern _inline" } else { "extern" }.into(),
                     Box::new(cpp::ModuleMember::Procedure(procedure)),
                 ));
             }
@@ -627,13 +709,21 @@ pub fn reorganize_module_members(
     for member in private_code_members.iter() {
         if let cpp::ModuleMember::Procedure(procedure) = member {
             let mut procedure = procedure.clone();
+            if let Some(member_method_data) = procedure.member_method_data.as_mut() {
+                if member_method_data.this_adjustment == 0 {
+                    member_method_data.declaring_class.clear();
+                }
+            }
 
             procedure.body = None;
             procedure.address = 0;
             procedure.is_static = false;
 
+            let is_inline = procedure.is_inline;
+            procedure.is_inline = false;
+
             prototype_members.push(cpp::ModuleMember::Tagged(
-                "_static".into(),
+                if is_inline { "_static _inline" } else { "_static" }.into(),
                 Box::new(cpp::ModuleMember::Procedure(procedure)),
             ));
         }
@@ -810,6 +900,11 @@ pub fn reorganize_module_members(
         };
 
         let mut procedure = procedure.clone();
+        if let Some(member_method_data) = procedure.member_method_data.as_mut() {
+            if member_method_data.this_adjustment == 0 {
+                member_method_data.declaring_class.clear();
+            }
+        }
 
         if procedure.body.is_none() {
             procedure.body = Some(cpp::Block::default());
@@ -899,8 +994,11 @@ pub fn reorganize_module_members(
             );
         }
 
+        let is_inline = procedure.is_inline;
+        procedure.is_inline = false;
+
         new_public_code_members.push(cpp::ModuleMember::Tagged(
-            "_extern".into(),
+            if is_inline { "_extern _inline" } else { "_extern" }.into(),
             Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
                 address: 0,
                 line: procedure.line,
@@ -939,7 +1037,7 @@ pub fn reorganize_module_members(
             procedure.is_static = false;
 
             new_public_code_members.push(cpp::ModuleMember::Tagged(
-                "_static".into(),
+                if is_inline { "_static _inline" } else { "_static" }.into(),
                 Box::new(cpp::ModuleMember::Procedure(procedure))));
         }
 
@@ -965,6 +1063,11 @@ pub fn reorganize_module_members(
         };
 
         let mut procedure = procedure.clone();
+        if let Some(member_method_data) = procedure.member_method_data.as_mut() {
+            if member_method_data.this_adjustment == 0 {
+                member_method_data.declaring_class.clear();
+            }
+        }
 
         if procedure.body.is_none() {
             procedure.body = Some(cpp::Block::default());
@@ -1051,8 +1154,11 @@ pub fn reorganize_module_members(
             );
         }
 
+        let is_inline = procedure.is_inline;
+        procedure.is_inline = false;
+
         new_private_code_members.push(cpp::ModuleMember::Tagged(
-            "_extern".into(),
+            if is_inline { "_extern _inline" } else { "_extern" }.into(),
             Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
                 address: 0,
                 line: procedure.line,
@@ -1091,7 +1197,7 @@ pub fn reorganize_module_members(
             procedure.is_static = false;
 
             new_private_code_members.push(cpp::ModuleMember::Tagged(
-                "_static".into(),
+                if is_inline { "_static _inline" } else { "_static" }.into(),
                 Box::new(cpp::ModuleMember::Procedure(procedure)),
             ));
         }
