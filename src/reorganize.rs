@@ -1115,6 +1115,12 @@ pub fn reorganize_module_members(
             ),
         );
 
+        if procedure.line.is_none() {
+            procedure.body.as_mut().unwrap().statements.push(
+                cpp::Statement::FunctionCall("compiler_generated".into(), vec![]),
+            );
+        }
+
         procedure.body.as_mut().unwrap().statements.push(
             cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
         );
