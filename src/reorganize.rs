@@ -998,7 +998,7 @@ pub fn reorganize_module_members(
         procedure.is_inline = false;
 
         new_public_code_members.push(cpp::ModuleMember::Tagged(
-            if is_inline { "_extern _inline" } else { "_extern" }.into(),
+            "_extern".into(),
             Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
                 address: 0,
                 line: procedure.line,
@@ -1032,7 +1032,11 @@ pub fn reorganize_module_members(
         ));
 
         if !procedure.is_static {
-            new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
+            if is_inline {
+                new_public_code_members.push(cpp::ModuleMember::Tagged("_inline".into(), Box::new(cpp::ModuleMember::Procedure(procedure))));
+            } else {
+                new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
+            }
         } else {
             procedure.is_static = false;
 
@@ -1158,7 +1162,7 @@ pub fn reorganize_module_members(
         procedure.is_inline = false;
 
         new_private_code_members.push(cpp::ModuleMember::Tagged(
-            if is_inline { "_extern _inline" } else { "_extern" }.into(),
+            "_extern".into(),
             Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
                 address: 0,
                 line: procedure.line,
@@ -1192,7 +1196,11 @@ pub fn reorganize_module_members(
         ));
 
         if !procedure.is_static {
-            new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
+            if is_inline {
+                new_private_code_members.push(cpp::ModuleMember::Tagged("_inline".into(), Box::new(cpp::ModuleMember::Procedure(procedure))));
+            } else {
+                new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
+            }
         } else {
             procedure.is_static = false;
 

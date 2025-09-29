@@ -1684,12 +1684,10 @@ fn process_module_symbol_data(
                     c.name == procedure_class_name && !c.is_declaration
                 }).cloned().collect::<Vec<_>>();
 
-                let mut found_class_and_method = None;
-
                 for class in full_classes.iter() {
-                    let borrowed_class = class.borrow();
+                    let mut found_method = None;
 
-                    for (i, member) in borrowed_class.members.iter().enumerate() {
+                    for (i, member) in class.borrow().members.iter().enumerate() {
                         let cpp::ClassMember::Method(class_method) = member else {
                             continue;
                         };
@@ -1727,69 +1725,69 @@ fn process_module_symbol_data(
                         }
 
                         if valid {
-                            found_class_and_method = Some((class.clone(), i));
+                            found_method = Some(i);
                             break;
                         }
                     }
-                }
-            
-                if let Some((class, class_method_index)) = found_class_and_method {
-                    //
-                    // Set up member method data
-                    //
 
-                    let class_type = class.borrow().name.clone();
+                    if let Some(class_method_index) = found_method {
+                        //
+                        // Set up member method data
+                        //
 
-                    let declaring_class = if let Some(found_base_class) = cpp::find_class_declaring_intro_method(class_table, type_sizes, machine_type, type_info, type_finder, class.clone(), &procedure_name)? {
-                        found_base_class.borrow().name.clone()
-                    } else {
-                        class_type.clone()
-                    };
-                    
-                    let this_pointer_type = member_function.this_pointer_type.as_ref().map(|t| {
-                        cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, *t, None, None, None, None, false).unwrap()
-                    });
+                        let class_type = class.borrow().name.clone();
 
-                    let this_adjustment = member_function.this_adjustment;
+                        let declaring_class = if let Some(found_base_class) = cpp::find_class_declaring_intro_method(class_table, type_sizes, machine_type, type_info, type_finder, class.clone(), &procedure_name)? {
+                            found_base_class.borrow().name.clone()
+                        } else {
+                            class_type.clone()
+                        };
+                        
+                        let this_pointer_type = member_function.this_pointer_type.as_ref().map(|t| {
+                            cpp::type_name(class_table, type_sizes, machine_type, type_info, type_finder, *t, None, None, None, None, false).unwrap()
+                        });
 
-                    member_method_data = Some(cpp::MemberMethodData {
-                        class_type,
-                        declaring_class,
-                        this_pointer_type,
-                        this_adjustment,
-                    });
+                        let this_adjustment = member_function.this_adjustment;
 
-                    //
-                    // Propagate method attributes into their declaration
-                    //
+                        member_method_data = Some(cpp::MemberMethodData {
+                            class_type,
+                            declaring_class,
+                            this_pointer_type,
+                            this_adjustment,
+                        });
 
-                    let mut borrowed_class = class.borrow_mut();
+                        //
+                        // Propagate method attributes into their declaration
+                        //
 
-                    let cpp::ClassMember::Method(class_method) = &mut borrowed_class.members[class_method_index] else {
-                        unreachable!()
-                    };
+                        let mut borrowed_class = class.borrow_mut();
 
-                    let mut parameters = parameters.clone();
-                    
-                    if !parameters.is_empty() && parameters[0] == "this" {
-                        parameters.remove(0);
+                        let cpp::ClassMember::Method(class_method) = &mut borrowed_class.members[class_method_index] else {
+                            unreachable!()
+                        };
+
+                        let mut parameters = parameters.clone();
+                        
+                        if !parameters.is_empty() && parameters[0] == "this" {
+                            parameters.remove(0);
+                        }
+
+                        class_method.is_inline = is_inline;
+                        class_method.declspecs = declspecs.clone();
+                        class_method.signature = cpp::type_name(
+                            class_table,
+                            type_sizes,
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            class_method.type_index,
+                            class_method.modifier.as_ref(),
+                            Some(class_method.name.clone()),
+                            Some(parameters.clone()),
+                            None,
+                            false
+                        )?;
                     }
-
-                    class_method.is_inline = is_inline;
-                    class_method.declspecs = declspecs.clone();
-                    class_method.signature = cpp::type_name(
-                        class_table,
-                        type_sizes,
-                        machine_type,
-                        type_info,
-                        type_finder,
-                        class_method.type_index,
-                        class_method.modifier.as_ref(),
-                        Some(class_method.name.clone()),
-                        Some(parameters.clone()),
-                        None,
-                        false
-                    )?;
                 }
             }
 
@@ -2449,7 +2447,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Data(data_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: format!("static {}", cpp::type_name(
+                    signature: cpp::type_name(
                         class_table,
                         type_sizes,
                         machine_type,
@@ -2461,7 +2459,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         None,
                         false
-                    )?),
+                    )?,
                     value: None,
                     comment: data_symbol.offset.to_rva(address_map).map(|rva| {
                         format!("0x{:X}", base_address.unwrap_or(0) + rva.0 as u64)
