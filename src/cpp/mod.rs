@@ -4,13 +4,12 @@ mod module;
 mod procedure;
 mod typedef;
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
-
 pub use self::{
     class::*, r#enum::*, module::*, procedure::*, typedef::*
 };
 
 use pdb2::{FallibleIterator, PrimitiveKind};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 pub fn argument_list<'p>(
     class_table: &mut Vec<Rc<RefCell<Class>>>,

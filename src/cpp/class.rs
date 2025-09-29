@@ -60,8 +60,8 @@ impl fmt::Display for Field {
             write!(f, " = 0")?;
         }
 
-        write!(f, ";")?;
-        write!(f, " // 0x{:X}", self.offset)?;
+        write!(f, "; // 0x{:X}", self.offset)?;
+
         Ok(())
     }
 }
@@ -82,7 +82,7 @@ impl fmt::Display for Method {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}{}{}{}{};",
+            "{}{}{}{}{};{}",
 
             match self.field_attributes {
                 Some(field_attributes) => {
@@ -90,6 +90,8 @@ impl fmt::Display for Method {
                         "virtual "
                     } else if field_attributes.is_static() {
                         "static "
+                    } else if field_attributes.is_friend() {
+                        "friend "
                     } else {
                         ""
                     }
@@ -114,13 +116,29 @@ impl fmt::Display for Method {
 
             match self.field_attributes {
                 Some(field_attributes) => if field_attributes.is_pure_virtual() || field_attributes.is_pure_intro() {
-                    " = 0"
+                    if field_attributes.sealed() {
+                        " final = 0"
+                    } else {
+                        " = 0"
+                    }
+                } else if field_attributes.is_virtual() {
+                    if field_attributes.sealed() {
+                        " override final"
+                    } else {
+                        " override"
+                    }
                 } else {
                     ""
                 },
 
                 None => ""
-            }
+            },
+
+            if self.field_attributes.as_ref().map(|a| a.is_pseudo() || a.is_compgenx()).unwrap_or(false) {
+                " /* compiler_generated() */"
+            } else {
+                ""
+            },
         )
     }
 }
@@ -882,7 +900,14 @@ impl fmt::Display for Class {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}{}",
+            "{}{}{}{}",
+            
+            if self.field_attributes.as_ref().map(|a| a.is_friend()).unwrap_or(false) {
+                "friend "
+            } else {
+                ""
+            },
+
             match self.kind {
                 Some(pdb2::ClassKind::Class) => "class",
                 Some(pdb2::ClassKind::Struct) => "struct",
@@ -892,10 +917,17 @@ impl fmt::Display for Class {
                     "union"
                 }
             },
+
             if self.name.is_empty() {
                 String::new()
             } else {
                 format!(" {}", self.name)
+            },
+
+            if self.field_attributes.as_ref().map(|a| a.sealed() || a.noinherit()).unwrap_or(false) {
+                " final"
+            } else {
+                ""
             }
         )?;
 
