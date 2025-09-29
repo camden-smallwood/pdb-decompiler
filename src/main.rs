@@ -2447,7 +2447,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
 
             pdb2::SymbolData::Data(data_symbol) => {
                 statements.push(cpp::Statement::Variable(cpp::Variable {
-                    signature: cpp::type_name(
+                    signature: format!("static {}", cpp::type_name(
                         class_table,
                         type_sizes,
                         machine_type,
@@ -2459,7 +2459,7 @@ fn parse_statement_symbols<F: Clone + FnMut(&pdb2::SymbolData) -> pdb2::Result<(
                         None,
                         None,
                         false
-                    )?,
+                    )?),
                     value: None,
                     comment: data_symbol.offset.to_rva(address_map).map(|rva| {
                         format!("0x{:X}", base_address.unwrap_or(0) + rva.0 as u64)
