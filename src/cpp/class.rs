@@ -34,7 +34,7 @@ pub struct Field {
     pub type_name: String,
     pub name: String,
     pub display: String,
-    pub offset: u64,
+    pub offset: Option<u64>,
     pub size: usize,
     pub bitfield_info: Option<(u8, u8)>,
     pub attributes: pdb2::FieldAttributes
@@ -59,8 +59,12 @@ impl fmt::Display for Field {
         if self.attributes.is_pure_virtual() || self.attributes.is_pure_intro() {
             write!(f, " = 0")?;
         }
+        
+        write!(f, ";")?;
 
-        write!(f, "; // 0x{:X}", self.offset)?;
+        if let Some(offset) = self.offset {
+            write!(f, " // 0x{:X}", offset)?;
+        }
 
         Ok(())
     }
@@ -168,12 +172,12 @@ fn find_unnamed_unions_in_struct(fields: &[&Field]) -> Vec<Range<usize>> {
     // Discover unions
     let mut curr_union_offset_range: Range<u64> = Range::default();
     for (i, field) in fields.iter().enumerate() {
-        if field.offset == std::u64::MAX {
+        let Some(field_offset) = field.offset else{
             continue;
-        }
+        };
         
         // Check if the field is located inside of the union we're processing
-        if curr_union_offset_range.contains(&field.offset) {
+        if curr_union_offset_range.contains(&field_offset) {
             // Third step of the "state machine", add new fields to the union.
             let union_info = unions_found_temp
                 .get_mut(&(curr_union_offset_range.start, 0))
@@ -182,62 +186,62 @@ fn find_unnamed_unions_in_struct(fields: &[&Field]) -> Vec<Range<usize>> {
             // Update the union's size
             union_info.1 = std::cmp::max(
                 union_info.1,
-                field.offset - curr_union_offset_range.start + field.size as u64,
+                field_offset - curr_union_offset_range.start + field.size as u64,
             );
             curr_union_offset_range.end = std::cmp::max(
                 curr_union_offset_range.end,
-                field.offset + field.size as u64,
+                field_offset + field.size as u64,
             );
             // (Re)visit previous fields to compute the union's size
             // as well as the current union's end
             for previous_field in &fields[union_info.0.clone()] {
-                if previous_field.offset == std::u64::MAX {
+                let Some(previous_field_offset) = previous_field.offset else {
                     continue;
-                }
+                };
 
                 // Update the union's size
-                if previous_field.offset > field.offset {
+                if previous_field_offset > field_offset {
                     union_info.1 = std::cmp::max(
                         union_info.1,
-                        previous_field.offset - field.offset + previous_field.size as u64,
+                        previous_field_offset - field_offset + previous_field.size as u64,
                     );
                 } else {
                     union_info.1 = std::cmp::max(union_info.1, previous_field.size as u64);
                 }
                 curr_union_offset_range.end = std::cmp::max(
                     curr_union_offset_range.end,
-                    previous_field.offset + previous_field.size as u64,
+                    previous_field_offset + previous_field.size as u64,
                 );
             }
         } else {
             match unions_found_temp
-                .get_mut(&(field.offset, field.bitfield_info.unwrap_or_default().0))
+                .get_mut(&(field_offset, field.bitfield_info.unwrap_or_default().0))
             {
                 Some(union_info) => {
                     // Second step of the "state machine", two fields share the
                     // same offset (taking bitfields into account). This becomes
                     // a union (the current one).
                     union_info.0.end = i + 1;
-                    curr_union_offset_range.start = field.offset;
+                    curr_union_offset_range.start = field_offset;
                     // (Re)visit previous fields to compute the union's size
                     // as well as the current union's end
                     for previous_field in &fields[union_info.0.clone()] {
-                        if previous_field.offset == std::u64::MAX {
+                        let Some(previous_field_offset) = previous_field.offset else {
                             continue;
-                        }
+                        };
 
                         // Update the union's size
-                        if previous_field.offset > field.offset {
+                        if previous_field_offset > field_offset {
                             union_info.1 = std::cmp::max(
                                 union_info.1,
-                                previous_field.offset - field.offset + previous_field.size as u64,
+                                previous_field_offset - field_offset + previous_field.size as u64,
                             );
                         } else {
                             union_info.1 = std::cmp::max(union_info.1, previous_field.size as u64);
                         }
                         curr_union_offset_range.end = std::cmp::max(
                             curr_union_offset_range.end,
-                            previous_field.offset + previous_field.size as u64,
+                            previous_field_offset + previous_field.size as u64,
                         );
                     }
                 }
@@ -245,7 +249,7 @@ fn find_unnamed_unions_in_struct(fields: &[&Field]) -> Vec<Range<usize>> {
                     // First step of the "state machine".
                     // Each field is a potential new union
                     unions_found_temp.insert(
-                        (field.offset, field.bitfield_info.unwrap_or_default().0),
+                        (field_offset, field.bitfield_info.unwrap_or_default().0),
                         (Range { start: i, end: i }, field.size as u64),
                     );
                 }
@@ -290,8 +294,11 @@ fn reconstruct_struct_fields(depth: u32, fields: &[&Field]) -> Vec<ClassMember> 
             let fields = reconstruct_union_fields(depth + 1, &fields[union_range]);
 
             let fields_size: usize = fields.iter().map(|m| {
-                let ClassMember::Field(f) = m else { return 0 };
-                if f.offset == std::u64::MAX {
+                let ClassMember::Field(f) = m else {
+                    return 0;
+                };
+
+                if f.offset.is_none() {
                     0
                 } else {
                     f.size
@@ -322,19 +329,23 @@ fn find_unnamed_structs_in_unions(fields: &[&Field]) -> Vec<Range<usize>> {
     let mut structs_found: Vec<Range<usize>> = vec![];
 
     let field_count = fields.len();
-    let union_offset = fields[0].offset;
-    let mut previous_field_offset = fields[0].offset;
+
+    let Some(union_offset) = fields.iter().find(|f| f.offset.is_some()).map(|f| f.offset).flatten() else {
+        return vec![];
+    };
+
+    let mut previous_field_offset = union_offset;
     let mut previous_field_bit_offset = fields[0].bitfield_info.unwrap_or_default().0;
 
     for (i, field) in fields.iter().enumerate() {
-        if field.offset == std::u64::MAX {
+        let Some(field_offset) = field.offset else {
             continue;
-        }
+        };
 
         // The field offset is lower than the offset of the previous field
         // -> "close" the struct
-        if previous_field_offset > field.offset
-            || (field.offset == previous_field_offset
+        if previous_field_offset > field_offset
+            || (field_offset == previous_field_offset
                 && previous_field_bit_offset > field.bitfield_info.unwrap_or_default().0)
         {
             if let Some(last_found_struct_range) = structs_found.pop() {
@@ -350,7 +361,7 @@ fn find_unnamed_structs_in_unions(fields: &[&Field]) -> Vec<Range<usize>> {
             if let Some(last_found_struct_range) = structs_found.pop() {
                 // Declare a new struct only if its length is greater than 1.
                 if i > last_found_struct_range.start
-                    && (field.offset != previous_field_offset
+                    && (field_offset != previous_field_offset
                         || field.bitfield_info.unwrap_or_default().0 != previous_field_bit_offset)
                 {
                     // "Merge" previous field with the struct
@@ -365,11 +376,11 @@ fn find_unnamed_structs_in_unions(fields: &[&Field]) -> Vec<Range<usize>> {
         }
 
         // Regular field, may be the beginning of a struct
-        if field.offset == union_offset && field.bitfield_info.unwrap_or_default().0 == 0 {
+        if field_offset == union_offset && field.bitfield_info.unwrap_or_default().0 == 0 {
             structs_found.push(Range { start: i, end: i });
         }
 
-        previous_field_offset = field.offset;
+        previous_field_offset = field_offset;
         previous_field_bit_offset = field.bitfield_info.unwrap_or_default().0;
     }
 
@@ -390,8 +401,11 @@ fn reconstruct_union_fields(depth: u32, fields: &[&Field]) -> Vec<ClassMember> {
             let fields = reconstruct_struct_fields(depth + 1, &fields[struct_range]);
 
             let fields_size: usize = fields.iter().map(|m| {
-                let ClassMember::Field(f) = m else { return 0 };
-                if f.offset == std::u64::MAX {
+                let ClassMember::Field(f) = m else {
+                    return 0;
+                };
+
+                if f.offset.is_none() {
                     0
                 } else {
                     f.size
@@ -463,9 +477,7 @@ impl Class {
                 let mut remove_indices = vec![];
 
                 for (i, member) in self.members.iter().enumerate() {
-                    if let ClassMember::Field(Field { offset, .. }) = member
-                        && *offset != std::u64::MAX
-                    {
+                    if let ClassMember::Field(Field { offset: Some(_), .. }) = member {
                         remove_indices.push(i);
                     }
                 }
@@ -539,7 +551,7 @@ impl Class {
                         None,
                         false
                     )?,
-                    offset: data.offset,
+                    offset: Some(data.offset),
                     size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
                     bitfield_info,
                     attributes: data.attributes
@@ -586,7 +598,7 @@ impl Class {
                             false
                         )?
                     ),
-                    offset: std::u64::MAX,
+                    offset: None,
                     size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
                     bitfield_info,
                     attributes: data.attributes
