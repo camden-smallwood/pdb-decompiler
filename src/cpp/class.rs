@@ -756,17 +756,46 @@ impl Class {
                 
                 match &nested_type_data {
                     data if matches!(data, pdb2::TypeData::Class(_) | pdb2::TypeData::Union(_)) => {
-                        let (size, properties, fields, derived_from) = match &data {
+                        let (name, size, properties, fields, derived_from) = match &data {
                             pdb2::TypeData::Class(class_data) => {
-                                (class_data.size, class_data.properties, class_data.fields, class_data.derived_from)
+                                (class_data.name, class_data.size, class_data.properties, class_data.fields, class_data.derived_from)
                             }
 
                             pdb2::TypeData::Union(union_data) => {
-                                (union_data.size, union_data.properties, Some(union_data.fields), None)
+                                (union_data.name, union_data.size, union_data.properties, Some(union_data.fields), None)
                             }
 
                             _ => unreachable!(),
                         };
+
+                        // If a nested class is a forward reference that doesn't have the nested type property,
+                        // and the name is different than the name in the nested type data, then it is a typedef.
+                        if properties.forward_reference() && !properties.is_nested_type() && nested_data.name != name {
+
+                            let type_name = self::type_name(
+                                class_table,
+                                type_sizes,
+                                machine_type,
+                                type_info,
+                                type_finder,
+                                nested_data.nested_type,
+                                None,
+                                Some(nested_data.name.to_string().to_string()),
+                                None,
+                                None,
+                                false
+                            )?;
+
+                            self.members.push(ClassMember::TypeDefinition(TypeDefinition {
+                                type_name,
+                                underlying_type: nested_data.nested_type,
+                                field_attributes: Some(nested_data.attributes),
+                                pointer_attributes: None,
+                                containing_class: None,
+                            }));
+
+                            return Ok(());
+                        }
 
                         let definition = Rc::new(RefCell::new(Class {
                             kind: match &data {
