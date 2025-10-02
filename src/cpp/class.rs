@@ -33,7 +33,7 @@ impl fmt::Display for ClassMember {
 pub struct Field {
     pub type_name: String,
     pub name: String,
-    pub display: String,
+    pub signature: String,
     pub offset: Option<u64>,
     pub size: usize,
     pub bitfield_info: Option<(u8, u8)>,
@@ -50,7 +50,7 @@ impl fmt::Display for Field {
             write!(f, "virtual ")?;
         }
 
-        write!(f, "{}", self.display)?;
+        write!(f, "{}", self.signature)?;
 
         if let Some((_, bitfield_length)) = self.bitfield_info.as_ref() {
             write!(f, " : {}", bitfield_length)?;
@@ -538,7 +538,7 @@ impl Class {
                         false
                     )?,
                     name: data.name.to_string().to_string(),
-                    display: type_name(
+                    signature: type_name(
                         class_table,
                         type_sizes,
                         machine_type,
@@ -582,7 +582,7 @@ impl Class {
                         )?
                     ),
                     name: data.name.to_string().to_string(),
-                    display: format!(
+                    signature: format!(
                         "static {}",
                         type_name(
                             class_table,

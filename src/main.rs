@@ -1022,7 +1022,7 @@ fn fix_nested_types(
                                 .trim_end_matches(";")
                                 .to_string();
                         
-                            field.display = format!("{} {}", field.type_name, field.name);
+                            field.signature = format!("{} {}", field.type_name, field.name);
 
                             if !remove_class_names.contains(&full_name) {
                                 remove_class_names.push(full_name);
@@ -1555,6 +1555,29 @@ fn process_module_symbol_data(
                 _ => false,
             }) {
                 return Ok(());
+            }
+
+            // Check if this is a thread_local variable defined in a class/struct/union.
+            let name = thread_storage_symbol.name.to_string().to_string();
+            if name.contains("::") {
+                let (class_name, variable_name) = name.rsplit_once("::").unwrap();
+                
+                let full_classes = class_table.iter().filter(|c| {
+                    let c = c.borrow();
+                    c.name == class_name && !c.is_declaration
+                }).collect::<Vec<_>>();
+
+                for class in full_classes {
+                    let mut class = class.borrow_mut();
+
+                    for member in class.members.iter_mut() {
+                        if let cpp::ClassMember::Field(cpp::Field { name, signature, .. }) = member
+                            && name == variable_name
+                        {
+                            *signature = format!("static thread_local {}", signature.trim_start_matches("static "));
+                        }
+                    }
+                }
             }
 
             module.members.push(cpp::ModuleMember::ThreadStorage {
