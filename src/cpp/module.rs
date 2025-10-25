@@ -629,7 +629,7 @@ impl Module {
         let pdb_path = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
         let args_string = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
 
-        self.path = crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path.as_str(), module_path.as_str(), false);
+        self.path = crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path.as_str(), module_path.as_str(), false);
         self.compiler_path = compiler_path.into();
         self.pdb_path = pdb_path.into();
 
@@ -743,7 +743,7 @@ impl Module {
                 None => break,
 
                 Some('@') => match parse_arg_string(chars_iter) {
-                    Some(s) => self.compiler_response_file = Some(crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
+                    Some(s) => self.compiler_response_file = Some(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
                     None => panic!("Unexpected character in build info arg: '@'; Data: \"{args_string}\""),
                 }
 
@@ -760,7 +760,7 @@ impl Module {
 
                 Some('A') => match chars_iter.next() {
                     Some('I') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.using_directive_dirs.push(crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), true)),
+                        Some(s) => self.using_directive_dirs.push(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), true)),
                         None => panic!("Missing directory for using directive"),
                     }
 
@@ -1085,7 +1085,7 @@ impl Module {
                     }
 
                     Some('p') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.pch_file_name = Some(crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
+                        Some(s) => self.pch_file_name = Some(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
                         None => self.pch_file_name = Some(PathBuf::new()),
                     }
 
@@ -1101,7 +1101,7 @@ impl Module {
                     }
 
                     Some('U') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.forced_using_directives.push(crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
+                        Some(s) => self.forced_using_directives.push(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
                         None => panic!("Unhandled characters in build info arg: 'FU'; Data: \"{args_string}\""),
                     }
 
@@ -1253,7 +1253,7 @@ impl Module {
                 }
 
                 Some('I') => match parse_arg_string(chars_iter) {
-                    Some(x) => self.additional_include_dirs.push(crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, x.as_str(), true)),
+                    Some(x) => self.additional_include_dirs.push(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, x.as_str(), true)),
                     None => panic!("Missing string from additional include directory arg"),
                 }
 
@@ -1580,7 +1580,7 @@ impl Module {
 
                 Some('Y') => match chars_iter.next() {
                     Some('c') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.pch_file_name = Some(crate::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
+                        Some(s) => self.pch_file_name = Some(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
                         None => self.pch_file_name = Some(PathBuf::new()),
                     }
 
