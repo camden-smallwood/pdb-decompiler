@@ -3,11 +3,11 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[inline(always)]
 pub fn collect_compound_enums(
-    modules: &mut HashMap<String, cpp::Module>,
+    modules: &mut HashMap<String, Rc<RefCell<cpp::Module>>>,
     compound_enums: &mut Vec<(cpp::Enum, cpp::TypeDefinition)>,
 ) {
     for module in modules.values().cloned().collect::<Vec<_>>() {
-        for member in module.members.clone() {
+        for member in module.borrow().members.clone() {
             if let cpp::ModuleMember::Enum(enum_definition) = member
                 && let Some(type_definition) = find_enum_or_flags_typedef(modules, &enum_definition)
             {
@@ -19,11 +19,11 @@ pub fn collect_compound_enums(
 
 #[inline(always)]
 fn find_enum_or_flags_typedef<'a>(
-    modules: &mut HashMap<String, cpp::Module>,
+    modules: &mut HashMap<String, Rc<RefCell<cpp::Module>>>,
     enum_data: &cpp::Enum,
 ) -> Option<cpp::TypeDefinition> {
     for module in modules.values() {
-        for member in module.members.iter() {
+        for member in module.borrow().members.iter() {
             let cpp::ModuleMember::TypeDefinition(type_definition) = member else {
                 continue;
             };
