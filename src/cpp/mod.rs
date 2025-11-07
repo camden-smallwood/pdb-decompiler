@@ -324,7 +324,7 @@ pub fn type_name<'p>(
                 name.push_str(field_name.as_str());
             }
 
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), parameter_names, None, false)?
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, None, false)?
         }
 
         pdb2::TypeData::Procedure(data) => {
