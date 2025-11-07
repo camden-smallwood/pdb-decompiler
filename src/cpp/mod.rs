@@ -60,7 +60,9 @@ pub fn argument_type_list<'p>(
         pdb2::TypeData::ArgumentList(data) => {
             let mut args = vec![];
 
-            if let Some(this_pointer_type) = this_pointer_type {
+            if !names.as_ref().map(|n| n.is_empty()).unwrap_or(true)
+                && let Some(this_pointer_type) = this_pointer_type
+            {
                 let this_name = names.as_mut().map(|names| names.first().cloned()).flatten().unwrap_or("this".to_string());
                 names.as_mut().map(|names| names.remove(0));
 
@@ -322,7 +324,7 @@ pub fn type_name<'p>(
                 name.push_str(field_name.as_str());
             }
 
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, None, false)?
+            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), parameter_names, None, false)?
         }
 
         pdb2::TypeData::Procedure(data) => {

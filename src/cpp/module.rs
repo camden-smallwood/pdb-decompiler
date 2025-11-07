@@ -387,7 +387,7 @@ impl Module {
                 };
 
                 if properties.forward_reference() {
-                    println!("WARNING: Skipping forward reference in toplevel: \"{}\" in \"{}\"", name, self.path.display());
+                    // println!("WARNING: Skipping forward reference in toplevel: \"{}\" in \"{}\"", name, self.path.display());
                     return Ok(());
                 }
 
@@ -452,7 +452,7 @@ impl Module {
 
             Ok(pdb2::TypeData::Enumeration(data)) => {
                 if data.properties.forward_reference() {
-                    println!("WARNING: Skipping forward reference in toplevel: \"{}\" in \"{}\"", data.name, self.path.display());
+                    // println!("WARNING: Skipping forward reference in toplevel: \"{}\" in \"{}\"", data.name, self.path.display());
                     return Ok(());
                 }
 

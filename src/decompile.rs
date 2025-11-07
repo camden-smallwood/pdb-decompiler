@@ -684,7 +684,8 @@ impl Decompiler {
                     }
                 }
 
-                pdb2::SymbolData::Constant(_) => {}
+                pdb2::SymbolData::Constant(_)
+                | pdb2::SymbolData::AnnotationReference(_) => {}
 
                 _ => {
                     println!("WARNING: found unused global symbol {symbol_data:?}");
@@ -1159,25 +1160,6 @@ impl Decompiler {
                     procedure_symbol,
                 )?;
                 
-                let is_static = !procedure_symbol.global;
-                let is_inline = frame_procedure.as_ref().map(|x| x.flags.inline_spec).unwrap_or(false);
-
-                let mut declspecs = vec![];
-
-                if let Some(frame_procedure) = frame_procedure.as_ref() {
-                    if frame_procedure.flags.naked {
-                        declspecs.push("naked".into());
-                    }
-
-                    if frame_procedure.flags.gs_check {
-                        declspecs.push("struct_gs_check".into());
-                    }
-
-                    if frame_procedure.flags.safe_buffers {
-                        declspecs.push("safebuffers".into());
-                    }
-                }
-
                 //
                 // NOTE:
                 //
@@ -1205,6 +1187,157 @@ impl Decompiler {
                 };
 
                 let procedure_type = context.type_finder.find(procedure_symbol.type_index)?.parse()?;
+
+                let (return_type, arguments) = match procedure_type {
+                    pdb2::TypeData::Procedure(data) => (
+                        data.return_type,
+                        cpp::argument_type_list(
+                            &context.type_finder,
+                            None,
+                            data.argument_list, 
+                            Some(parameters.clone()),
+                        ).unwrap()
+                    ),
+
+                    pdb2::TypeData::MemberFunction(data) => (
+                        Some(data.return_type),
+                        cpp::argument_type_list(
+                            &context.type_finder,
+                            data.this_pointer_type,
+                            data.argument_list, 
+                            Some(parameters.clone()),
+                        ).unwrap()
+                    ),
+
+                    pdb2::TypeData::Primitive(_)
+                    | pdb2::TypeData::FieldList(_)
+                    | pdb2::TypeData::Pointer(_)
+                    | pdb2::TypeData::ArgumentList(_)
+                    | pdb2::TypeData::Class(_)
+                    | pdb2::TypeData::Union(_)
+                    | pdb2::TypeData::Enumeration(_)
+                    | pdb2::TypeData::MethodList(_)
+                    | pdb2::TypeData::Array(_)
+                    | pdb2::TypeData::Bitfield(_)
+                    | pdb2::TypeData::VirtualTableShape(_) => {
+                        println!("WARNING: Skipping unexpected procedure type: {procedure_type:#?}");
+                        return Ok(());
+                    }
+
+                    pdb2::TypeData::Modifier(modifier) => match context.type_finder.find(modifier.underlying_type)?.parse()? {
+                        pdb2::TypeData::Procedure(data) => (
+                            data.return_type,
+                            cpp::argument_type_list(
+                                &context.type_finder,
+                                None,
+                                data.argument_list, 
+                                Some(parameters.clone()),
+                            ).unwrap()
+                        ),
+
+                        pdb2::TypeData::MemberFunction(data) => (
+                            Some(data.return_type),
+                            cpp::argument_type_list(
+                                &context.type_finder,
+                                data.this_pointer_type,
+                                data.argument_list, 
+                                Some(parameters.clone()),
+                            ).unwrap()
+                        ),
+
+                        pdb2::TypeData::Primitive(_)
+                        | pdb2::TypeData::FieldList(_)
+                        | pdb2::TypeData::Pointer(_)
+                        | pdb2::TypeData::ArgumentList(_)
+                        | pdb2::TypeData::Class(_)
+                        | pdb2::TypeData::Union(_)
+                        | pdb2::TypeData::Enumeration(_)
+                        | pdb2::TypeData::MethodList(_)
+                        | pdb2::TypeData::Array(_)
+                        | pdb2::TypeData::Bitfield(_)
+                        | pdb2::TypeData::VirtualTableShape(_) => {
+                            println!("WARNING: Skipping unexpected modifier procedure type: {procedure_type:#?}");
+                            return Ok(());
+                        }
+
+                        data => todo!("{data:#?}")
+                    }
+
+                    data => todo!("{data:#?}")
+                };
+
+                let mut file_name_ref = None;
+                let mut line_info = None;
+
+                for (name_ref, offsets) in line_offsets.iter() {
+                    if let Some(line) = offsets.get(&procedure_symbol.offset) {
+                        file_name_ref = Some(*name_ref);
+                        line_info = Some(line.clone());
+                        break;
+                    }
+                }
+
+                let rva = match procedure_symbol.offset.to_rva(context.address_map) {
+                    Some(rva) => rva,
+                    None => {
+                        // println!("WARNING: no RVA found for procedure symbol: {procedure_symbol:?}");
+                        return Ok(());
+                    }
+                };
+
+                let address = self.options.base_address.unwrap_or(0) + rva.0 as u64;
+
+                let module = if let Some(file_name_ref) = file_name_ref {
+                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref.to_string_lossy(context.string_table.unwrap())?.to_string()));
+                    let module_key = path.to_string_lossy().to_lowercase().to_string();
+                    self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path)))).clone()
+                } else {
+                    module
+                };
+
+                if module.borrow().members.iter().any(|member| match member {
+                    cpp::ModuleMember::Procedure(cpp::Procedure { address: a, .. }) if *a == address => true,
+                    _ => false,
+                }) {
+                    return Ok(());
+                }
+
+                let procedure_signature = cpp::type_name(
+                    &mut self.class_table,
+                    &mut self.type_sizes,
+                    context.machine_type,
+                    &context.type_info,
+                    &context.type_finder,
+                    procedure_symbol.type_index,
+                    None,
+                    Some(procedure_symbol.name.to_string().to_string()),
+                    Some(parameters.clone()),
+                    None,
+                    false
+                )?;
+
+                if procedure_signature.starts_with("...") || procedure_signature.contains('$') || procedure_signature.contains('`') {
+                    return Ok(());
+                }
+
+                let is_static = !procedure_symbol.global;
+                let is_inline = frame_procedure.as_ref().map(|x| x.flags.inline_spec).unwrap_or(false);
+
+                let mut declspecs = vec![];
+
+                if let Some(frame_procedure) = frame_procedure.as_ref() {
+                    if frame_procedure.flags.naked {
+                        declspecs.push("naked".into());
+                    }
+
+                    if frame_procedure.flags.gs_check {
+                        declspecs.push("struct_gs_check".into());
+                    }
+
+                    if frame_procedure.flags.safe_buffers {
+                        declspecs.push("safebuffers".into());
+                    }
+                }
 
                 let mut member_method_data = None;
                 
@@ -1404,35 +1537,20 @@ impl Decompiler {
                     }
                 }
 
-                let mut file_name_ref = None;
-                let mut line_info = None;
-
-                for (name_ref, offsets) in line_offsets.iter() {
-                    if let Some(line) = offsets.get(&procedure_symbol.offset) {
-                        file_name_ref = Some(*name_ref);
-                        line_info = Some(line.clone());
-                        break;
-                    }
-                }
-
-                let module = if let Some(file_name_ref) = file_name_ref {
-                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref.to_string_lossy(context.string_table.unwrap())?.to_string()));
-                    let module_key = path.to_string_lossy().to_lowercase().to_string();
-                    self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path)))).clone()
-                } else {
-                    module
-                };
-
-                let rva = match procedure_symbol.offset.to_rva(context.address_map) {
-                    Some(rva) => rva,
-                    None => {
-                        // println!("WARNING: no RVA found for procedure symbol: {procedure_symbol:?}");
-                        return Ok(());
-                    }
-                };
-
-                let address = self.options.base_address.unwrap_or(0) + rva.0 as u64;
-
+                let ida_procedure_signature = cpp::type_name(
+                    &mut self.class_table,
+                    &mut self.type_sizes,
+                    context.machine_type,
+                    &context.type_info,
+                    &context.type_finder,
+                    procedure_symbol.type_index,
+                    None,
+                    Some(procedure_symbol.name.to_string().to_string()),
+                    Some(parameters.clone()),
+                    member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
+                    true
+                )?;
+                
                 if let Some(pseudocode_value) = self.options.pseudocode_json.as_ref() {
                     let serde_json::Value::Object(pseudocode_map) = pseudocode_value else {
                         panic!("Invalid pseudocode map");
@@ -1502,65 +1620,6 @@ impl Decompiler {
                     }
                 }
 
-                if module.borrow().members.iter().any(|member| match member {
-                    cpp::ModuleMember::Procedure(cpp::Procedure { address: a, .. }) if *a == address => true,
-                    _ => false,
-                }) {
-                    return Ok(());
-                }
-
-                let procedure_signature = cpp::type_name(
-                    &mut self.class_table,
-                    &mut self.type_sizes,
-                    context.machine_type,
-                    &context.type_info,
-                    &context.type_finder,
-                    procedure_symbol.type_index,
-                    None,
-                    Some(procedure_symbol.name.to_string().to_string()),
-                    Some(parameters.clone()),
-                    None,
-                    false
-                )?;
-
-                if procedure_signature.starts_with("...") || procedure_signature.contains('$') || procedure_signature.contains('`') {
-                    return Ok(());
-                }
-
-                let ida_procedure_signature = cpp::type_name(
-                    &mut self.class_table,
-                    &mut self.type_sizes,
-                    context.machine_type,
-                    &context.type_info,
-                    &context.type_finder,
-                    procedure_symbol.type_index,
-                    None,
-                    Some(procedure_symbol.name.to_string().to_string()),
-                    Some(parameters.clone()),
-                    member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                    true
-                )?;
-                
-                let type_item = context.type_finder.find(procedure_symbol.type_index)?;
-                let type_data = type_item.parse()?;
-                
-                let (this_pointer_type_index, argument_list_type_index) = match type_data {
-                    pdb2::TypeData::Procedure(data) => {
-                        (None, data.argument_list)
-                    }
-                    pdb2::TypeData::MemberFunction(data) => {
-                        (data.this_pointer_type, data.argument_list)
-                    }
-                    data => todo!("{data:#?}")
-                };
-
-                let arguments = cpp::argument_type_list(
-                    &context.type_finder,
-                    this_pointer_type_index,
-                    argument_list_type_index, 
-                    Some(parameters),
-                ).unwrap();
-
                 let procedure = cpp::Procedure {
                     address,
                     line: line_info.map(|x| x.line_start),
@@ -1573,15 +1632,7 @@ impl Decompiler {
                     signature: procedure_signature,
                     ida_signature: Some(ida_procedure_signature),
                     body,
-                    return_type:match context.type_finder.find(procedure_symbol.type_index)?.parse()? {
-                        pdb2::TypeData::Procedure(data) => {
-                            data.return_type
-                        }
-                        pdb2::TypeData::MemberFunction(data) => {
-                            Some(data.return_type)
-                        }
-                        data => todo!("{data:#?}")
-                    },
+                    return_type,
                     arguments
                 };
 
@@ -1593,11 +1644,10 @@ impl Decompiler {
                     writeln!(context.script_file, "decompile_to_json(0x{address:X})")?;
                 }
 
-                if self.options.export_function_types {
-                    if let Some(ida_signature) = procedure.ida_signature.clone()
-                    {
-                        writeln!(context.script_file, "set_function_type(0x{:X}, \"{}\")", address, ida_signature)?;
-                    }
+                if self.options.export_function_types
+                    && let Some(ida_signature) = &procedure.ida_signature
+                {
+                    writeln!(context.script_file, "set_function_type(0x{:X}, \"{}\")", address, ida_signature)?;
                 }
 
                 module.borrow_mut().members.push(cpp::ModuleMember::Procedure(procedure));
@@ -1768,7 +1818,45 @@ impl Decompiler {
                 data => todo!("{data:?}"),
             }
 
-            pdb2::TypeData::Primitive(_) => 0,
+            pdb2::TypeData::Primitive(_)
+            | pdb2::TypeData::FieldList(_)
+            | pdb2::TypeData::Pointer(_)
+            | pdb2::TypeData::ArgumentList(_)
+            | pdb2::TypeData::Class(_)
+            | pdb2::TypeData::Union(_)
+            | pdb2::TypeData::Enumeration(_)
+            | pdb2::TypeData::MethodList(_)
+            | pdb2::TypeData::Array(_)
+            | pdb2::TypeData::Bitfield(_)
+            | pdb2::TypeData::VirtualTableShape(_) => 0,
+
+            pdb2::TypeData::Modifier(modifier) => match context.type_finder.find(modifier.underlying_type)?.parse()? {
+                pdb2::TypeData::Procedure(procedure_type) => match context.type_finder.find(procedure_type.argument_list)?.parse()? {
+                    pdb2::TypeData::ArgumentList(data) => data.arguments.len(),
+
+                    data => todo!("{data:?}"),
+                }
+
+                pdb2::TypeData::MemberFunction(member_function_type) => match context.type_finder.find(member_function_type.argument_list)?.parse()? {
+                    pdb2::TypeData::ArgumentList(data) => data.arguments.len() + if member_function_type.this_pointer_type.is_some() { 1 } else { 0 },
+
+                    data => todo!("{data:?}"),
+                }
+
+                pdb2::TypeData::Primitive(_)
+                | pdb2::TypeData::FieldList(_)
+                | pdb2::TypeData::Pointer(_)
+                | pdb2::TypeData::ArgumentList(_)
+                | pdb2::TypeData::Class(_)
+                | pdb2::TypeData::Union(_)
+                | pdb2::TypeData::Enumeration(_)
+                | pdb2::TypeData::MethodList(_)
+                | pdb2::TypeData::Array(_)
+                | pdb2::TypeData::Bitfield(_)
+                | pdb2::TypeData::VirtualTableShape(_) => 0,
+
+                data => todo!("{data:?}"),
+            }
 
             data => todo!("{data:?}"),
         };
@@ -2115,7 +2203,8 @@ impl Decompiler {
                 | pdb2::SymbolData::FrameCookie(_)
                 | pdb2::SymbolData::FileStatic(_)
                 | pdb2::SymbolData::Inlinees(_)
-                | pdb2::SymbolData::HeapAllocationSite(_) => {
+                | pdb2::SymbolData::HeapAllocationSite(_)
+                | pdb2::SymbolData::Annotation(_) => {
                     // println!("WARNING: Unused symbol data in parse_statement_symbols: {symbol_data:#?}");
                 }
                 
@@ -2165,7 +2254,8 @@ impl Decompiler {
                 | pdb2::SymbolData::Callers(_)
                 | pdb2::SymbolData::FileStatic(_)
                 | pdb2::SymbolData::Inlinees(_)
-                | pdb2::SymbolData::HeapAllocationSite(_) => {
+                | pdb2::SymbolData::HeapAllocationSite(_)
+                | pdb2::SymbolData::Annotation(_) => {
                     // println!("WARNING: Unused symbol data in parse_thunk_symbols: {symbol_data:#?}");
                 }
 
@@ -2213,7 +2303,8 @@ impl Decompiler {
                 | pdb2::SymbolData::Callers(_)
                 | pdb2::SymbolData::FileStatic(_)
                 | pdb2::SymbolData::Inlinees(_)
-                | pdb2::SymbolData::HeapAllocationSite(_) => {
+                | pdb2::SymbolData::HeapAllocationSite(_)
+                | pdb2::SymbolData::Annotation(_) => {
                     // println!("WARNING: Unused symbol data in parse_separated_code_symbols: {symbol_data:#?}");
                 }
 
