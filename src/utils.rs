@@ -53,14 +53,14 @@ impl PathTree {
 
     pub fn add_path<P: AsRef<Path>>(&mut self, path: P, is_directory: bool) {
         let path_buffer = PathBuf::from(path.as_ref());
+        let components = path.as_ref().components().collect::<Vec<_>>();
         
-        if self.added.contains(&path_buffer) {
+        if components.is_empty() || self.added.contains(&path_buffer) {
             return;
         }
 
         self.added.insert(path_buffer);
 
-        let components = path.as_ref().components().collect::<Vec<_>>();
         let mut current_node: Option<Rc<RefCell<PathNode>>> = None;
 
         if components.len() > 1 {
@@ -273,12 +273,15 @@ impl PathTree {
 
     pub fn resolve_path<P: AsRef<Path>>(&mut self, path: P, is_directory: bool) -> Option<PathBuf> {
         let path_buffer = PathBuf::from(path.as_ref());
+        let components = path.as_ref().components().collect::<Vec<_>>();
+
+        if components.is_empty() {
+            return Some(path_buffer);
+        }
 
         if let Some(result) = self.resolved.get(&path_buffer) {
             return Some(result.clone());
         }
-
-        let components = path.as_ref().components().collect::<Vec<_>>();
 
         let mut result = PathBuf::new();
         result.push(Component::RootDir);

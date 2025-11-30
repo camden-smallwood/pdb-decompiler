@@ -351,13 +351,67 @@ impl Decompiler {
             let module = self.modules.get(module_key).unwrap().borrow();
 
             path_tree.add_path(&module.path, false);
-
-            for include_dir in module.additional_include_dirs.iter() {
-                path_tree.add_path(include_dir, true);
-            }
+            path_tree.add_path(&module.compiler_path, false);
+            path_tree.add_path(&module.pdb_path, false);
 
             for (header_path, _) in module.headers.iter() {
-                path_tree.add_path(header_path, false);
+                path_tree.add_path(&header_path, false);
+            }
+
+            if let Some(compiler_response_file) = module.compiler_response_file.as_ref() {
+                path_tree.add_path(&compiler_response_file, false);
+            }
+
+            if let Some(pch_file_name) = module.pch_file_name.as_ref() {
+                path_tree.add_path(&pch_file_name, false);
+            }
+
+            if let Some(precompiled_header_file_name) = module.precompiled_header_file_name.as_ref() {
+                path_tree.add_path(&precompiled_header_file_name, false);
+            }
+
+            if let Some(fid_file) = module.fid_file.as_ref() {
+                path_tree.add_path(&fid_file, false);
+            }
+
+            if let Some(experimental_logs_file) = module.experimental_logs_file.as_ref() {
+                path_tree.add_path(&experimental_logs_file, false);
+            }
+
+            if let Some(object_file) = module.object_file.as_ref() {
+                path_tree.add_path(&object_file, false);
+            }
+
+            if let Some(program_database_file) = module.program_database_file.as_ref() {
+                path_tree.add_path(&program_database_file, false);
+            }
+
+            if let Some(doc_file) = module.doc_file.as_ref() {
+                path_tree.add_path(&doc_file, false);
+            }
+
+            if let Some(listing_file) = module.listing_file.as_ref() {
+                path_tree.add_path(&listing_file, false);
+            }
+
+            for additional_include_dir in module.additional_include_dirs.iter() {
+                path_tree.add_path(&additional_include_dir, true);
+            }
+
+            for using_directive_dir in module.using_directive_dirs.iter() {
+                path_tree.add_path(&using_directive_dir, true);
+            }
+
+            for forced_using_directive in module.forced_using_directives.iter() {
+                path_tree.add_path(&forced_using_directive, false);
+            }
+
+            for preprocess_include_file in module.preprocess_include_files.iter() {
+                path_tree.add_path(&preprocess_include_file, false);
+            }
+
+            for trim_file in module.trim_files.iter() {
+                path_tree.add_path(&trim_file, false);
             }
         }
 
@@ -365,13 +419,67 @@ impl Decompiler {
             let mut module = self.modules.get(module_key).unwrap().borrow_mut();
 
             module.path = path_tree.resolve_path(&module.path, false).unwrap();
-
-            for include_dir in module.additional_include_dirs.iter_mut() {
-                *include_dir = path_tree.resolve_path(&include_dir, true).unwrap();
-            }
+            module.compiler_path = path_tree.resolve_path(&module.compiler_path, false).unwrap();
+            module.pdb_path = path_tree.resolve_path(&module.pdb_path, false).unwrap();
 
             for (header_path, _) in module.headers.iter_mut() {
                 *header_path = path_tree.resolve_path(&header_path, false).unwrap();
+            }
+
+            if let Some(compiler_response_file) = module.compiler_response_file.as_mut() {
+                *compiler_response_file = path_tree.resolve_path(&compiler_response_file, false).unwrap();
+            }
+
+            if let Some(pch_file_name) = module.pch_file_name.as_mut() {
+                *pch_file_name = path_tree.resolve_path(&pch_file_name, false).unwrap();
+            }
+
+            if let Some(precompiled_header_file_name) = module.precompiled_header_file_name.as_mut() {
+                *precompiled_header_file_name = path_tree.resolve_path(&precompiled_header_file_name, false).unwrap();
+            }
+
+            if let Some(fid_file) = module.fid_file.as_mut() {
+                *fid_file = path_tree.resolve_path(&fid_file, false).unwrap();
+            }
+
+            if let Some(experimental_logs_file) = module.experimental_logs_file.as_mut() {
+                *experimental_logs_file = path_tree.resolve_path(&experimental_logs_file, false).unwrap();
+            }
+
+            if let Some(object_file) = module.object_file.as_mut() {
+                *object_file = path_tree.resolve_path(&object_file, false).unwrap();
+            }
+
+            if let Some(program_database_file) = module.program_database_file.as_mut() {
+                *program_database_file = path_tree.resolve_path(&program_database_file, false).unwrap();
+            }
+
+            if let Some(doc_file) = module.doc_file.as_mut() {
+                *doc_file = path_tree.resolve_path(&doc_file, false).unwrap();
+            }
+
+            if let Some(listing_file) = module.listing_file.as_mut() {
+                *listing_file = path_tree.resolve_path(&listing_file, false).unwrap();
+            }
+
+            for additional_include_dir in module.additional_include_dirs.iter_mut() {
+                *additional_include_dir = path_tree.resolve_path(&additional_include_dir, true).unwrap();
+            }
+
+            for using_directive_dir in module.using_directive_dirs.iter_mut() {
+                *using_directive_dir = path_tree.resolve_path(&using_directive_dir, true).unwrap();
+            }
+
+            for forced_using_directive in module.forced_using_directives.iter_mut() {
+                *forced_using_directive = path_tree.resolve_path(&forced_using_directive, false).unwrap();
+            }
+
+            for preprocess_include_file in module.preprocess_include_files.iter_mut() {
+                *preprocess_include_file = path_tree.resolve_path(&preprocess_include_file, false).unwrap();
+            }
+
+            for trim_file in module.trim_files.iter_mut() {
+                *trim_file = path_tree.resolve_path(&trim_file, false).unwrap();
             }
         }
 

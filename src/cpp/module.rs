@@ -245,7 +245,7 @@ pub struct Module {
     pub compiler_response_file: Option<PathBuf>,
     pub pack_structure_members: Option<String>,
     pub pch_file_name: Option<PathBuf>,
-    pub precompiled_header_file_name: Option<String>,
+    pub precompiled_header_file_name: Option<PathBuf>,
     pub output_warning_level: Option<usize>,
     pub minimum_cpu_architecture: Option<String>,
     pub optimize_for_cpu_architecture: Option<String>,
@@ -260,31 +260,31 @@ pub struct Module {
     pub external_headers: Vec<String>,
     pub external_headers_var: Option<String>,
     pub external_headers_warning_level: Option<usize>,
-    pub fid_file: Option<String>,
+    pub fid_file: Option<PathBuf>,
     pub inline_function_expansion: Option<usize>,
     pub code_generation_threads: Option<usize>,
     pub build_process_count: Option<usize>,
-    pub experimental_logs_file: Option<String>,
+    pub experimental_logs_file: Option<PathBuf>,
     pub func_cache: Option<usize>,
     pub loop_parallelization_report_level: Option<usize>,
     pub vec_report_level: Option<usize>,
     pub precompiled_header_memory: Option<usize>,
-    pub object_file: Option<String>,
-    pub program_database_file: Option<String>,
+    pub object_file: Option<PathBuf>,
+    pub program_database_file: Option<PathBuf>,
     pub stack_probe_threshold: Option<usize>,
     pub source_charset: Option<String>,
     pub execution_charset: Option<String>,
     pub constexpr_backtrace: Option<usize>,
     pub constexpr_depth: Option<usize>,
     pub constexpr_steps: Option<usize>,
-    pub doc_file: Option<String>,
+    pub doc_file: Option<PathBuf>,
     pub listing_file: Option<PathBuf>,
 
     pub additional_include_dirs: Vec<PathBuf>,
     pub using_directive_dirs: Vec<PathBuf>,
     pub forced_using_directives: Vec<PathBuf>,
     pub preprocessor_definitions: Vec<(String, Option<String>)>,
-    pub preprocess_include_files: Vec<String>,
+    pub preprocess_include_files: Vec<PathBuf>,
     pub disabled_warnings: Vec<String>,
     pub logged_warnings: Vec<String>,
     pub warnings_as_errors: Vec<String>,
@@ -296,7 +296,7 @@ pub struct Module {
     pub pch_references: Vec<String>,
     pub d1_args: Vec<String>,
     pub d2_args: Vec<String>,
-    pub trim_files: Vec<String>,
+    pub trim_files: Vec<PathBuf>,
     pub diagnostics: Vec<String>,
 }
 
@@ -627,8 +627,8 @@ impl Module {
         let args_string = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
 
         self.path = crate::utils::canonicalize_path(root_path.as_str(), module_path.as_str(), false);
-        self.compiler_path = compiler_path.into();
-        self.pdb_path = pdb_path.into();
+        self.compiler_path = crate::utils::canonicalize_path(root_path.as_str(), compiler_path.as_str(), false);
+        self.pdb_path = crate::utils::canonicalize_path(root_path.as_str(), pdb_path.as_str(), false);
 
         // println!("Module arguments: {args_string}");
 
@@ -842,7 +842,7 @@ impl Module {
 
                     Some('o') => match chars_iter.next() {
                         Some('c') => match parse_arg_string(chars_iter) {
-                            Some(s) => self.doc_file = Some(s),
+                            Some(s) => self.doc_file = Some(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                             None => self.set_secondary_flag(ModuleSecondaryFlags::GenerateXmlDocumentation, true),
                         }
                         Some(c) => panic!("Unhandled characters in build info arg: 'do{c}...'; Data: \"{args_string}\""),
@@ -891,7 +891,7 @@ impl Module {
 
                         "perimental" => match parse_arg_string(chars_iter) {
                             Some(s) if s == "log" => match parse_arg_string(chars_iter) {
-                                Some(s) => self.experimental_logs_file = Some(s),
+                                Some(s) => self.experimental_logs_file = Some(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                                 None => panic!("Build info arg '/experimental:log' missing file path"),
                             }
 
@@ -1055,7 +1055,7 @@ impl Module {
                     }
 
                     Some('d') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.program_database_file = Some(s),
+                        Some(s) => self.program_database_file = Some(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                         None => panic!("Unhandled characters in build info arg: 'Fd'; Data: \"{args_string}\""),
                     }
 
@@ -1070,13 +1070,13 @@ impl Module {
                         }
 
                         match parse_arg_string(chars_iter) {
-                            Some(s) => self.preprocess_include_files.push(s),
+                            Some(s) => self.preprocess_include_files.push(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                             None => panic!("Missing string from preprocess include file arg"),
                         }
                     }
 
                     Some('o') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.object_file = Some(s),
+                        Some(s) => self.object_file = Some(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                         None => panic!("Unhandled characters in build info arg: 'Fo'; Data: \"{args_string}\""),
                     }
 
@@ -1588,7 +1588,7 @@ impl Module {
                     }
 
                     Some('u') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.precompiled_header_file_name = Some(s),
+                        Some(s) => self.precompiled_header_file_name = Some(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                         None => panic!("Unhandled characters in build info arg: 'Yu'; Data: \"{args_string}\""),
                     }
 
