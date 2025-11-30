@@ -10,7 +10,7 @@ use std::{
 };
 
 pub static SOURCE_FILE_EXTS: &[&str] = &[
-    "c", "cc", "cpp", "cxx", "pch", "asm", "fasm", "masm", "res", "exp",
+    "c", "cc", "cpp", "cxx", "asm", "fasm", "masm", "res", "exp",
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -386,11 +386,6 @@ impl Module {
                     _ => unreachable!(),
                 };
 
-                if properties.forward_reference() {
-                    // println!("WARNING: Skipping forward reference in toplevel: \"{}\" in \"{}\"", name, self.path.display());
-                    return Ok(());
-                }
-
                 let definition = Rc::new(RefCell::new(cpp::Class {
                     kind: match &data {
                         pdb2::TypeData::Class(class_data) => Some(class_data.kind),
@@ -409,24 +404,26 @@ impl Module {
                     field_attributes: None,
                 }));
 
-                if !class_table.iter().any(|c| c.borrow().index == type_index) {
-                    class_table.push(definition.clone());
-                }
+                if !properties.forward_reference() {
+                    if !class_table.iter().any(|c| c.borrow().index == type_index) {
+                        class_table.push(definition.clone());
+                    }
 
-                if let Some(derived_from) = derived_from
-                    && let Err(_) = definition.borrow_mut().add_derived_from(type_finder, derived_from)
-                {
-                    // println!("WARNING: failed to add class derived from: {e}");
-                }
+                    if let Some(derived_from) = derived_from
+                        && let Err(_) = definition.borrow_mut().add_derived_from(type_finder, derived_from)
+                    {
+                        // println!("WARNING: failed to add class derived from: {e}");
+                    }
 
-                let Some(fields) = fields else {
-                    panic!("Failed to get fields of \"{}\"", name);
-                };
-                
-                {
-                    let mut temp = definition.borrow().clone();
-                    temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
-                    *definition.borrow_mut() = temp;
+                    let Some(fields) = fields else {
+                        panic!("Failed to get fields of \"{}\"", name);
+                    };
+                    
+                    {
+                        let mut temp = definition.borrow().clone();
+                        temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
+                        *definition.borrow_mut() = temp;
+                    }
                 }
 
                 let mut exists = false;
@@ -435,6 +432,7 @@ impl Module {
                     if let ModuleMember::Class(other_definition) = member
                         && definition.borrow().kind == other_definition.borrow().kind
                         && definition.borrow().is_union == other_definition.borrow().is_union
+                        && definition.borrow().is_declaration == other_definition.borrow().is_declaration
                         && definition.borrow().name == other_definition.borrow().name
                         && definition.borrow().size == other_definition.borrow().size
                         && definition.borrow().base_classes.eq(&other_definition.borrow().base_classes)
@@ -529,7 +527,6 @@ impl Module {
     #[inline(always)]
     pub fn add_build_info(
         &mut self,
-        out_path: &std::path::Path,
         id_finder: &pdb2::IdFinder,
         build_info: pdb2::BuildInfoId,
     ) -> pdb2::Result<()> {
@@ -629,14 +626,14 @@ impl Module {
         let pdb_path = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
         let args_string = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
 
-        self.path = crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path.as_str(), module_path.as_str(), false);
+        self.path = crate::utils::canonicalize_path(root_path.as_str(), module_path.as_str(), false);
         self.compiler_path = compiler_path.into();
         self.pdb_path = pdb_path.into();
 
         // println!("Module arguments: {args_string}");
 
         let mut chars_iter = args_string.chars().peekable();
-        self.parse_arguments(out_path, root_path.as_str(), args_string.as_str(), &mut chars_iter);
+        self.parse_arguments(root_path.as_str(), args_string.as_str(), &mut chars_iter);
 
         // Sort additional include directories from longest to shortest
         self.additional_include_dirs.sort_by_key(|a| a.to_string_lossy().len());
@@ -648,7 +645,6 @@ impl Module {
     #[inline(always)]
     fn parse_arguments(
         &mut self,
-        out_path: &std::path::Path,
         root_path: &str,
         args_string: &str,
         chars_iter: &mut Peekable<Chars>,
@@ -743,7 +739,7 @@ impl Module {
                 None => break,
 
                 Some('@') => match parse_arg_string(chars_iter) {
-                    Some(s) => self.compiler_response_file = Some(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
+                    Some(s) => self.compiler_response_file = Some(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                     None => panic!("Unexpected character in build info arg: '@'; Data: \"{args_string}\""),
                 }
 
@@ -760,7 +756,7 @@ impl Module {
 
                 Some('A') => match chars_iter.next() {
                     Some('I') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.using_directive_dirs.push(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), true)),
+                        Some(s) => self.using_directive_dirs.push(crate::utils::canonicalize_path(root_path, s.as_str(), true)),
                         None => panic!("Missing directory for using directive"),
                     }
 
@@ -1085,7 +1081,7 @@ impl Module {
                     }
 
                     Some('p') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.pch_file_name = Some(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
+                        Some(s) => self.pch_file_name = Some(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                         None => self.pch_file_name = Some(PathBuf::new()),
                     }
 
@@ -1101,7 +1097,7 @@ impl Module {
                     }
 
                     Some('U') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.forced_using_directives.push(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
+                        Some(s) => self.forced_using_directives.push(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                         None => panic!("Unhandled characters in build info arg: 'FU'; Data: \"{args_string}\""),
                     }
 
@@ -1253,7 +1249,7 @@ impl Module {
                 }
 
                 Some('I') => match parse_arg_string(chars_iter) {
-                    Some(x) => self.additional_include_dirs.push(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, x.as_str(), true)),
+                    Some(x) => self.additional_include_dirs.push(crate::utils::canonicalize_path(root_path, x.as_str(), true)),
                     None => panic!("Missing string from additional include directory arg"),
                 }
 
@@ -1580,7 +1576,7 @@ impl Module {
 
                 Some('Y') => match chars_iter.next() {
                     Some('c') => match parse_arg_string(chars_iter) {
-                        Some(s) => self.pch_file_name = Some(crate::utils::canonicalize_path(out_path.to_str().unwrap_or(""), root_path, s.as_str(), false)),
+                        Some(s) => self.pch_file_name = Some(crate::utils::canonicalize_path(root_path, s.as_str(), false)),
                         None => self.pch_file_name = Some(PathBuf::new()),
                     }
 
@@ -1799,7 +1795,6 @@ mod tests {
         let mut chars_iter = args_string.chars().peekable();
         let mut module = super::Module::default();
         module.parse_arguments(
-            &std::path::PathBuf::from("/Users/camden/Source/pdb-decompiler/out/test/"),
             "",
             args_string,
             &mut chars_iter

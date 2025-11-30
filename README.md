@@ -20,6 +20,7 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 
 | Short | Long | Description |
 |-|-|-|
+| `-c` | `--export-cpp` | Whether to export C++ code. |
 | | `--export-pseudocode-to-files` | Whether to generate IDA script statements that export pseudocode to their appropriate source files. |
 | | `--export-pseudocode-to-json` | Whether to generate IDA script statements that export pseudocode to a JSON mapping file. |
 | `-h` | `--help` | Prints help information. |

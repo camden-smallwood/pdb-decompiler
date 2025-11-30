@@ -1,6 +1,6 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeDefinition {
-    pub type_name: String,
+    pub signature: String,
     pub underlying_type: pdb2::TypeIndex,
     pub field_attributes: Option<pdb2::FieldAttributes>,
     pub pointer_attributes: Option<pdb2::PointerAttributes>,
@@ -9,6 +9,6 @@ pub struct TypeDefinition {
 
 impl std::fmt::Display for TypeDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "typedef {};", self.type_name)
+        write!(f, "typedef {};", self.signature)
     }
 }

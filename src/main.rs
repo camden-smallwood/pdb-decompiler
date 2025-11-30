@@ -3,7 +3,7 @@ mod decompile;
 mod options;
 mod reorganize;
 mod tabbed;
-mod utils;
+pub mod utils;
 
 use decompile::Decompiler;
 use options::Options;
@@ -17,8 +17,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         if !out.is_dir() {
             *out = PathBuf::from(format!("{}/", out.to_string_lossy()));
         }
-
-        *out = utils::canonicalize_path(out.to_str().unwrap_or(""), "", "", true);
     }
 
     let mut function_scopes_modules = None;
@@ -26,6 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if options.function_scopes_pdb.is_some() {
         let mut options2 = options.clone();
         options2.pdb = options2.function_scopes_pdb.take();
+        options2.export_cpp = false;
         options2.export_pseudocode_to_files = false;
         options2.export_pseudocode_to_json = false;
         options2.export_function_types = false;

@@ -7,7 +7,7 @@ use structopt::StructOpt;
     about = "A tool to decompile MSVC PDB files to C++ source code."
 )]
 pub struct Options {
-    /// The output directory to dump all C++ code to.
+    /// The output directory to export to.
     #[structopt(short, long, parse(from_os_str))]
     pub out: Option<PathBuf>,
 
@@ -18,6 +18,10 @@ pub struct Options {
     /// The base address to add when resolving an RVA. (Optional)
     #[structopt(short, long, parse(try_from_str = parse_base_address))]
     pub base_address: Option<u64>,
+
+    /// Whether to export C++ code to the output directory.
+    #[structopt(long, short = "c")]
+    pub export_cpp: bool,
 
     /// Whether to generate IDA script statements that export pseudocode to their appropriate source files.
     #[structopt(long)]

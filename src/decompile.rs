@@ -16,6 +16,7 @@ pub struct Decompiler {
     pub type_sizes: HashMap<String, u64>,
     pub modules: HashMap<String, Rc<RefCell<cpp::Module>>>,
     pub function_scopes_modules: Option<HashMap<String, Rc<RefCell<cpp::Module>>>>,
+    pub script_file: Option<File>,
 }
 
 pub struct DecompileContext<'a, 's> {
@@ -29,7 +30,6 @@ pub struct DecompileContext<'a, 's> {
     pub type_info: &'a pdb2::TypeInformation<'s>,
     pub type_finder: pdb2::TypeFinder<'a>,
     pub global_symbols: &'a pdb2::SymbolTable<'s>,
-    pub script_file: &'a mut File,
 }
 
 impl Decompiler {
@@ -41,6 +41,7 @@ impl Decompiler {
             type_sizes: HashMap::new(),
             modules: HashMap::new(),
             function_scopes_modules: None,
+            script_file: None,
         }
     }
 
@@ -84,10 +85,18 @@ impl Decompiler {
         let out_path = self.options.out.as_ref()
             .ok_or_else(|| "Out path not supplied".to_string())?;
 
-        std::fs::create_dir_all(out_path.clone())?;
-
-        let mut script_file = File::create(out_path.join("ida_script.py"))?;
-        writeln!(script_file, "{}", include_str!("../ida_script_base.py"))?;
+        self.script_file = if
+            self.options.export_pseudocode_to_files ||
+            self.options.export_pseudocode_to_json ||
+            self.options.export_function_types
+        {
+            std::fs::create_dir_all(out_path.clone())?;
+            let mut script_file = File::create(out_path.join("ida_script.py"))?;
+            writeln!(script_file, "{}", include_str!("../ida_script_base.py"))?;
+            Some(script_file)
+        } else {
+            None
+        };
 
         let mut context = DecompileContext {
             pdb: &mut pdb,
@@ -100,14 +109,15 @@ impl Decompiler {
             type_info: &type_info,
             type_finder: type_finder,
             global_symbols: &global_symbols,
-            script_file: &mut script_file,
         };
         
         self.process_type_information(&mut context)?;
         self.process_id_information(&mut context)?;
         self.process_modules(&mut context)?;
 
-        if self.options.export_pseudocode_to_json {
+        if let Some(script_file) = self.script_file.as_mut()
+            && self.options.export_pseudocode_to_json
+        {
             writeln!(script_file)?;
             writeln!(script_file, "with open('pseudocode.json', 'wb') as outfile:")?;
             writeln!(script_file, "    outfile.write('{{'.encode('utf-8'))")?;
@@ -119,9 +129,8 @@ impl Decompiler {
             writeln!(script_file, "            outfile.write(json_line.encode('utf-8'))")?;
             writeln!(script_file, "    outfile.write('}}'.encode('utf-8'))")?;
             writeln!(script_file)?;
+            writeln!(script_file, "print(\"Done.\")")?;
         }
-
-        writeln!(script_file, "print(\"Done.\")")?;
 
         Ok(())
     }
@@ -238,7 +247,7 @@ impl Decompiler {
             match id_data {
                 pdb2::IdData::BuildInfo(build_info) => {
                     let mut module = cpp::Module::default();
-                    module.add_build_info(self.options.out.as_ref().unwrap(), &mut context.id_finder, build_info)?;
+                    module.add_build_info(&mut context.id_finder, build_info)?;
 
                     let module_key = module.path.to_string_lossy().to_lowercase().to_string();
                     if module_key.is_empty() {
@@ -305,58 +314,125 @@ impl Decompiler {
         }
 
         //
+        // Check for duplicate modules
+        //
+
+        let module_keys = self.modules.keys().cloned().collect::<Vec<_>>();
+
+        for i in 0..module_keys.len() {
+            let module_1 = self.modules.get(&module_keys[i]).unwrap().borrow();
+
+            for j in 0..module_keys.len() {
+                if i == j {
+                    continue;
+                }
+
+                let module_2 = self.modules.get(&module_keys[j]).unwrap().borrow();
+
+                if module_1.is_header() || module_2.is_header() {
+                    continue;
+                }
+
+                if module_1.path.file_name().unwrap().to_ascii_lowercase() == module_2.path.file_name().unwrap().to_ascii_lowercase() {
+                    println!("WARNING: Found duplicate module file names:");
+                    println!(" -> \"{}\"", module_1.path.display());
+                    println!(" -> \"{}\"", module_2.path.display());
+                }
+            }
+        }
+
+        //
+        // Create module path tree and resolve proper file paths
+        //
+
+        let mut path_tree = crate::utils::PathTree::new();
+
+        for module_key in module_keys.iter() {
+            let module = self.modules.get(module_key).unwrap().borrow();
+
+            path_tree.add_path(&module.path, false);
+
+            for include_dir in module.additional_include_dirs.iter() {
+                path_tree.add_path(include_dir, true);
+            }
+
+            for (header_path, _) in module.headers.iter() {
+                path_tree.add_path(header_path, false);
+            }
+        }
+
+        for module_key in module_keys.iter() {
+            let mut module = self.modules.get(module_key).unwrap().borrow_mut();
+
+            module.path = path_tree.resolve_path(&module.path, false).unwrap();
+
+            for include_dir in module.additional_include_dirs.iter_mut() {
+                *include_dir = path_tree.resolve_path(&include_dir, true).unwrap();
+            }
+
+            for (header_path, _) in module.headers.iter_mut() {
+                *header_path = path_tree.resolve_path(&header_path, false).unwrap();
+            }
+        }
+
+        //
         // Finalize module debug information
         //
 
-        let mut header_modules = HashMap::new();
-
-        for (_, module) in self.modules.iter_mut() {
+        for module_key in module_keys {
             //
             // Clean up include paths and generate modules for them
             //
+            let (mut module_headers, module_include_dirs, module_pch_file_name) = {
+                let module = self.modules.get(&module_key).unwrap().borrow();
+                (module.headers.clone(), module.additional_include_dirs.clone(), module.pch_file_name.clone())
+            };
 
-            let mut module = module.borrow_mut();
-            let mut headers = vec![];
+            let mut pch_header_index = None;
 
-            for (header_path, is_global) in module.headers.iter() {
+            for (i, (header_path, is_global)) in module_headers.iter_mut().enumerate() {
                 let header_module_key = header_path.to_string_lossy().to_lowercase().to_string();
 
-                if !header_modules.contains_key(&header_module_key) {
-                    header_modules.insert(header_module_key.clone(), cpp::Module::default().with_path(header_path.clone()));
-                }
-
-                if let Some(pch_file_name) = module.pch_file_name.as_ref() {
+                // Skip the PCH include
+                if let Some(pch_file_name) = module_pch_file_name.as_ref() {
                     let pch_module_key = pch_file_name.to_string_lossy().to_lowercase().to_string();
                     
                     if header_module_key == pch_module_key {
+                        pch_header_index = Some(i);
                         continue;
                     }
                 }
 
-                let mut modified_path = None;
+                // Create a module with the full path if we haven't already
+                if !self.modules.contains_key(&header_module_key) {
+                    self.modules.insert(header_module_key.clone(), Rc::new(RefCell::new(cpp::Module::default().with_path(header_path.clone()))));
+                }
 
-                for dir_path in module.additional_include_dirs.iter() {
+                // Remove additional include dirs from header path
+                for dir_path in module_include_dirs.iter() {
                     let dir_path = dir_path.to_string_lossy().to_lowercase().to_string();
                     let dir_path_len = dir_path.len();
 
                     if dir_path_len < header_module_key.len() && header_module_key.starts_with(dir_path.as_str()) {
-                        modified_path = Some((header_module_key[dir_path_len..].to_string().into(), true));
+                        *header_path = header_path.to_string_lossy()[dir_path_len..].to_string().into();
+                        *is_global = true;
                         break;
                     }
                 }
-
-                headers.push(match modified_path {
-                    Some(x) => x,
-                    None => (header_path.clone(), *is_global),
-                });
             }
 
-            module.headers.clear();
-            module.headers.extend(headers);
+            // Remove the implicit PCH include
+            if let Some(pch_header_index) = pch_header_index {
+                module_headers.remove(pch_header_index);
+            }
+
+            self.modules.get(&module_key).unwrap().borrow_mut().headers = module_headers;
 
             //
             // Sort module members by line number
             //
+
+            let mut module = self.modules.get_mut(&module_key).unwrap().borrow_mut();
 
             let mut storage: Vec<(u32, cpp::ModuleMember)> = vec![];
             let mut prev_line = 0;
@@ -476,12 +552,6 @@ impl Decompiler {
             }
         }
 
-        for (k, v) in header_modules {
-            if !self.modules.contains_key(&k) {
-                self.modules.insert(k, Rc::new(RefCell::new(v)));
-            }
-        }
-
         //
         // Include extra function scopes if present
         //
@@ -583,26 +653,28 @@ impl Decompiler {
             // Write the module out to its file
             //
 
-            if let Some(parent_path) = path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent_path) {
-                    panic!("Failed to create directory: \"{}\" - {e}", parent_path.display())
+            if self.options.export_cpp {
+                if let Some(parent_path) = path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent_path) {
+                        panic!("Failed to create directory: \"{}\" - {e}", parent_path.display())
+                    }
                 }
-            }
 
-            let mut file = if path.exists() {
-                match OpenOptions::new().write(true).append(true).open(path.clone()) {
-                    Ok(x) => x,
-                    Err(e) => panic!("Failed to append to file: \"{}\" - {e}", path.display()),
-                }
-            } else {
-                match File::create(path.clone()) {
-                    Ok(x) => x,
-                    Err(e) => panic!("Failed to create file: \"{}\" - {e}", path.display()),
-                }
-            };
+                let mut file = if path.exists() {
+                    match OpenOptions::new().write(true).append(true).open(path.clone()) {
+                        Ok(x) => x,
+                        Err(e) => panic!("Failed to append to file: \"{}\" - {e}", path.display()),
+                    }
+                } else {
+                    match File::create(path.clone()) {
+                        Ok(x) => x,
+                        Err(e) => panic!("Failed to create file: \"{}\" - {e}", path.display()),
+                    }
+                };
 
-            if let Err(e) = write!(file, "{module}") {
-                panic!("Failed to write to file: \"{}\" - {e}", path.display());
+                if let Err(e) = write!(file, "{module}") {
+                    panic!("Failed to write to file: \"{}\" - {e}", path.display());
+                }
             }
         }
 
@@ -719,7 +791,14 @@ impl Decompiler {
             pdb_module,
             &module_info,
             &line_program,
-        )? else { return Ok(()) };
+        )? else {
+            println!(
+                "WARNING: Failed to find source file path for module \"{}\" in \"{}\", skipping...",
+                pdb_module.module_name(),
+                pdb_module.object_file_name(),
+            );
+            return Ok(())
+        };
 
         // Process module global symbols
         if let Some(global_symbols) = module_global_symbols.get(&pdb_module.module_name().to_string()).cloned() {
@@ -821,78 +900,64 @@ impl Decompiler {
         module_info: &pdb2::ModuleInfo,
         line_program: &pdb2::LineProgram,
     ) -> pdb2::Result<Option<Rc<RefCell<cpp::Module>>>> {
-        let obj_path = self.get_module_object_file_path(module)?;
-        
+        let mut module_symbols = module_info.symbols()?;
         let mut module_file_path = None;
-        let mut headers = vec![];
+        
+        // Try to find build info for the module to get the module's source file path
+        while let Some(symbol_item) = module_symbols.next()? {
+            let Ok(pdb2::SymbolData::BuildInfo(build_info)) = symbol_item.parse() else { continue };
+            let Ok(id_item) = context.id_finder.find(build_info.id) else { continue };
+            let Ok(pdb2::IdData::BuildInfo(build_info)) = id_item.parse() else { continue };
+            
+            let mut module = cpp::Module::default();
+            module.add_build_info(&context.id_finder, build_info)?;
 
-        for file in line_program.files().collect::<Vec<_>>()? {
-            let path = PathBuf::from(crate::utils::sanitize_path(&file.name.to_string_lossy(context.string_table.unwrap())?));
-
-            match path.extension() {
-                Some(extension) if cpp::SOURCE_FILE_EXTS.contains(&extension.to_str().unwrap_or(""))
-                    && path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase()) =>
-                {
-                    module_file_path = Some(path);
-                }
-
-                _ => headers.push(path)
+            if !module.path.as_os_str().is_empty() {
+                module_file_path = Some(module.path.clone());
+                break;
             }
         }
 
-        // HACK: Attempt to find a build info symbol
+        // If we didn't find the module's source file path from build info, try to find it based on the object file path
         if module_file_path.is_none() {
-            let mut module_symbols = module_info.symbols()?;
+            let obj_path = self.get_module_object_file_path(module)?;
+            
+            for file in line_program.files().collect::<Vec<_>>()? {
+                let path = PathBuf::from(crate::utils::sanitize_path(&file.name.to_string_lossy(context.string_table.unwrap())?));
 
-            while let Some(symbol_item) = module_symbols.next()? {
-                let Ok(pdb2::SymbolData::BuildInfo(build_info)) = symbol_item.parse() else { continue };
-                let Ok(id_item) = context.id_finder.find(build_info.id) else { continue };
-                let Ok(pdb2::IdData::BuildInfo(build_info)) = id_item.parse() else { continue };
-                
-                let mut module = cpp::Module::default();
-                module.add_build_info(self.options.out.as_ref().unwrap(), &context.id_finder, build_info)?;
-
-                if !module.path.as_os_str().is_empty() {
-                    module_file_path = Some(module.path.clone());
+                if let Some(extension) = path.extension()
+                    && cpp::SOURCE_FILE_EXTS.contains(&extension.to_str().unwrap_or(""))
+                    && path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase())
+                {
+                    module_file_path = Some(path);
                     break;
                 }
             }
         }
 
-        // TODO:
-        // HACK: Skip compiler generated files or print a warning and skip
-        // if module_file_path.is_none() {
-        //     match module.module_name().to_string().as_str() {
-        //         "* CIL *" | "* Linker *" | "* Linker Generated Manifest RES *" => (),
-                
-        //         x if x.to_lowercase().ends_with(".dll") => (),
-                
-        //         _ => println!("WARNING: module has no source file, skipping: {module:#?}")
-        //     }
-
-        //     return Ok(());
-        // }
-
+        // If we couldn't find the module's source file path, we can't decompile it
         let Some(module_file_path) = module_file_path else {
             return Ok(None);
         };
 
-        let mut module_headers = vec![];
+        let module_key = module_file_path.to_string_lossy().to_lowercase();
+        let module = self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(module_file_path.clone()))));
+        
+        for file in line_program.files().collect::<Vec<_>>()? {
+            let mut file_path = PathBuf::from(crate::utils::sanitize_path(&file.name.to_string_lossy(context.string_table.unwrap())?));
 
-        for header_path in headers.iter() {
-            let header_module_key = header_path.to_string_lossy().to_lowercase().to_string();
-
-            if !self.modules.contains_key(&header_module_key) {
-                self.modules.insert(header_module_key.clone(), Rc::new(RefCell::new(cpp::Module::default().with_path(header_path.clone()))));
+            // Skip the source file of the module
+            if file_path.file_name().as_ref().map(|f| f.to_ascii_lowercase()) == module_file_path.file_name().as_ref().map(|f| f.to_ascii_lowercase()) {
+                continue;
             }
 
-            module_headers.push((header_path.clone(), false));
-        }
+            if file_path.file_stem().as_ref().map(|f| f.to_ascii_lowercase()) == module_file_path.file_stem().as_ref().map(|f| f.to_ascii_lowercase()) {
+                let extension = file_path.extension().as_ref().map(|e| e.to_string_lossy().to_string()).unwrap_or_else(|| String::new());
+                file_path = module_file_path.with_extension(extension);
+            }
 
-        let module_key = module_file_path.to_string_lossy().to_lowercase();
-        let module = self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(module_file_path))));
-        
-        for header in module_headers {
+            let header = (file_path.clone(), false);
+
             if !module.borrow().headers.contains(&header) {
                 module.borrow_mut().headers.push(header);
             }
@@ -920,7 +985,7 @@ impl Decompiler {
             }
 
             pdb2::SymbolData::UserDefinedType(udt_symbol) => {
-                let type_name = cpp::type_name(
+                let signature = cpp::type_name(
                     &mut self.class_table,
                     &mut self.type_sizes,
                     context.machine_type,
@@ -935,7 +1000,7 @@ impl Decompiler {
                 )?;
 
                 let user_defined_type = cpp::ModuleMember::TypeDefinition(cpp::TypeDefinition {
-                    type_name,
+                    signature,
                     underlying_type: udt_symbol.type_index,
                     field_attributes: None,
                     pointer_attributes: None,
@@ -1047,8 +1112,10 @@ impl Decompiler {
                     line: line_info.map(|x| x.line_start),
                 });
 
-                if self.options.export_pseudocode_to_files {
-                    writeln!(context.script_file, "decompile_to_file(0x{address:X}, \"{}\")", module.borrow().path.to_string_lossy())?;
+                if let Some(script_file) = self.script_file.as_mut()
+                    && self.options.export_pseudocode_to_files
+                {
+                    writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module.borrow().path.to_string_lossy())?;
                 }
             }
 
@@ -1135,8 +1202,10 @@ impl Decompiler {
                     line: line_info.map(|x| x.line_start),
                 });
 
-                if self.options.export_pseudocode_to_files {
-                    writeln!(context.script_file, "decompile_to_file(0x{address:X}, \"{}\")", module.borrow().path.to_string_lossy())?;
+                if let Some(script_file) = self.script_file.as_mut()
+                    && self.options.export_pseudocode_to_files
+                {
+                    writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module.borrow().path.to_string_lossy())?;
                 }
             }
 
@@ -1220,7 +1289,7 @@ impl Decompiler {
                     | pdb2::TypeData::Array(_)
                     | pdb2::TypeData::Bitfield(_)
                     | pdb2::TypeData::VirtualTableShape(_) => {
-                        println!("WARNING: Skipping unexpected procedure type: {procedure_type:#?}");
+                        // println!("WARNING: Skipping unexpected procedure type: {procedure_type:#?}");
                         return Ok(());
                     }
 
@@ -1245,18 +1314,21 @@ impl Decompiler {
                             ).unwrap()
                         ),
 
-                        pdb2::TypeData::Primitive(_)
-                        | pdb2::TypeData::FieldList(_)
-                        | pdb2::TypeData::Pointer(_)
-                        | pdb2::TypeData::ArgumentList(_)
-                        | pdb2::TypeData::Class(_)
-                        | pdb2::TypeData::Union(_)
-                        | pdb2::TypeData::Enumeration(_)
-                        | pdb2::TypeData::MethodList(_)
-                        | pdb2::TypeData::Array(_)
-                        | pdb2::TypeData::Bitfield(_)
-                        | pdb2::TypeData::VirtualTableShape(_) => {
-                            println!("WARNING: Skipping unexpected modifier procedure type: {procedure_type:#?}");
+                        procedure_type if matches!(
+                            procedure_type,
+                            pdb2::TypeData::Primitive(_)
+                            | pdb2::TypeData::FieldList(_)
+                            | pdb2::TypeData::Pointer(_)
+                            | pdb2::TypeData::ArgumentList(_)
+                            | pdb2::TypeData::Class(_)
+                            | pdb2::TypeData::Union(_)
+                            | pdb2::TypeData::Enumeration(_)
+                            | pdb2::TypeData::MethodList(_)
+                            | pdb2::TypeData::Array(_)
+                            | pdb2::TypeData::Bitfield(_)
+                            | pdb2::TypeData::VirtualTableShape(_)
+                        ) => {
+                            // println!("WARNING: Skipping unexpected modifier procedure type: {procedure_type:#?}");
                             return Ok(());
                         }
 
@@ -1636,18 +1708,20 @@ impl Decompiler {
                     arguments
                 };
 
-                if self.options.export_pseudocode_to_files {
-                    writeln!(context.script_file, "decompile_to_file(0x{address:X}, \"{}\")", module.borrow().path.to_string_lossy())?;
-                }
+                if let Some(script_file) = self.script_file.as_mut() {
+                    if self.options.export_pseudocode_to_files {
+                        writeln!(script_file, "decompile_to_file(0x{address:X}, \"{}\")", module.borrow().path.to_string_lossy())?;
+                    }
 
-                if self.options.export_pseudocode_to_json {
-                    writeln!(context.script_file, "decompile_to_json(0x{address:X})")?;
-                }
+                    if self.options.export_pseudocode_to_json {
+                        writeln!(script_file, "decompile_to_json(0x{address:X})")?;
+                    }
 
-                if self.options.export_function_types
-                    && let Some(ida_signature) = &procedure.ida_signature
-                {
-                    writeln!(context.script_file, "set_function_type(0x{:X}, \"{}\")", address, ida_signature)?;
+                    if self.options.export_function_types
+                        && let Some(ida_signature) = &procedure.ida_signature
+                    {
+                        writeln!(script_file, "set_function_type(0x{:X}, \"{}\")", address, ida_signature)?;
+                    }
                 }
 
                 module.borrow_mut().members.push(cpp::ModuleMember::Procedure(procedure));

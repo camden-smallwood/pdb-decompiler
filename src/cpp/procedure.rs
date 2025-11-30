@@ -1,10 +1,6 @@
 use std::fmt::Display;
 use crate::tabbed::{TabbedDisplay, TabbedDisplayer};
 
-//
-// TODO: Separate signature into separate return_type, name, and parameters fields
-//
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
     Comment(String),
@@ -120,7 +116,7 @@ pub struct Label {
 impl Display for Label {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:", self.name)?;
-        // write!(f, " 0x{:X}", self.address)?;
+        // write!(f, " // 0x{:X}", self.address)?;
         Ok(())
     }
 }

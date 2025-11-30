@@ -771,8 +771,7 @@ impl Class {
                         // If a nested class is a forward reference that doesn't have the nested type property,
                         // and the name is different than the name in the nested type data, then it is a typedef.
                         if properties.forward_reference() && !properties.is_nested_type() && nested_data.name != name {
-
-                            let type_name = self::type_name(
+                            let signature = self::type_name(
                                 class_table,
                                 type_sizes,
                                 machine_type,
@@ -787,7 +786,7 @@ impl Class {
                             )?;
 
                             self.members.push(ClassMember::TypeDefinition(TypeDefinition {
-                                type_name,
+                                signature,
                                 underlying_type: nested_data.nested_type,
                                 field_attributes: Some(nested_data.attributes),
                                 pointer_attributes: None,
@@ -893,7 +892,7 @@ impl Class {
                     | pdb2::TypeData::Primitive(_)
                     | pdb2::TypeData::Array(_)
                     | pdb2::TypeData::Procedure(_) => {
-                        let type_name = self::type_name(
+                        let signature = self::type_name(
                             class_table,
                             type_sizes,
                             machine_type,
@@ -908,7 +907,7 @@ impl Class {
                         )?;
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {
-                            type_name,
+                            signature,
                             underlying_type: nested_data.nested_type,
                             field_attributes: Some(nested_data.attributes),
                             pointer_attributes: None,

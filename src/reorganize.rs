@@ -47,12 +47,12 @@ fn find_enum_or_flags_typedef<'a>(
                 false
             }
 
-            if type_definition.type_name.starts_with(format!("c_enum<enum {},", enum_data.name).as_str()) {
+            if type_definition.signature.starts_with(format!("c_enum<enum {},", enum_data.name).as_str()) {
                 let mut result = type_definition.clone();
-                result.type_name = format!("c_enum<{}", result.type_name.trim_start_matches("c_enum<enum "));
+                result.signature = format!("c_enum<{}", result.signature.trim_start_matches("c_enum<enum "));
 
-                let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
-                    panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
+                let Some((type_string, name_string)) = result.signature.rsplit_once(' ') else {
+                    panic!("Unexpected typedef type name string: \"{}\"", result.signature);
                 };
 
                 let (type_string, suffix) = type_string.trim_start_matches("c_enum<").rsplit_once('>').unwrap();
@@ -205,17 +205,17 @@ fn find_enum_or_flags_typedef<'a>(
                     }
                 }
 
-                result.type_name = format!("c_enum<{}>{} {}", template_args.join(","), suffix, name_string);
+                result.signature = format!("c_enum<{}>{} {}", template_args.join(","), suffix, name_string);
 
                 return Some(result);
             }
 
-            if type_definition.type_name.starts_with(format!("c_flags<enum {},", enum_data.name).as_str()) {
+            if type_definition.signature.starts_with(format!("c_flags<enum {},", enum_data.name).as_str()) {
                 let mut result = type_definition.clone();
-                result.type_name = format!("c_flags<{}", result.type_name.trim_start_matches("c_flags<enum "));
+                result.signature = format!("c_flags<{}", result.signature.trim_start_matches("c_flags<enum "));
 
-                let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
-                    panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
+                let Some((type_string, name_string)) = result.signature.rsplit_once(' ') else {
+                    panic!("Unexpected typedef type name string: \"{}\"", result.signature);
                 };
 
                 let (type_string, suffix) = type_string.trim_start_matches("c_flags<").rsplit_once('>').unwrap();
@@ -310,17 +310,17 @@ fn find_enum_or_flags_typedef<'a>(
                     }
                 }
 
-                result.type_name = format!("c_flags<{}>{} {}", template_args.join(","), suffix, name_string);
+                result.signature = format!("c_flags<{}>{} {}", template_args.join(","), suffix, name_string);
 
                 return Some(result);
             }
 
-            if type_definition.type_name.starts_with(format!("c_flags_no_init<enum {},", enum_data.name).as_str()) {
+            if type_definition.signature.starts_with(format!("c_flags_no_init<enum {},", enum_data.name).as_str()) {
                 let mut result = type_definition.clone();
-                result.type_name = format!("c_flags_no_init<{}", result.type_name.trim_start_matches("c_flags_no_init<enum "));
+                result.signature = format!("c_flags_no_init<{}", result.signature.trim_start_matches("c_flags_no_init<enum "));
 
-                let Some((type_string, name_string)) = result.type_name.rsplit_once(' ') else {
-                    panic!("Unexpected typedef type name string: \"{}\"", result.type_name);
+                let Some((type_string, name_string)) = result.signature.rsplit_once(' ') else {
+                    panic!("Unexpected typedef type name string: \"{}\"", result.signature);
                 };
 
                 let (type_string, suffix) = type_string.trim_start_matches("c_flags_no_init<").rsplit_once('>').unwrap();
@@ -415,7 +415,7 @@ fn find_enum_or_flags_typedef<'a>(
                     }
                 }
 
-                result.type_name = format!("c_flags_no_init<{}>{} {}", template_args.join(","), suffix, name_string);
+                result.signature = format!("c_flags_no_init<{}>{} {}", template_args.join(","), suffix, name_string);
 
                 return Some(result);
             }
