@@ -80,6 +80,7 @@ pub struct Method {
     pub field_attributes: Option<pdb2::FieldAttributes>,
     pub function_attributes: pdb2::FunctionAttributes,
     pub modifier: Option<pdb2::ModifierType>,
+    pub vtable_offset: Option<u32>,
 }
 
 impl fmt::Display for Method {
@@ -676,6 +677,7 @@ impl Class {
                                 field_attributes: Some(data.attributes),
                                 function_attributes: function_data.attributes,
                                 modifier,
+                                vtable_offset: data.vtable_offset,
                             }
                         }
             
@@ -726,6 +728,7 @@ impl Class {
                                                 field_attributes: Some(attributes),
                                                 function_attributes: function_data.attributes,
                                                 modifier,
+                                                vtable_offset: None,
                                             }
                                         }
                             
