@@ -14,6 +14,7 @@ pub struct Decompiler {
     pub options: Options,
     pub class_table: Vec<Rc<RefCell<cpp::Class>>>,
     pub type_sizes: HashMap<String, u64>,
+    pub type_names: HashMap<cpp::TypeNameQuery, String>,
     pub modules: HashMap<String, Rc<RefCell<cpp::Module>>>,
     pub function_scopes_modules: Option<HashMap<String, Rc<RefCell<cpp::Module>>>>,
     pub script_file: Option<File>,
@@ -39,6 +40,7 @@ impl Decompiler {
             options,
             class_table: vec![],
             type_sizes: HashMap::new(),
+            type_names: HashMap::new(),
             modules: HashMap::new(),
             function_scopes_modules: None,
             script_file: None,
@@ -193,13 +195,13 @@ impl Decompiler {
         module.path = exported_path.clone();
 
         for type_index in exported_forward_reference_indices {
-            if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
+            if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
                 panic!("{e}");
             }
         }
 
         for type_index in exported_type_indices {
-            if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
+            if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
                 panic!("{e}");
             }
         }
@@ -285,6 +287,7 @@ impl Decompiler {
                         .add_type_definition(
                             &mut self.class_table,
                             &mut self.type_sizes,
+                            &mut self.type_names,
                             context.machine_type,
                             context.type_info,
                             &context.type_finder,
@@ -749,6 +752,7 @@ impl Decompiler {
                 crate::reorganize::reorganize_module_members(
                     &mut self.class_table,
                     &mut self.type_sizes,
+                    &mut self.type_names,
                     context.machine_type,
                     context.type_info,
                     &context.type_finder,
@@ -1096,15 +1100,18 @@ impl Decompiler {
                 let signature = cpp::type_name(
                     &mut self.class_table,
                     &mut self.type_sizes,
+                    &mut self.type_names,
                     context.machine_type,
                     &context.type_info,
                     &context.type_finder,
-                    udt_symbol.type_index,
-                    None,
-                    Some(udt_symbol.name.to_string().to_string()),
-                    None,
-                    None,
-                    false
+                    cpp::TypeNameQuery {
+                        type_index: udt_symbol.type_index,
+                        modifier: None,
+                        declaration_name: Some(udt_symbol.name.to_string().to_string()),
+                        parameter_names: None,
+                        include_this: None,
+                        force_return_type: false,
+                    },
                 )?;
 
                 let user_defined_type = cpp::ModuleMember::TypeDefinition(cpp::TypeDefinition {
@@ -1124,15 +1131,18 @@ impl Decompiler {
                 let type_name = cpp::type_name(
                     &mut self.class_table,
                     &mut self.type_sizes,
+                    &mut self.type_names,
                     context.machine_type,
                     &context.type_info,
                     &context.type_finder,
-                    constant_symbol.type_index,
-                    None,
-                    Some(constant_symbol.name.to_string().to_string()),
-                    None,
-                    None,
-                    false
+                    cpp::TypeNameQuery {
+                        type_index: constant_symbol.type_index,
+                        modifier: None,
+                        declaration_name: Some(constant_symbol.name.to_string().to_string()),
+                        parameter_names: None,
+                        include_this: None,
+                        force_return_type: false,
+                    },
                 )?;
 
                 if type_name.starts_with("float const ") {
@@ -1205,15 +1215,18 @@ impl Decompiler {
                         cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
+                            &mut self.type_names,
                             context.machine_type,
                             &context.type_info,
                             &context.type_finder,
-                            data_symbol.type_index,
-                            None,
-                            Some(data_symbol.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            cpp::TypeNameQuery {
+                                type_index: data_symbol.type_index,
+                                modifier: None,
+                                declaration_name: Some(data_symbol.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?,
                     ),
                     address,
@@ -1295,15 +1308,18 @@ impl Decompiler {
                         cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
+                            &mut self.type_names,
                             context.machine_type,
                             &context.type_info,
                             &context.type_finder,
-                            thread_storage_symbol.type_index,
-                            None,
-                            Some(thread_storage_symbol.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            cpp::TypeNameQuery {
+                                type_index: thread_storage_symbol.type_index,
+                                modifier: None,
+                                declaration_name: Some(thread_storage_symbol.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?,
                     ),
                     address,
@@ -1485,15 +1501,18 @@ impl Decompiler {
                 let procedure_signature = cpp::type_name(
                     &mut self.class_table,
                     &mut self.type_sizes,
+                    &mut self.type_names,
                     context.machine_type,
                     &context.type_info,
                     &context.type_finder,
-                    procedure_symbol.type_index,
-                    None,
-                    Some(procedure_symbol.name.to_string().to_string()),
-                    Some(parameters.clone()),
-                    None,
-                    false
+                    cpp::TypeNameQuery {
+                        type_index: procedure_symbol.type_index,
+                        modifier: None,
+                        declaration_name: Some(procedure_symbol.name.to_string().to_string()),
+                        parameter_names: Some(parameters.clone()),
+                        include_this: None,
+                        force_return_type: false,
+                    },
                 )?;
 
                 if procedure_signature.starts_with("...") || procedure_signature.contains('$') || procedure_signature.contains('`') {
@@ -1580,20 +1599,24 @@ impl Decompiler {
                                 let lhs_return_type = cpp::type_name(
                                     &mut self.class_table,
                                     &mut self.type_sizes,
+                                    &mut self.type_names,
                                     context.machine_type,
                                     &context.type_info,
                                     &context.type_finder,
-                                    class_member_function.return_type,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    false,
+                                    cpp::TypeNameQuery {
+                                        type_index: class_member_function.return_type,
+                                        modifier: None,
+                                        declaration_name: None,
+                                        parameter_names: None,
+                                        include_this: None,
+                                        force_return_type: false,
+                                    },
                                 )?;
 
                                 let lhs_arg_list = cpp::argument_list(
                                     &mut self.class_table,
                                     &mut self.type_sizes,
+                                    &mut self.type_names,
                                     context.machine_type,
                                     &context.type_info,
                                     &context.type_finder,
@@ -1605,20 +1628,24 @@ impl Decompiler {
                                 let rhs_return_type = cpp::type_name(
                                     &mut self.class_table,
                                     &mut self.type_sizes,
+                                    &mut self.type_names,
                                     context.machine_type,
                                     &context.type_info,
                                     &context.type_finder,
-                                    member_function.return_type,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    false,
+                                    cpp::TypeNameQuery {
+                                        type_index: member_function.return_type,
+                                        modifier: None,
+                                        declaration_name: None,
+                                        parameter_names: None,
+                                        include_this: None,
+                                        force_return_type: false,
+                                    },
                                 )?;
 
                                 let rhs_arg_list = cpp::argument_list(
                                     &mut self.class_table,
                                     &mut self.type_sizes,
+                                    &mut self.type_names,
                                     context.machine_type,
                                     &context.type_info,
                                     &context.type_finder,
@@ -1646,6 +1673,7 @@ impl Decompiler {
                             let declaring_class = if let Some(found_base_class) = cpp::find_class_declaring_intro_method(
                                 &mut self.class_table,
                                 &mut self.type_sizes,
+                                &mut self.type_names,
                                 context.machine_type,
                                 &context.type_info,
                                 &context.type_finder,
@@ -1661,15 +1689,18 @@ impl Decompiler {
                                 cpp::type_name(
                                     &mut self.class_table,
                                     &mut self.type_sizes,
+                                    &mut self.type_names,
                                     context.machine_type,
                                     &context.type_info,
                                     &context.type_finder,
-                                    *t,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    false,
+                                    cpp::TypeNameQuery {
+                                        type_index: *t,
+                                        modifier: None,
+                                        declaration_name: None,
+                                        parameter_names: None,
+                                        include_this: None,
+                                        force_return_type: false,
+                                    },
                                 ).unwrap()
                             });
 
@@ -1703,15 +1734,18 @@ impl Decompiler {
                             class_method.signature = cpp::type_name(
                                 &mut self.class_table,
                                 &mut self.type_sizes,
+                                &mut self.type_names,
                                 context.machine_type,
                                 &context.type_info,
                                 &context.type_finder,
-                                class_method.type_index,
-                                class_method.modifier.as_ref(),
-                                Some(class_method.name.clone()),
-                                Some(parameters.clone()),
-                                None,
-                                false
+                                cpp::TypeNameQuery {
+                                    type_index: class_method.type_index,
+                                    modifier: class_method.modifier.clone(),
+                                    declaration_name: Some(class_method.name.to_string().to_string()),
+                                    parameter_names: Some(parameters.clone()),
+                                    include_this: None,
+                                    force_return_type: false,
+                                },
                             )?;
                         }
                     }
@@ -1720,15 +1754,18 @@ impl Decompiler {
                 let ida_procedure_signature = cpp::type_name(
                     &mut self.class_table,
                     &mut self.type_sizes,
+                    &mut self.type_names,
                     context.machine_type,
                     &context.type_info,
                     &context.type_finder,
-                    procedure_symbol.type_index,
-                    None,
-                    Some(procedure_symbol.name.to_string().to_string()),
-                    Some(parameters.clone()),
-                    member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                    true
+                    cpp::TypeNameQuery {
+                        type_index: procedure_symbol.type_index,
+                        modifier: None,
+                        declaration_name: Some(procedure_symbol.name.to_string().to_string()),
+                        parameter_names: Some(parameters.clone()),
+                        include_this: member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
+                        force_return_type: true,
+                    },
                 )?;
                 
                 if let Some(pseudocode_value) = self.options.pseudocode_json.as_ref() {
@@ -2139,15 +2176,18 @@ impl Decompiler {
                         signature: cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
+                            &mut self.type_names,
                             context.machine_type,
                             &context.type_info,
                             &context.type_finder,
-                            register_variable_symbol.type_index,
-                            None,
-                            Some(register_variable_symbol.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            cpp::TypeNameQuery {
+                                type_index: register_variable_symbol.type_index,
+                                modifier: None,
+                                declaration_name: Some(register_variable_symbol.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?,
                         value: None,
                         comment: Some(format!("r{}", register_variable_symbol.register.0)),
@@ -2159,15 +2199,18 @@ impl Decompiler {
                         signature: cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
+                            &mut self.type_names,
                             context.machine_type,
                             &context.type_info,
                             &context.type_finder,
-                            register_relative_symbol.type_index,
-                            None,
-                            Some(register_relative_symbol.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            cpp::TypeNameQuery {
+                                type_index: register_relative_symbol.type_index,
+                                modifier: None,
+                                declaration_name: Some(register_relative_symbol.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?,
                         value: None,
                         // comment: Some(format!("r{} offset {}", register_relative_symbol.register.0, register_relative_symbol.offset))
@@ -2210,15 +2253,18 @@ impl Decompiler {
                         signature: format!("constexpr {}", cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
+                            &mut self.type_names,
                             context.machine_type,
                             &context.type_info,
                             &context.type_finder,
-                            constant_symbol.type_index,
-                            None,
-                            Some(constant_symbol.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            cpp::TypeNameQuery {
+                                type_index: constant_symbol.type_index,
+                                modifier: None,
+                                declaration_name: Some(constant_symbol.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?),
                         value: None,
                         comment: Some(format!(
@@ -2242,15 +2288,18 @@ impl Decompiler {
                         signature: format!("static {}", cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
+                            &mut self.type_names,
                             context.machine_type,
                             &context.type_info,
                             &context.type_finder,
-                            data_symbol.type_index,
-                            None,
-                            Some(data_symbol.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            cpp::TypeNameQuery {
+                                type_index: data_symbol.type_index,
+                                modifier: None,
+                                declaration_name: Some(data_symbol.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?),
                         value: None,
                         comment: data_symbol.offset.to_rva(context.address_map).map(|rva| {
@@ -2264,15 +2313,18 @@ impl Decompiler {
                         signature: cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
+                            &mut self.type_names,
                             context.machine_type,
                             &context.type_info,
                             &context.type_finder,
-                            local_symbol.type_index,
-                            None,
-                            Some(local_symbol.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            cpp::TypeNameQuery {
+                                type_index: local_symbol.type_index,
+                                modifier: None,
+                                declaration_name: Some(local_symbol.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?,
                         value: None,
                         comment: Some("local".into()),
@@ -2303,15 +2355,18 @@ impl Decompiler {
                             cpp::type_name(
                                 &mut self.class_table,
                                 &mut self.type_sizes,
+                                &mut self.type_names,
                                 context.machine_type,
                                 &context.type_info,
                                 &context.type_finder,
-                                tls_symbol.type_index,
-                                None,
-                                Some(tls_symbol.name.to_string().to_string()),
-                                None,
-                                None,
-                                false
+                                cpp::TypeNameQuery {
+                                    type_index: tls_symbol.type_index,
+                                    modifier: None,
+                                    declaration_name: Some(tls_symbol.name.to_string().to_string()),
+                                    parameter_names: None,
+                                    include_this: None,
+                                    force_return_type: false,
+                                },
                             )?,
                         ),
                         value: None,
@@ -2330,15 +2385,18 @@ impl Decompiler {
                     let type_name = cpp::type_name(
                         &mut self.class_table,
                         &mut self.type_sizes,
+                        &mut self.type_names,
                         context.machine_type,
                         &context.type_info,
                         &context.type_finder,
-                        call_site_info.type_index,
-                        None,
-                        None,
-                        None,
-                        None,
-                        false
+                        cpp::TypeNameQuery {
+                            type_index: call_site_info.type_index,
+                            modifier: None,
+                            declaration_name: None,
+                            parameter_names: None,
+                            include_this: None,
+                            force_return_type: false,
+                        },
                     )?;
 
                     //statements.push(cpp::Statement::Comment(format!("function call @ 0x{:X}: {}", address, type_name)));

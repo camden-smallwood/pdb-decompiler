@@ -440,6 +440,7 @@ impl Module {
         &mut self,
         class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
         type_sizes: &mut HashMap<String, u64>,
+        type_names: &mut HashMap<cpp::TypeNameQuery, String>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -511,7 +512,7 @@ impl Module {
                     
                     {
                         let mut temp = definition.borrow().clone();
-                        temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
+                        temp.add_members(class_table, type_sizes, type_names, machine_type, type_info, type_finder, fields)?;
                         *definition.borrow_mut() = temp;
                     }
                 }
@@ -546,16 +547,19 @@ impl Module {
 
                 let underlying_type_name = match cpp::type_name(
                     class_table,
-                    type_sizes, 
+                    type_sizes,
+                    type_names,
                     machine_type,
                     type_info,
                     type_finder,
-                    data.underlying_type,
-                    None,
-                    None,
-                    None,
-                    None,
-                    false
+                    cpp::TypeNameQuery {
+                        type_index: data.underlying_type,
+                        modifier: None,
+                        declaration_name: None,
+                        parameter_names: None,
+                        include_this: None,
+                        force_return_type: false,
+                    },
                 ) {
                     Ok(name) => name,
                     Err(_) => {

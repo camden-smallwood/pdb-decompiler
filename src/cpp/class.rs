@@ -447,6 +447,7 @@ impl Class {
         &mut self,
         class_table: &mut Vec<Rc<RefCell<Class>>>,
         type_sizes: &mut HashMap<String, u64>,
+        type_names: &mut HashMap<super::TypeNameQuery, String>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -455,11 +456,11 @@ impl Class {
         match type_finder.find(type_index)?.parse() {
             Ok(pdb2::TypeData::FieldList(data)) => {
                 for field in &data.fields {
-                    self.add_member(class_table, type_sizes, machine_type, type_info, type_finder, field)?;
+                    self.add_member(class_table, type_sizes, type_names, machine_type, type_info, type_finder, field)?;
                 }
 
                 if let Some(continuation) = data.continuation {
-                    self.add_members(class_table, type_sizes, machine_type, type_info, type_finder, continuation)?;
+                    self.add_members(class_table, type_sizes, type_names, machine_type, type_info, type_finder, continuation)?;
                 }
 
                 let fields = self.members.iter()
@@ -512,6 +513,7 @@ impl Class {
         &mut self,
         class_table: &mut Vec<Rc<RefCell<Class>>>,
         type_sizes: &mut HashMap<String, u64>,
+        type_names: &mut HashMap<super::TypeNameQuery, String>,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -528,29 +530,35 @@ impl Class {
                     type_name: type_name(
                         class_table,
                         type_sizes,
+                        type_names,
                         machine_type,
                         type_info,
                         type_finder,
-                        data.field_type,
-                        None,
-                        None,
-                        None,
-                        None,
-                        false
+                        TypeNameQuery {
+                            type_index: data.field_type,
+                            modifier: None,
+                            declaration_name: None,
+                            parameter_names: None,
+                            include_this: None,
+                            force_return_type: false,
+                        },
                     )?,
                     name: data.name.to_string().to_string(),
                     signature: type_name(
                         class_table,
                         type_sizes,
+                        type_names,
                         machine_type,
                         type_info,
                         type_finder,
-                        data.field_type,
-                        None,
-                        Some(data.name.to_string().to_string()),
-                        None,
-                        None,
-                        false
+                        TypeNameQuery {
+                            type_index: data.field_type,
+                            modifier: None,
+                            declaration_name: Some(data.name.to_string().to_string()),
+                            parameter_names: None,
+                            include_this: None,
+                            force_return_type: false,
+                        },
                     )?,
                     offset: Some(data.offset),
                     size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
@@ -571,15 +579,18 @@ impl Class {
                         type_name(
                             class_table,
                             type_sizes,
+                            type_names,
                             machine_type,
                             type_info,
                             type_finder,
-                            data.field_type,
-                            None,
-                            None,
-                            None,
-                            None,
-                            false
+                            TypeNameQuery {
+                                type_index: data.field_type,
+                                modifier: None,
+                                declaration_name: None,
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?
                     ),
                     name: data.name.to_string().to_string(),
@@ -588,15 +599,18 @@ impl Class {
                         type_name(
                             class_table,
                             type_sizes,
+                            type_names,
                             machine_type,
                             type_info,
                             type_finder,
-                            data.field_type,
-                            None,
-                            Some(data.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            TypeNameQuery {
+                                type_index: data.field_type,
+                                modifier: None,
+                                declaration_name: Some(data.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?
                     ),
                     offset: None,
@@ -616,7 +630,22 @@ impl Class {
                             3 => "public ",
                             _ => "",
                         },
-                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, None, false)?
+                        type_name(
+                            class_table,
+                            type_sizes,
+                            type_names,
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            TypeNameQuery {
+                                type_index: data.base_class,
+                                modifier: None,
+                                declaration_name: None,
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
+                        )?
                     ),
                     offset: data.offset,
                     index: data.base_class
@@ -633,7 +662,22 @@ impl Class {
                             3 => "public ",
                             _ => ""
                         },
-                        type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.base_class, None, None, None, None, false)?
+                        type_name(
+                            class_table,
+                            type_sizes,
+                            type_names,
+                            machine_type,
+                            type_info,
+                            type_finder,
+                            TypeNameQuery {
+                                type_index: data.base_class,
+                                modifier: None,
+                                declaration_name: None,
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
+                        )?
                     ),
                     offset: data.base_pointer_offset,
                     index: data.base_class
@@ -657,15 +701,18 @@ impl Class {
                             let signature = type_name(
                                 class_table,
                                 type_sizes,
+                                type_names,
                                 machine_type,
                                 type_info,
                                 type_finder,
-                                data.method_type,
-                                modifier.as_ref(),
-                                Some(data.name.to_string().to_string()),
-                                None,
-                                None,
-                                false
+                                TypeNameQuery {
+                                    type_index: data.method_type,
+                                    modifier,
+                                    declaration_name: Some(data.name.to_string().to_string()),
+                                    parameter_names: None,
+                                    include_this: None,
+                                    force_return_type: false,
+                                },
                             )?;
 
                             Method {
@@ -708,15 +755,18 @@ impl Class {
                                             let signature = type_name(
                                                 class_table,
                                                 type_sizes,
+                                                type_names,
                                                 machine_type,
                                                 type_info,
                                                 type_finder,
-                                                method_type,
-                                                modifier.as_ref(),
-                                                Some(data.name.to_string().to_string()),
-                                                None,
-                                                None,
-                                                false
+                                                TypeNameQuery {
+                                                    type_index: method_type,
+                                                    modifier,
+                                                    declaration_name: Some(data.name.to_string().to_string()),
+                                                    parameter_names: None,
+                                                    include_this: None,
+                                                    force_return_type: false,
+                                                },
                                             )?;
                                             
                                             Method {
@@ -777,15 +827,18 @@ impl Class {
                             let signature = self::type_name(
                                 class_table,
                                 type_sizes,
+                                type_names,
                                 machine_type,
                                 type_info,
                                 type_finder,
-                                nested_data.nested_type,
-                                None,
-                                Some(nested_data.name.to_string().to_string()),
-                                None,
-                                None,
-                                false
+                                TypeNameQuery {
+                                    type_index: nested_data.nested_type,
+                                    modifier: None,
+                                    declaration_name: Some(nested_data.name.to_string().to_string()),
+                                    parameter_names: None,
+                                    include_this: None,
+                                    force_return_type: false,
+                                },
                             )?;
 
                             self.members.push(ClassMember::TypeDefinition(TypeDefinition {
@@ -829,7 +882,7 @@ impl Class {
                             definition.borrow_mut().is_declaration = true;
                         } else if let Some(fields) = fields {
                             let mut temp = definition.borrow().clone();
-                            temp.add_members(class_table, type_sizes, machine_type, type_info, type_finder, fields)?;
+                            temp.add_members(class_table, type_sizes, type_names, machine_type, type_info, type_finder, fields)?;
                             *definition.borrow_mut() = temp;
                         }
                         
@@ -859,7 +912,22 @@ impl Class {
                             index: nested_data.nested_type,
                             depth: self.depth + 1,
                             line: 0,
-                            underlying_type_name: type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, None, None, None, None, false)?,
+                            underlying_type_name: type_name(
+                                class_table,
+                                type_sizes,
+                                type_names,
+                                machine_type,
+                                type_info,
+                                type_finder,
+                                TypeNameQuery {
+                                    type_index: data.underlying_type,
+                                    modifier: None,
+                                    declaration_name: None,
+                                    parameter_names: None,
+                                    include_this: None,
+                                    force_return_type: false,
+                                },
+                            )?,
                             size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type)?,
                             is_declaration: false,
                             values: vec![],
@@ -898,15 +966,18 @@ impl Class {
                         let signature = self::type_name(
                             class_table,
                             type_sizes,
+                            type_names,
                             machine_type,
                             type_info,
                             type_finder,
-                            nested_data.nested_type,
-                            None,
-                            Some(nested_data.name.to_string().to_string()),
-                            None,
-                            None,
-                            false
+                            TypeNameQuery {
+                                type_index: nested_data.nested_type,
+                                modifier: None,
+                                declaration_name: Some(nested_data.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
                         )?;
 
                         self.members.push(ClassMember::TypeDefinition(TypeDefinition {

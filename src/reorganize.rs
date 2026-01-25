@@ -429,6 +429,7 @@ fn find_enum_or_flags_typedef<'a>(
 pub fn reorganize_module_members(
     class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
     type_sizes: &mut HashMap<String, u64>,
+    type_names: &mut HashMap<cpp::TypeNameQuery, String>,
     machine_type: pdb2::MachineType,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder,
@@ -960,15 +961,18 @@ pub fn reorganize_module_members(
             cpp::type_name(
                 class_table,
                 type_sizes,
+                type_names,
                 machine_type,
                 type_info,
                 type_finder,
-                return_type,
-                None,
-                None,
-                None,
-                procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                false
+                cpp::TypeNameQuery {
+                    type_index: return_type,
+                    modifier: None,
+                    declaration_name: None,
+                    parameter_names: None,
+                    include_this: procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
+                    force_return_type: false,
+                },
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -1017,15 +1021,18 @@ pub fn reorganize_module_members(
                 signature: cpp::type_name(
                     class_table,
                     type_sizes,
+                    type_names,
                     machine_type,
                     type_info,
                     type_finder,
-                    procedure.type_index,
-                    None,
-                    Some(format!("_sub_{:X}", procedure.address).into()),
-                    None,
-                    procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                    false
+                    cpp::TypeNameQuery {
+                        type_index: procedure.type_index,
+                        modifier: None,
+                        declaration_name: Some(format!("_sub_{:X}", procedure.address).into()),
+                        parameter_names: None,
+                        include_this: procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
+                        force_return_type: false,
+                    },
                 )?
                 .trim_end_matches(" const")
                 .trim_end_matches(" volatile")
@@ -1129,15 +1136,18 @@ pub fn reorganize_module_members(
             cpp::type_name(
                 class_table,
                 type_sizes,
+                type_names,
                 machine_type,
                 type_info,
                 type_finder,
-                return_type,
-                None,
-                None,
-                None,
-                procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                false
+                cpp::TypeNameQuery {
+                    type_index: return_type,
+                    modifier: None,
+                    declaration_name: None,
+                    parameter_names: None,
+                    include_this: procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
+                    force_return_type: false,
+                },
             )
             .unwrap()
         }).unwrap_or("void".to_string());
@@ -1187,15 +1197,18 @@ pub fn reorganize_module_members(
                 signature: cpp::type_name(
                     class_table,
                     type_sizes,
+                    type_names,
                     machine_type,
                     type_info,
                     type_finder,
-                    procedure.type_index,
-                    None,
-                    Some(format!("_sub_{:X}", procedure.address).into()),
-                    None,
-                    procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                    false
+                    cpp::TypeNameQuery {
+                        type_index: procedure.type_index,
+                        modifier: None,
+                        declaration_name: Some(format!("_sub_{:X}", procedure.address).into()),
+                        parameter_names: None,
+                        include_this: procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
+                        force_return_type: false,
+                    },
                 )?
                 .trim_end_matches(" const")
                 .trim_end_matches(" volatile")

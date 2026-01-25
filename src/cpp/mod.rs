@@ -14,6 +14,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 pub fn argument_list<'p>(
     class_table: &mut Vec<Rc<RefCell<Class>>>,
     type_sizes: &mut HashMap<String, u64>,
+    type_names: &mut HashMap<TypeNameQuery, String>,
     machine_type: pdb2::MachineType,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder<'p>,
@@ -31,7 +32,24 @@ pub fn argument_list<'p>(
                     names.as_mut().map(|names| names.remove(0));
                 }
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, type_index, None, this_name, None, None, false)?);
+                args.push(
+                    type_name(
+                        class_table,
+                        type_sizes,
+                        type_names,
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        TypeNameQuery {
+                            type_index,
+                            modifier: None,
+                            declaration_name: this_name,
+                            parameter_names: None,
+                            include_this: None,
+                            force_return_type: false,
+                        },
+                    )?,
+                );
             }
 
             for (i, &arg_type) in data.arguments.iter().enumerate() {
@@ -40,7 +58,24 @@ pub fn argument_list<'p>(
                     _ => None
                 };
 
-                args.push(type_name(class_table, type_sizes, machine_type, type_info, type_finder, arg_type, None, arg_name, None, None, false)?);
+                args.push(
+                    type_name(
+                        class_table,
+                        type_sizes,
+                        type_names,
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        TypeNameQuery {
+                            type_index: arg_type,
+                            modifier: None,
+                            declaration_name: arg_name,
+                            parameter_names: None,
+                            include_this: None,
+                            force_return_type: false,
+                        },
+                    )?,
+                );
             }
 
             Ok(args)
@@ -135,41 +170,54 @@ pub fn primitive_name(kind: PrimitiveKind) -> &'static str {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TypeNameQuery {
+    pub type_index: pdb2::TypeIndex,
+    pub modifier: Option<pdb2::ModifierType>,
+    pub declaration_name: Option<String>,
+    pub parameter_names: Option<Vec<String>>,
+    pub include_this: Option<String>,
+    pub force_return_type: bool,
+}
+
 pub fn type_name<'p>(
     class_table: &mut Vec<Rc<RefCell<Class>>>,
     type_sizes: &mut HashMap<String, u64>,
+    type_names: &mut HashMap<TypeNameQuery, String>,
     machine_type: pdb2::MachineType,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder<'p>,
-    type_index: pdb2::TypeIndex,
-    modifier: Option<&pdb2::ModifierType>,
-    declaration_name: Option<String>,
-    parameter_names: Option<Vec<String>>,
-    include_this: Option<String>,
-    force_return_type: bool,
+    query: TypeNameQuery,
 ) -> pdb2::Result<String> {
-    let type_item = type_finder.find(type_index)?;
+    if let Some(name) = type_names.get(&query) {
+        return Ok(name.clone());
+    }
+
+    let type_item = type_finder.find(query.type_index)?;
     let type_data = type_item.parse()?;
 
     let mut name = match &type_data {
         pdb2::TypeData::Modifier(data) => {
-            assert!(parameter_names.is_none());
+            assert!(query.parameter_names.is_none());
 
             let mut name = type_name(
                 class_table,
                 type_sizes,
+                type_names,
                 machine_type,
                 type_info,
                 type_finder,
-                data.underlying_type,
-                Some(data),
-                declaration_name,
-                None,
-                None,
-                false
+                TypeNameQuery {
+                    type_index: data.underlying_type,
+                    modifier: Some(data.clone()),
+                    parameter_names: None,
+                    include_this: None,
+                    force_return_type: false,
+                    ..query.clone()
+                },
             )?;
 
-            if let Some(modifier) = modifier {
+            if let Some(modifier) = query.modifier {
                 if (modifier.constant || modifier.volatile || modifier.unaligned)
                     && !(name.ends_with(' ') || name.ends_with('*'))
                 {
@@ -193,26 +241,30 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Bitfield(data) => {
-            assert!(parameter_names.is_none());
+            assert!(query.parameter_names.is_none());
 
             type_name(
                 class_table,
                 type_sizes,
+                type_names,
                 machine_type,
                 type_info,
                 type_finder,
-                data.underlying_type,
-                modifier,
-                declaration_name,
-                None,
-                None,
-                false
+                TypeNameQuery {
+                    type_index: data.underlying_type,
+                    parameter_names: None,
+                    include_this: None,
+                    force_return_type: false,
+                    ..query.clone()
+                },
             )?
         }
 
         pdb2::TypeData::Primitive(data) => {
             if let pdb2::PrimitiveKind::NoType = &data.kind {
-                return Ok("...".into());
+                let name = "...".to_string();
+                type_names.insert(query, name.clone());
+                return Ok(name);
             }
 
             let mut name = primitive_name(data.kind).to_string();
@@ -221,7 +273,7 @@ pub fn type_name<'p>(
                 name.push_str(" *");
             }
 
-            if let Some(modifier) = modifier {
+            if let Some(modifier) = query.modifier {
                 if (modifier.constant || modifier.volatile || modifier.unaligned)
                     && !(name.ends_with(' ') || name.ends_with('*'))
                 {
@@ -241,7 +293,7 @@ pub fn type_name<'p>(
                 }
             }
 
-            if let Some(field_name) = declaration_name {
+            if let Some(field_name) = query.declaration_name.as_ref() {
                 if !(name.ends_with(' ') || name.ends_with('*')) {
                     name.push(' ');
                 }
@@ -257,11 +309,11 @@ pub fn type_name<'p>(
         pdb2::TypeData::Class(pdb2::ClassType { name, .. })
         | pdb2::TypeData::Enumeration(pdb2::EnumerationType { name, .. })
         | pdb2::TypeData::Union(pdb2::UnionType { name, .. }) => {
-            assert!(parameter_names.is_none());
+            assert!(query.parameter_names.is_none());
 
             let mut name = name.to_string().to_string();
 
-            if let Some(modifier) = modifier {
+            if let Some(modifier) = query.modifier {
                 if modifier.constant {
                     name.push_str(" const");
                 }
@@ -275,7 +327,7 @@ pub fn type_name<'p>(
                 }
             }
 
-            if let Some(field_name) = declaration_name {
+            if let Some(field_name) = query.declaration_name.as_ref() {
                 name.push(' ');
                 name.push_str(field_name.as_str());
             }
@@ -284,11 +336,11 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::Array(data) => {
-            assert!(parameter_names.is_none());
+            assert!(query.parameter_names.is_none());
 
             let mut name = String::new();
 
-            name.push_str(&declaration_name.clone().unwrap_or_default());
+            name.push_str(&query.declaration_name.clone().unwrap_or_default());
 
             let mut element_size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             
@@ -298,19 +350,18 @@ pub fn type_name<'p>(
 
             if element_size == 0 {
                 println!(
-                    "WARNING: Array element type `{}` has a size of 0, output may be incorrect!",
+                    "WARNING: Array element type `{}` has a size of 0, output may be incorrect",
                     type_name(
                         class_table,
                         type_sizes,
+                        type_names,
                         machine_type,
                         type_info,
                         type_finder,
-                        data.element_type,
-                        modifier,
-                        declaration_name,
-                        parameter_names,
-                        include_this,
-                        force_return_type,
+                        TypeNameQuery {
+                            type_index: data.element_type,
+                            ..query.clone()
+                        },
                     )?,
                 );
             }
@@ -320,11 +371,26 @@ pub fn type_name<'p>(
                 element_size = size as usize;
             }
             
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type, modifier, Some(name), None, None, false)?
+            type_name(
+                class_table,
+                type_sizes,
+                type_names,
+                machine_type,
+                type_info,
+                type_finder,
+                TypeNameQuery {
+                    type_index: data.element_type,
+                    modifier: query.modifier,
+                    declaration_name: Some(name),
+                    parameter_names: None,
+                    include_this: None,
+                    force_return_type: false,
+                },
+            )?
         }
 
         pdb2::TypeData::Pointer(data) => {
-            assert!(parameter_names.is_none());
+            assert!(query.parameter_names.is_none());
 
             let mut name = String::new();
 
@@ -336,15 +402,15 @@ pub fn type_name<'p>(
 
             let mut attribute_string = String::new();
 
-            if data.attributes.is_const() || modifier.as_ref().map(|m| m.constant).unwrap_or(false) {
+            if data.attributes.is_const() || query.modifier.as_ref().map(|m| m.constant).unwrap_or(false) {
                 attribute_string.push_str("const ");
             }
 
-            if data.attributes.is_volatile() || modifier.as_ref().map(|m| m.volatile).unwrap_or(false) {
+            if data.attributes.is_volatile() || query.modifier.as_ref().map(|m| m.volatile).unwrap_or(false) {
                 attribute_string.push_str("volatile ");
             }
 
-            if data.attributes.is_unaligned() || modifier.as_ref().map(|m| m.unaligned).unwrap_or(false) {
+            if data.attributes.is_unaligned() || query.modifier.as_ref().map(|m| m.unaligned).unwrap_or(false) {
                 attribute_string.push_str("__unaligned ");
             }
 
@@ -352,23 +418,38 @@ pub fn type_name<'p>(
                 attribute_string.push_str("__restrict ");
             }
 
-            if declaration_name.is_none() {
+            if query.declaration_name.is_none() {
                 attribute_string = attribute_string.trim_end().into();
             }
 
             name.push_str(attribute_string.as_str());
 
-            if let Some(field_name) = declaration_name {
+            if let Some(field_name) = query.declaration_name.as_ref() {
                 name.push_str(field_name.as_str());
             }
 
-            type_name(class_table, type_sizes, machine_type, type_info, type_finder, data.underlying_type, modifier, Some(name), None, None, false)?
+            type_name(
+                class_table,
+                type_sizes,
+                type_names,
+                machine_type,
+                type_info,
+                type_finder,
+                TypeNameQuery {
+                    type_index: data.underlying_type,
+                    modifier: query.modifier,
+                    declaration_name: Some(name),
+                    parameter_names: None,
+                    include_this: None,
+                    force_return_type: false,
+                },
+            )?
         }
 
         pdb2::TypeData::Procedure(data) => {
-            assert!(modifier.is_none());
+            assert!(query.modifier.is_none());
 
-            let mut name = if let Some(declaration_name) = declaration_name.as_ref() {
+            let mut name = if let Some(declaration_name) = query.declaration_name.as_ref() {
                 if declaration_name.starts_with('*') || declaration_name.starts_with('&') {
                     format!("({})", declaration_name)
                 } else {
@@ -384,12 +465,13 @@ pub fn type_name<'p>(
                     argument_list(
                         class_table,
                         type_sizes,
+                        type_names,
                         machine_type,
                         type_info,
                         type_finder,
                         None,
                         data.argument_list,
-                        parameter_names,
+                        query.parameter_names.clone(),
                     )?.join(", ")
                 ).as_str()
             );
@@ -401,15 +483,18 @@ pub fn type_name<'p>(
                     Some(type_index) => type_name(
                         class_table,
                         type_sizes,
+                        type_names,
                         machine_type,
                         type_info,
                         type_finder,
-                        type_index,
-                        None,
-                        Some(name),
-                        None,
-                        None,
-                        false
+                        TypeNameQuery {
+                            type_index,
+                            modifier: None,
+                            declaration_name: Some(name),
+                            parameter_names: None,
+                            include_this: None,
+                            force_return_type: false,
+                        },
                     )?,
 
                     None => name,
@@ -418,15 +503,15 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::MemberFunction(data) => {
-            let mut name = if let Some(declaration_name) = declaration_name.as_ref() {
+            let mut name = if let Some(declaration_name) = query.declaration_name.as_ref() {
                 declaration_name.clone()
             } else {
                 String::new()
             };
 
-            let mut parameter_names = parameter_names;
+            let mut parameter_names = query.parameter_names.clone();
 
-            if let Some(include_this) = include_this.as_ref() && let Some(this_pointer_type) = data.this_pointer_type {
+            if let Some(include_this) = query.include_this.as_ref() && let Some(this_pointer_type) = data.this_pointer_type {
                 if !include_this.is_empty() {
                     name.push('(');
                     
@@ -471,7 +556,7 @@ pub fn type_name<'p>(
                         parameter_names.remove(0);
                     }
 
-                    let mut argument_list = argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", ");
+                    let mut argument_list = argument_list(class_table, type_sizes, type_names, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", ");
 
                     if !argument_list.is_empty() {
                         argument_list = format!(", {}", argument_list);
@@ -481,7 +566,7 @@ pub fn type_name<'p>(
 
                     name.push(')');
                 } else {
-                    name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, Some(this_pointer_type), data.argument_list, parameter_names)?.join(", "));
+                    name = format!("{}({})", name, argument_list(class_table, type_sizes, type_names, machine_type, type_info, type_finder, Some(this_pointer_type), data.argument_list, parameter_names)?.join(", "));
                 }
             }
             else {
@@ -493,7 +578,7 @@ pub fn type_name<'p>(
                     parameter_names.remove(0);
                 }
 
-                name = format!("{}({})", name, argument_list(class_table, type_sizes, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", "));
+                name = format!("{}({})", name, argument_list(class_table, type_sizes, type_names, machine_type, type_info, type_finder, None, data.argument_list, parameter_names)?.join(", "));
             }
 
             if let Some(modifier) = get_member_function_modifier(data, type_finder) {
@@ -510,9 +595,9 @@ pub fn type_name<'p>(
                 }
             }
             
-            if !force_return_type && (data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~")) {
+            if !query.force_return_type && (data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~")) {
                 name
-            } else if force_return_type && data.attributes.is_constructor() {
+            } else if query.force_return_type && data.attributes.is_constructor() {
                 let type_item = type_finder.find(data.class_type)?;
                 let type_data = type_item.parse()?;
 
@@ -529,15 +614,18 @@ pub fn type_name<'p>(
                 type_name(
                     class_table,
                     type_sizes,
+                    type_names,
                     machine_type,
                     type_info,
                     type_finder,
-                    data.return_type,
-                    None,
-                    Some(name),
-                    None,
-                    None,
-                    false
+                    TypeNameQuery {
+                        type_index: data.return_type,
+                        modifier: None,
+                        declaration_name: Some(name),
+                        parameter_names: None,
+                        include_this: None,
+                        force_return_type: false,
+                    },
                 )?
             }
         }
@@ -564,7 +652,7 @@ pub fn type_name<'p>(
 
         _ => panic!(
             "Unhandled type data for type_name at index {}: {:#?}",
-            type_index, type_data
+            query.type_index, type_data
         )
     };
 
@@ -572,6 +660,8 @@ pub fn type_name<'p>(
     if name == "std::basic_string<char,std::char_traits<char>,std::allocator<char> >" {
         name = "std::string".to_string();
     }
+
+    type_names.insert(query, name.clone());
 
     Ok(name)
 }
@@ -939,6 +1029,7 @@ pub fn parse_type_name(name: &str, keep_template: bool) -> (String, usize) {
 pub fn find_class_declaring_intro_method(
     class_table: &mut Vec<Rc<RefCell<Class>>>,
     type_sizes: &mut HashMap<String, u64>,
+    type_names: &mut HashMap<TypeNameQuery, String>,
     machine_type: pdb2::MachineType,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder,
@@ -948,7 +1039,22 @@ pub fn find_class_declaring_intro_method(
     let borrowed_class = class.borrow();
 
     for base_class in borrowed_class.base_classes.iter() {
-        let base_class_name = type_name(class_table, type_sizes, machine_type, type_info, type_finder, base_class.index, None, None, None, None, false)?;
+        let base_class_name = type_name(
+            class_table,
+            type_sizes,
+            type_names,
+            machine_type,
+            type_info,
+            type_finder,
+            TypeNameQuery {
+                type_index: base_class.index,
+                modifier: None,
+                declaration_name: None,
+                parameter_names: None,
+                include_this: None,
+                force_return_type: false,
+            },
+        )?;
 
         let full_base_classes = class_table.iter().filter(|c| {
             if **c == class {
@@ -975,7 +1081,7 @@ pub fn find_class_declaring_intro_method(
                 }
             }
 
-            if let Some(result) = find_class_declaring_intro_method(class_table, type_sizes, machine_type, type_info, type_finder, base_class.clone(), procedure_name)? {
+            if let Some(result) = find_class_declaring_intro_method(class_table, type_sizes, type_names, machine_type, type_info, type_finder, base_class.clone(), procedure_name)? {
                 return Ok(Some(result));
             }
         }
