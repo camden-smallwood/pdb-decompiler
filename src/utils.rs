@@ -180,9 +180,11 @@ impl PathTree {
                 }
             }
         }
-        
-        let Component::Normal(name) = components.last().unwrap() else {
-            panic!("Malformed path: {}", path.as_ref().display());
+
+        let name = match components.last() {
+            Some(Component::RootDir) | None => return,
+            Some(Component::Normal(name)) => name,
+            Some(_) => panic!("Malformed path: {}", path.as_ref().display()),
         };
 
         let parent_node = current_node.clone();
@@ -357,8 +359,10 @@ impl PathTree {
             }
         }
         
-        let Component::Normal(name) = components.last().unwrap() else {
-            panic!("Malformed path: {}", path.as_ref().display());
+        let name = match components.last() {
+            Some(Component::RootDir) | None => return None,
+            Some(Component::Normal(name)) => name,
+            Some(_) => panic!("Malformed path: {}", path.as_ref().display()),
         };
 
         let Some(node) = current_node.as_mut() else {

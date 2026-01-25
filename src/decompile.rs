@@ -6,7 +6,7 @@ use std::{
     error::Error,
     fs::{File, OpenOptions},
     io::Write,
-    path::PathBuf,
+    path::{Component, PathBuf},
     rc::Rc,
 };
 
@@ -139,6 +139,8 @@ impl Decompiler {
 
     #[inline(always)]
     fn process_type_information<'a, 's>(&mut self, context: &mut DecompileContext<'a, 's>) -> pdb2::Result<()> {
+        // println!("Processing type information...");
+
         let export_all = context.id_info.is_empty();
 
         let mut type_iter = context.type_info.iter();
@@ -149,6 +151,22 @@ impl Decompiler {
         while let Ok(Some(type_item)) = type_iter.next() {
             context.type_finder.update(&type_iter);
             
+            // Don't attempt to parse types we don't care about
+            if !matches!(
+                type_item.raw_kind(),
+                pdb2::LF_CLASS
+                    | pdb2::LF_CLASS_ST
+                    | pdb2::LF_STRUCTURE
+                    | pdb2::LF_STRUCTURE_ST
+                    | pdb2::LF_INTERFACE
+                    | pdb2::LF_UNION
+                    | pdb2::LF_UNION_ST
+                    | pdb2::LF_ENUM
+                    | pdb2::LF_ENUM_ST,
+            ) {
+                continue;
+            }
+
             let type_data = match type_item.parse() {
                 Ok(x) => x,
                 Err(e) => {
@@ -233,10 +251,16 @@ impl Decompiler {
 
     #[inline(always)]
     fn process_id_information<'a, 's>(&mut self, context: &mut DecompileContext<'a, 's>) -> pdb2::Result<()> {
+        // println!("Processing id information...");
+
         let mut id_iter = context.id_info.iter();
 
         while let Some(id) = id_iter.next()? {
             context.id_finder.update(&id_iter);
+
+            let (pdb2::LF_BUILDINFO | pdb2::LF_UDT_SRC_LINE | pdb2::LF_UDT_MOD_SRC_LINE) = id.raw_kind() else {
+                continue;
+            };
 
             let id_data = match id.parse() {
                 Ok(id_data) => id_data,
@@ -250,6 +274,12 @@ impl Decompiler {
                 pdb2::IdData::BuildInfo(build_info) => {
                     let mut module = cpp::Module::default();
                     module.add_build_info(&mut context.id_finder, build_info)?;
+
+                    let Some(Component::Normal(_)) = module.path.components().last() else {
+                        continue;
+                    };
+
+                    // println!("Found build info for module \"{}\"", module.path.display());
 
                     let module_key = module.path.to_string_lossy().to_lowercase().to_string();
                     if module_key.is_empty() {
@@ -280,6 +310,8 @@ impl Decompiler {
                         }
                     };
 
+                    // println!("Adding UDT 0x{:X} to module \"{}\"", data.udt.0, module_path);
+
                     self.modules
                         .entry(module_path.to_lowercase())
                         .or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(module_path.into()))))
@@ -299,6 +331,8 @@ impl Decompiler {
                 _ => {}
             }
         }
+
+        // println!("Done processing id information");
 
         Ok(())
     }
@@ -798,6 +832,8 @@ impl Decompiler {
         &mut self,
         context: &mut DecompileContext<'a, 's>
     ) -> Result<HashMap<String, Vec<pdb2::SymbolData<'a>>>, Box<dyn Error>> {
+        // println!("Loading module global symbols...");
+
         let mut section_contributions = vec![];
         let mut section_contributions_iter = context.debug_info.section_contributions()?;
 
@@ -821,6 +857,41 @@ impl Decompiler {
                 }
             };
 
+            // Don't attempt to parse symbols we don't care about
+            if !matches!(
+                symbol.raw_kind(),
+                pdb2::S_UDT
+                    | pdb2::S_UDT_ST
+                    | pdb2::S_PROCREF
+                    | pdb2::S_PROCREF_ST
+                    | pdb2::S_LPROCREF
+                    | pdb2::S_LPROCREF_ST
+                    | pdb2::S_PUB32
+                    | pdb2::S_PUB32_ST
+                    | pdb2::S_LDATA32
+                    | pdb2::S_LDATA32_ST
+                    | pdb2::S_GDATA32
+                    | pdb2::S_GDATA32_ST
+                    | pdb2::S_LMANDATA
+                    | pdb2::S_LMANDATA_ST
+                    | pdb2::S_GMANDATA
+                    | pdb2::S_GMANDATA_ST
+                    | pdb2::S_LTHREAD32
+                    | pdb2::S_LTHREAD32_ST
+                    | pdb2::S_GTHREAD32
+                    | pdb2::S_GTHREAD32_ST
+                    | pdb2::S_GPROC32
+                    | pdb2::S_GPROC32_ST
+                    | pdb2::S_LPROC32
+                    | pdb2::S_LPROC32_ST
+                    | pdb2::S_LPROC32_DPC
+                    | pdb2::S_GPROC32_ID
+                    | pdb2::S_LPROC32_ID
+                    | pdb2::S_LPROC32_DPC_ID
+            ) {
+                continue;
+            }
+
             let symbol_data = match symbol.parse() {
                 Ok(symbol_data) => symbol_data,
                 Err(e) => {
@@ -833,7 +904,10 @@ impl Decompiler {
                 pdb2::SymbolData::UserDefinedType(_) if prev_module_name.is_some() => {
                     let module_name = prev_module_name.clone().unwrap();
 
-                    // println!("Inserting global UDT into previous module \"{module_name}\": {symbol_data:#?}");
+                    // println!(
+                    //     "Inserting global UDT into previous module \"{module_name}\": \"{}\"",
+                    //     symbol_data.name().map(|s| s.to_string().to_string()).unwrap_or_else(|| "<UNNAMED>".to_string()),
+                    // );
 
                     module_global_symbols.entry(module_name).or_insert_with(Vec::new).push(symbol_data.clone());
                 }
@@ -844,7 +918,10 @@ impl Decompiler {
                     let module_name = referenced_module.module_name().to_string();
                     prev_module_name = Some(module_name.clone());
 
-                    // println!("Found referenced module \"{module_name}\" in global symbol {symbol_data:#?}");
+                    // println!(
+                    //     "Found reference to global symbol \"{}\" in module \"{module_name}\"",
+                    //     symbol_data.name().map(|s| s.to_string().to_string()).unwrap_or_else(|| "<UNNAMED>".to_string()),
+                    // );
 
                     module_global_symbols.entry(module_name).or_insert_with(Vec::new).push(symbol_data.clone());
                 }
@@ -860,7 +937,10 @@ impl Decompiler {
                             let module_name = contributing_module.module_name().to_string();
                             prev_module_name = Some(module_name.clone());
 
-                            // println!("Found contributing module \"{module_name}\" in global symbol {symbol_data:#?}");
+                            // println!(
+                            //     "Found global symbol \"{}\" in module \"{module_name}\"",
+                            //     symbol_data.name().map(|s| s.to_string().to_string()).unwrap_or_else(|| "<UNNAMED>".to_string()),
+                            // );
 
                             module_global_symbols.entry(module_name).or_insert_with(Vec::new).push(symbol_data.clone());
                             break;
@@ -868,15 +948,12 @@ impl Decompiler {
                     }
                 }
 
-                pdb2::SymbolData::Constant(_)
-                | pdb2::SymbolData::AnnotationReference(_) => {}
-
-                _ => {
-                    println!("WARNING: found unused global symbol {symbol_data:?}");
-                }
+                _ => todo!("{:#?}", symbol_data),
             }
         }
 
+        // println!("Done loading module global symbols");
+        
         Ok(module_global_symbols)
     }
 
@@ -911,6 +988,8 @@ impl Decompiler {
             );
             return Ok(())
         };
+
+        // println!("Processing module: \"{}\"", module.borrow().path.display());
 
         // Process module global symbols
         if let Some(global_symbols) = module_global_symbols.get(&pdb_module.module_name().to_string()).cloned() {
@@ -1049,6 +1128,10 @@ impl Decompiler {
 
         // If we couldn't find the module's source file path, we can't decompile it
         let Some(module_file_path) = module_file_path else {
+            return Ok(None);
+        };
+
+        let Some(Component::Normal(_)) = module_file_path.components().last() else {
             return Ok(None);
         };
 

@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     fmt,
     iter::Peekable,
-    path::PathBuf,
+    path::{Component, PathBuf},
     rc::Rc,
     str::Chars,
 };
@@ -720,7 +720,13 @@ impl Module {
         let pdb_path = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
         let mut args_string = if arg_count == 2 { String::new() } else { args_iter.next().unwrap() };
 
-        self.path = crate::utils::canonicalize_path(root_path.as_str(), module_path.as_str(), false);
+        let path = crate::utils::canonicalize_path(root_path.as_str(), module_path.as_str(), false);
+
+        let Some(Component::Normal(_)) = path.components().last() else {
+            return Ok(());
+        };
+
+        self.path = path;
         self.compiler_path = crate::utils::canonicalize_path(root_path.as_str(), compiler_path.as_str(), false);
         self.pdb_path = crate::utils::canonicalize_path(root_path.as_str(), pdb_path.as_str(), false);
 

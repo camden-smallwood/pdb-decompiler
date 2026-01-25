@@ -674,7 +674,6 @@ pub fn type_size_explicit<'p>(
     type_finder: &pdb2::TypeFinder<'p>,
     type_index: pdb2::TypeIndex,
 ) -> pdb2::Result<usize> {
-
     let element_type_data = type_finder.find(type_index)?.parse()?;
 
     let mut type_iter = type_info.iter();
