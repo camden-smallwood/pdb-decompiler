@@ -2386,7 +2386,8 @@ impl Decompiler {
                 | pdb2::SymbolData::FileStatic(_)
                 | pdb2::SymbolData::Inlinees(_)
                 | pdb2::SymbolData::HeapAllocationSite(_)
-                | pdb2::SymbolData::Annotation(_) => {
+                | pdb2::SymbolData::Annotation(_)
+                | pdb2::SymbolData::ArmSwitchTable(_) => {
                     // println!("WARNING: Unused symbol data in parse_statement_symbols: {symbol_data:#?}");
                 }
                 
@@ -2437,7 +2438,8 @@ impl Decompiler {
                 | pdb2::SymbolData::FileStatic(_)
                 | pdb2::SymbolData::Inlinees(_)
                 | pdb2::SymbolData::HeapAllocationSite(_)
-                | pdb2::SymbolData::Annotation(_) => {
+                | pdb2::SymbolData::Annotation(_)
+                | pdb2::SymbolData::ArmSwitchTable(_) => {
                     // println!("WARNING: Unused symbol data in parse_thunk_symbols: {symbol_data:#?}");
                 }
 
@@ -2486,7 +2488,8 @@ impl Decompiler {
                 | pdb2::SymbolData::FileStatic(_)
                 | pdb2::SymbolData::Inlinees(_)
                 | pdb2::SymbolData::HeapAllocationSite(_)
-                | pdb2::SymbolData::Annotation(_) => {
+                | pdb2::SymbolData::Annotation(_)
+                | pdb2::SymbolData::ArmSwitchTable(_) => {
                     // println!("WARNING: Unused symbol data in parse_separated_code_symbols: {symbol_data:#?}");
                 }
 

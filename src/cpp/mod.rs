@@ -153,10 +153,9 @@ pub fn type_name<'p>(
 
     let mut name = match &type_data {
         pdb2::TypeData::Modifier(data) => {
-            assert!(modifier.is_none());
             assert!(parameter_names.is_none());
 
-            type_name(
+            let mut name = type_name(
                 class_table,
                 type_sizes,
                 machine_type,
@@ -168,7 +167,29 @@ pub fn type_name<'p>(
                 None,
                 None,
                 false
-            )?
+            )?;
+
+            if let Some(modifier) = modifier {
+                if (modifier.constant || modifier.volatile || modifier.unaligned)
+                    && !(name.ends_with(' ') || name.ends_with('*'))
+                {
+                    name.push(' ');
+                }
+
+                if modifier.constant {
+                    name.push_str("const ");
+                }
+
+                if modifier.volatile {
+                    name.push_str("volatile ");
+                }
+
+                if modifier.unaligned {
+                    name.push_str("__unaligned ");
+                }
+            }
+
+            name
         }
 
         pdb2::TypeData::Bitfield(data) => {
@@ -275,7 +296,24 @@ pub fn type_name<'p>(
                 element_size = type_size_explicit(class_table, type_sizes, machine_type, type_info, type_finder, data.element_type)?;
             }
 
-            assert!(element_size != 0);
+            if element_size == 0 {
+                println!(
+                    "WARNING: Array element type `{}` has a size of 0, output may be incorrect!",
+                    type_name(
+                        class_table,
+                        type_sizes,
+                        machine_type,
+                        type_info,
+                        type_finder,
+                        data.element_type,
+                        modifier,
+                        declaration_name,
+                        parameter_names,
+                        include_this,
+                        force_return_type,
+                    )?,
+                );
+            }
 
             for &size in data.dimensions.iter() {
                 name = format!("{}[{}]", name, if element_size == 0 { size } else { size / element_size as u32 });
@@ -424,7 +462,7 @@ pub fn type_name<'p>(
 
                     name.push_str(attribute_string.as_str());
 
-                    if let Some(parameter_names) = parameter_names.as_mut() {
+                    if let Some(parameter_names) = parameter_names.as_mut() && !parameter_names.is_empty() {
                         if !(name.ends_with(' ') || name.ends_with('*') || name.ends_with('&')) {
                             name.push(' ');
                         }

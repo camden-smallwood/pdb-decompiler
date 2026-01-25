@@ -1,7 +1,7 @@
 use std::{num, path::PathBuf};
 use structopt::StructOpt;
 
-#[derive(Clone, Debug, StructOpt)]
+#[derive(Clone, Debug, Default, StructOpt)]
 #[structopt(
     name = "pdb-decompiler",
     about = "A tool to decompile MSVC PDB files to C++ source code."
