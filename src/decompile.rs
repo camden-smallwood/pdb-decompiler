@@ -769,14 +769,31 @@ impl Decompiler {
         // Post-process and write modules to file
         //
 
+        let out_path = self.options.out.as_ref().unwrap();
+
+        let out_prefix = match out_path.components().nth(0) {
+            component @ Some(Component::Prefix(_)) => component.clone(),
+            _ => None,
+        };
+
         for module in self.modules.values_mut() {
             let mut module = module.borrow_mut();
 
-            let path = PathBuf::from(crate::utils::sanitize_path(format!(
-                "{}/{}",
-                self.options.out.as_ref().unwrap().to_string_lossy(),
-                module.path.to_string_lossy().trim_start_matches('/'),
-            )));
+            let mut path = PathBuf::new();
+            
+            // Preserve the output path prefix so it doesn't get sanitized out
+            if let Some(out_prefix) = out_prefix.as_ref() {
+                path.push(out_prefix.clone());
+            }
+
+            path.extend(
+                PathBuf::from(crate::utils::sanitize_path(format!(
+                    "{}/{}",
+                    out_path.display(),
+                    module.path.to_string_lossy().trim_start_matches('/'),
+                )))
+                    .components(),
+            );
 
             //
             // Reorganize module members if requested
