@@ -1604,10 +1604,15 @@ impl Decompiler {
 
                 let is_static = !procedure_symbol.global;
                 let is_inline = frame_procedure.as_ref().map(|x| x.flags.inline_spec).unwrap_or(false);
+                let was_inlined = frame_procedure.as_ref().map(|x| x.flags.was_inlined).unwrap_or(false);
 
                 let mut declspecs = vec![];
 
                 if let Some(frame_procedure) = frame_procedure.as_ref() {
+                    if self.options.force_no_inlines && !was_inlined {
+                        declspecs.push("noinline".into());
+                    }
+
                     if frame_procedure.flags.naked {
                         declspecs.push("naked".into());
                     }

@@ -23,6 +23,7 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 | `-c` | `--export-cpp` | Whether to export C++ code. |
 | | `--export-pseudocode-to-files` | Whether to generate IDA script statements that export pseudocode to their appropriate source files. |
 | | `--export-pseudocode-to-json` | Whether to generate IDA script statements that export pseudocode to a JSON mapping file. |
+| | `--force-no-inlines` | Forces a `__declspec(noinline)` attribute for functions that were never inlined but did not have the attribute. |
 | `-h` | `--help` | Prints help information. |
 | `-r` | `--reorganize` | Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental) |
 | `-u` | `--unroll-functions` | Whether to include scope information in decompiled function stubs. (Experimental) |

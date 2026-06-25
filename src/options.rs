@@ -61,6 +61,10 @@ pub struct Options {
     /// Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental)
     #[structopt(short, long)]
     pub reorganize: bool,
+
+    /// Forces a `__declspec(noinline)` attribute for functions that were never inlined but did not have the attribute.
+    #[structopt(long)]
+    pub force_no_inlines: bool,
 }
 
 fn parse_base_address(src: &str) -> Result<u64, num::ParseIntError> {
