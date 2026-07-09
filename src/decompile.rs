@@ -2076,6 +2076,10 @@ impl Decompiler {
                         register_relative_names.borrow_mut().push(x.name.to_string().to_string());
                     }
 
+                    pdb2::SymbolData::BasePointerRelative(x) => {
+                        register_relative_names.borrow_mut().push(x.name.to_string().to_string());
+                    }
+
                     pdb2::SymbolData::FrameProcedure(x) => {
                         frame_procedures.borrow_mut().push(x.clone());
                     }
@@ -2319,6 +2323,29 @@ impl Decompiler {
                         )?,
                         value: None,
                         // comment: Some(format!("r{} offset {}", register_relative_symbol.register.0, register_relative_symbol.offset))
+                        comment: None,
+                    }));
+                }
+
+                pdb2::SymbolData::BasePointerRelative(base_pointer_relative_symbol) => {
+                    statements.push(cpp::Statement::Variable(cpp::Variable {
+                        signature: cpp::type_name(
+                            &mut self.class_table,
+                            &mut self.type_sizes,
+                            &mut self.type_names,
+                            context.machine_type,
+                            &context.type_info,
+                            &context.type_finder,
+                            cpp::TypeNameQuery {
+                                type_index: base_pointer_relative_symbol.type_index,
+                                modifier: None,
+                                declaration_name: Some(base_pointer_relative_symbol.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
+                        )?,
+                        value: None,
                         comment: None,
                     }));
                 }
