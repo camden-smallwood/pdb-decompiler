@@ -11,7 +11,6 @@ pub enum Statement {
     Block(Block),
     #[allow(unused)]
     Return(Return),
-    ReturnWithValue(ReturnWithValue),
     String(String),
     EmptyLine,
 }
@@ -74,23 +73,6 @@ impl TabbedDisplay for Statement {
                     value.tabbed_fmt(depth, f)?;
                 } else {
                     write!(f, ";")?;
-                }
-            }
-
-            Statement::ReturnWithValue(x) => {
-                if let Some(value) = x.value.as_ref() {
-                    x.signature.fmt(f)?;
-                    write!(f, " __result = ")?;
-                    value.tabbed_fmt(depth, f)?;
-                    if !TabbedDisplayer(0, value.as_ref()).to_string().ends_with(';') {
-                        write!(f, ";")?;
-                    }
-                    writeln!(f)?;
-                    "".tabbed_fmt(depth, f)?;
-                    write!(f, "return __result;")?;
-                }
-                else {
-                    write!(f, "return;")?;
                 }
             }
 
@@ -181,12 +163,6 @@ pub struct Return {
     pub value: Option<Box<Statement>>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ReturnWithValue {
-    pub signature: String,
-    pub value: Option<Box<Statement>>,
-}
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MemberMethodData {
     pub class_type: String,
@@ -202,6 +178,7 @@ pub struct Procedure {
     pub type_index: pdb2::TypeIndex,
     pub is_static: bool,
     pub is_inline: bool,
+    pub is_extern: bool,
     pub member_method_data: Option<MemberMethodData>,
     pub declspecs: Vec<String>,
     pub name: String,
@@ -214,6 +191,11 @@ pub struct Procedure {
 
 impl Display for Procedure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `extern` and `static` are mutually exclusive storage-class specifiers.
+        if self.is_extern {
+            write!(f, "extern ")?;
+        }
+
         if self.is_static {
             write!(f, "static ")?;
         }
@@ -230,18 +212,12 @@ impl Display for Procedure {
 
         match self.body.as_ref() {
             Some(body) => {
-                if self.address != 0 {
-                    write!(f, " // 0x{:X}", self.address)?;
-                }
                 writeln!(f)?;
                 write!(f, "{}", TabbedDisplayer(0, body))?;
             },
 
             None => {
                 write!(f, ";")?;
-                if self.address != 0 {
-                    write!(f, " // 0x{:X}", self.address)?;
-                }
             }
         }
 

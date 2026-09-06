@@ -9,12 +9,12 @@ pub use self::{
 };
 
 use pdb2::{FallibleIterator, PrimitiveKind};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 
 pub fn argument_list<'p>(
     class_table: &mut Vec<Rc<RefCell<Class>>>,
     type_sizes: &mut HashMap<String, u64>,
-    type_names: &mut HashMap<TypeNameQuery, String>,
+    type_names: &mut TypeNames,
     machine_type: pdb2::MachineType,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder<'p>,
@@ -180,16 +180,153 @@ pub struct TypeNameQuery {
     pub force_return_type: bool,
 }
 
+/// State threaded through `type_name` and its callees: the rendered-name cache plus the
+/// data needed to inline anonymous types.
+#[derive(Default)]
+pub struct TypeNames {
+    /// Memoized rendered names, keyed by query.
+    cache: HashMap<TypeNameQuery, String>,
+    /// Map from an anonymous type's qualified name to a full-definition `TypeIndex`
+    /// (non-forward-reference, with a field list). References reach anonymous types through
+    /// their fieldless forward-reference record; this resolves those back to the inlinable
+    /// definition. Populate once via [`TypeNames::set_anonymous_definitions`].
+    anonymous_definitions: HashMap<String, pdb2::TypeIndex>,
+    /// Anonymous definitions currently being inlined, to break the recursion when an anonymous
+    /// type refers back to itself (e.g. a pointer member to the same anonymous type).
+    inlining: HashSet<pdb2::TypeIndex>,
+}
+
+impl TypeNames {
+    /// Installs the anonymous-type definition map. Call once before rendering any types.
+    pub fn set_anonymous_definitions(&mut self, definitions: HashMap<String, pdb2::TypeIndex>) {
+        self.anonymous_definitions = definitions;
+    }
+
+    fn anonymous_definition(&self, name: &str) -> Option<pdb2::TypeIndex> {
+        self.anonymous_definitions.get(name).copied()
+    }
+}
+
+/// Renders an anonymous struct/union from its full definition record as inline text
+/// (`struct { ... }` / `union { ... }`), with no trailing `;` and no declarator — the
+/// caller appends the variable/field name. Returns `None` if the record is not an
+/// inlinable definition (e.g. a forward reference with no fields).
+fn inline_anonymous_definition<'p>(
+    class_table: &mut Vec<Rc<RefCell<Class>>>,
+    type_sizes: &mut HashMap<String, u64>,
+    type_names: &mut TypeNames,
+    machine_type: pdb2::MachineType,
+    type_info: &pdb2::TypeInformation,
+    type_finder: &pdb2::TypeFinder<'p>,
+    definition_index: pdb2::TypeIndex,
+) -> pdb2::Result<Option<String>> {
+    let data = type_finder.find(definition_index)?.parse()?;
+
+    // Anonymous enum used as a variable/field type: `enum { ... }`.
+    if let pdb2::TypeData::Enumeration(enum_type) = &data {
+        if enum_type.properties.forward_reference() {
+            return Ok(None);
+        }
+        if !type_names.inlining.insert(definition_index) {
+            return Ok(None);
+        }
+
+        let underlying_type_name = type_name(
+            class_table, type_sizes, type_names, machine_type, type_info, type_finder,
+            TypeNameQuery {
+                type_index: enum_type.underlying_type,
+                modifier: None,
+                declaration_name: None,
+                parameter_names: None,
+                include_this: None,
+                force_return_type: false,
+            },
+        )?;
+        let size = type_size(class_table, type_sizes, machine_type, type_info, type_finder, enum_type.underlying_type)?;
+
+        // Name it `<unnamed-tag>` so `Enum`'s `Display` omits the (unwritable) name.
+        let mut anonymous = Enum {
+            name: "<unnamed-tag>".to_string(),
+            index: definition_index,
+            depth: 0,
+            line: 0,
+            underlying_type_name,
+            size,
+            is_declaration: false,
+            values: vec![],
+            properties: enum_type.properties,
+            field_attributes: None,
+        };
+
+        let result = anonymous.add_members(type_finder, enum_type.fields);
+        type_names.inlining.remove(&definition_index);
+        result?;
+
+        return Ok(Some(anonymous.to_string().trim_start().trim_end_matches(';').to_string()));
+    }
+
+    let (kind, is_union, fields, size, properties) = match data {
+        pdb2::TypeData::Class(class_type)
+            if !class_type.properties.forward_reference() && class_type.fields.is_some() =>
+        {
+            (Some(class_type.kind), false, class_type.fields.unwrap(), class_type.size, class_type.properties)
+        }
+        pdb2::TypeData::Union(union_type) if !union_type.properties.forward_reference() => {
+            (None, true, union_type.fields, union_type.size, union_type.properties)
+        }
+        _ => return Ok(None),
+    };
+
+    // Break self-referential cycles (an anonymous type reachable from its own members, e.g.
+    // through a pointer): if we are already inlining this definition, fall back to `None` so
+    // the caller emits the placeholder rather than recursing forever.
+    if !type_names.inlining.insert(definition_index) {
+        return Ok(None);
+    }
+
+    let mut anonymous = Class {
+        kind,
+        is_union,
+        is_declaration: false,
+        name: String::new(),
+        index: definition_index,
+        depth: 0,
+        line: 0,
+        size,
+        base_classes: vec![],
+        members: vec![],
+        properties: Some(properties),
+        field_attributes: None,
+    };
+
+    let result = anonymous.add_members(class_table, type_sizes, type_names, machine_type, type_info, type_finder, fields);
+
+    type_names.inlining.remove(&definition_index);
+
+    result?;
+
+    Ok(Some(anonymous.to_string().trim_start().trim_end_matches(';').to_string()))
+}
+
 pub fn type_name<'p>(
     class_table: &mut Vec<Rc<RefCell<Class>>>,
     type_sizes: &mut HashMap<String, u64>,
-    type_names: &mut HashMap<TypeNameQuery, String>,
+    type_names: &mut TypeNames,
     machine_type: pdb2::MachineType,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder<'p>,
     query: TypeNameQuery,
 ) -> pdb2::Result<String> {
-    if let Some(name) = type_names.get(&query) {
+    // The declaration name is used verbatim by the branches below, but it can embed
+    // a reference with no writable spelling (e.g. a template argument that is an
+    // anonymous-namespace type). Sanitize it once, here, so `type_name` is the single
+    // boundary that renders both referenced type names and the entity name.
+    let mut query = query;
+    if let Some(name) = query.declaration_name.take() {
+        query.declaration_name = Some(crate::namespaces::render_reference(&name));
+    }
+
+    if let Some(name) = type_names.cache.get(&query) {
         return Ok(name.clone());
     }
 
@@ -263,7 +400,7 @@ pub fn type_name<'p>(
         pdb2::TypeData::Primitive(data) => {
             if let pdb2::PrimitiveKind::NoType = &data.kind {
                 let name = "...".to_string();
-                type_names.insert(query, name.clone());
+                type_names.cache.insert(query, name.clone());
                 return Ok(name);
             }
 
@@ -306,12 +443,105 @@ pub fn type_name<'p>(
             name
         }
 
+        // An anonymous struct/union used as a variable/field/element/pointee type has an
+        // unusable placeholder name (`<unnamed-type-x>` / `<unnamed-tag>`) and no definition
+        // emitted under it — the placeholder was never valid C++, it is a compiler injection.
+        // Inline the real definition in its place. References that reach the anonymous type
+        // through a pointer, array or typedef land on its fieldless forward-reference record,
+        // so resolve that to the full definition via the per-run anonymous-definition map.
+        pdb2::TypeData::Class(class_type)
+            if is_anonymous_type_name(&class_type.name.to_string()) =>
+        {
+            assert!(query.parameter_names.is_none());
+
+            let definition_index = if !class_type.properties.forward_reference() && class_type.fields.is_some() {
+                Some(query.type_index)
+            } else {
+                type_names.anonymous_definition(&class_type.name.to_string())
+            };
+
+            let inlined = match definition_index {
+                Some(index) => inline_anonymous_definition(
+                    class_table, type_sizes, type_names, machine_type, type_info, type_finder, index,
+                )?,
+                None => None,
+            };
+
+            let mut name = inlined
+                .unwrap_or_else(|| crate::namespaces::render_reference(&class_type.name.to_string().to_string()));
+
+            if let Some(field_name) = query.declaration_name.as_ref() {
+                name.push(' ');
+                name.push_str(field_name.as_str());
+            }
+
+            name
+        }
+
+        pdb2::TypeData::Union(union_type)
+            if is_anonymous_type_name(&union_type.name.to_string()) =>
+        {
+            assert!(query.parameter_names.is_none());
+
+            let definition_index = if !union_type.properties.forward_reference() {
+                Some(query.type_index)
+            } else {
+                type_names.anonymous_definition(&union_type.name.to_string())
+            };
+
+            let inlined = match definition_index {
+                Some(index) => inline_anonymous_definition(
+                    class_table, type_sizes, type_names, machine_type, type_info, type_finder, index,
+                )?,
+                None => None,
+            };
+
+            let mut name = inlined
+                .unwrap_or_else(|| crate::namespaces::render_reference(&union_type.name.to_string().to_string()));
+
+            if let Some(field_name) = query.declaration_name.as_ref() {
+                name.push(' ');
+                name.push_str(field_name.as_str());
+            }
+
+            name
+        }
+
+        pdb2::TypeData::Enumeration(enum_type)
+            if is_anonymous_type_name(&enum_type.name.to_string()) =>
+        {
+            assert!(query.parameter_names.is_none());
+
+            let definition_index = if !enum_type.properties.forward_reference() {
+                Some(query.type_index)
+            } else {
+                type_names.anonymous_definition(&enum_type.name.to_string())
+            };
+
+            let inlined = match definition_index {
+                Some(index) => inline_anonymous_definition(
+                    class_table, type_sizes, type_names, machine_type, type_info, type_finder, index,
+                )?,
+                None => None,
+            };
+
+            let mut name = inlined
+                .unwrap_or_else(|| crate::namespaces::render_reference(&enum_type.name.to_string().to_string()));
+
+            if let Some(field_name) = query.declaration_name.as_ref() {
+                name.push(' ');
+                name.push_str(field_name.as_str());
+            }
+
+            name
+        }
+
         pdb2::TypeData::Class(pdb2::ClassType { name, .. })
         | pdb2::TypeData::Enumeration(pdb2::EnumerationType { name, .. })
         | pdb2::TypeData::Union(pdb2::UnionType { name, .. }) => {
             assert!(query.parameter_names.is_none());
 
-            let mut name = name.to_string().to_string();
+            let mut name = crate::namespaces::render_reference(&name.to_string().to_string());
 
             if let Some(modifier) = query.modifier {
                 if modifier.constant {
@@ -661,7 +891,7 @@ pub fn type_name<'p>(
         name = "std::string".to_string();
     }
 
-    type_names.insert(query, name.clone());
+    type_names.cache.insert(query, name.clone());
 
     Ok(name)
 }
@@ -1028,7 +1258,7 @@ pub fn parse_type_name(name: &str, keep_template: bool) -> (String, usize) {
 pub fn find_class_declaring_intro_method(
     class_table: &mut Vec<Rc<RefCell<Class>>>,
     type_sizes: &mut HashMap<String, u64>,
-    type_names: &mut HashMap<TypeNameQuery, String>,
+    type_names: &mut TypeNames,
     machine_type: pdb2::MachineType,
     type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder,

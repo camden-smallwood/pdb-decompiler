@@ -1,6 +1,9 @@
 mod cpp;
+mod debug_blocks;
 mod decompile;
+mod namespaces;
 mod options;
+mod param_const;
 mod reorganize;
 mod tabbed;
 pub mod utils;
@@ -17,6 +20,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         if !out.is_dir() {
             *out = PathBuf::from(format!("{}/", out.to_string_lossy()));
         }
+    }
+
+    // Dumping debug blocks requires unrolled procedure bodies.
+    if options.export_debug_blocks_json.is_some() {
+        options.unroll_functions = true;
     }
 
     let mut function_scopes_modules = None;

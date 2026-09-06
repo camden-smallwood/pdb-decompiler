@@ -1,4 +1,4 @@
-use crate::{cpp, tabbed::TabbedDisplay};
+use crate::cpp;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -19,7 +19,10 @@ pub enum ModuleMember {
     Preprocessor(String),
     Include(bool, PathBuf),
     Comment(String),
-    Block {
+    /// A reconstructed namespace block. `name` is `None` for an unnamed (anonymous)
+    /// namespace, `Some(ident)` for a named one. Members are emitted indented inside.
+    Namespace {
+        name: Option<String>,
         members: Vec<ModuleMember>,
     },
     Class(Rc<RefCell<cpp::Class>>),
@@ -29,6 +32,7 @@ pub enum ModuleMember {
     Constant(String),
     Data {
         is_static: bool,
+        is_extern: bool,
         name: String,
         signature: String,
         address: u64,
@@ -42,7 +46,6 @@ pub enum ModuleMember {
         line: Option<u32>,
     },
     Procedure(cpp::Procedure),
-    Tagged(String, Box<ModuleMember>),
     FunctionCall(String, Vec<String>),
 }
 
@@ -62,30 +65,36 @@ impl fmt::Display for ModuleMember {
                 },
             ),
             Self::Comment(c) => write!(f, "/* {c} */"),
-            Self::Block { members } => {
+            Self::Namespace { name, members } => {
+                match name {
+                    Some(name) => writeln!(f, "namespace {name}")?,
+                    None => writeln!(f, "namespace")?,
+                }
+
                 writeln!(f, "{{")?;
 
-                for member in members.iter() {
-                    member.tabbed_fmt(1, f)?;
+                for (i, member) in members.iter().enumerate() {
+                    if i != 0 {
+                        writeln!(f)?;
+                    }
+
+                    member.fmt(f)?;
                     writeln!(f)?;
                 }
 
-                writeln!(f, "}}")
+                write!(f, "}}")
             },
             Self::Class(c) => c.borrow().fmt(f),
             Self::Enum(e) => e.fmt(f),
             Self::TypeDefinition(u) => u.fmt(f),
             Self::UsingNamespace(n) => f.write_fmt(format_args!("using namespace {n};")),
             Self::Constant(c) => c.fmt(f),
-            Self::Data { is_static, signature, .. } => {
+            Self::Data { is_static, is_extern, signature, .. } => {
                 write!(
                     f,
-                    "{}{}",
-                    if *is_static {
-                        "static "
-                    } else {
-                        ""
-                    },
+                    "{}{}{}",
+                    if *is_extern { "extern " } else { "" },
+                    if *is_static { "static " } else { "" },
                     signature,
                 )
             },
@@ -102,15 +111,6 @@ impl fmt::Display for ModuleMember {
                 )
             },
             Self::Procedure(p) => p.fmt(f),
-            Self::Tagged(tag, m) => {
-                if let cpp::ModuleMember::Block { .. } = m.as_ref() {
-                    writeln!(f, "{tag}")?;
-                    write!(f, "{m}")?;
-                } else {
-                    write!(f, "{tag} {m}")?;
-                }
-                Ok(())
-            },
             Self::FunctionCall(function, parameters) => write!(f, "{}({});", function, parameters.join(", ")),
         }
     }
@@ -440,7 +440,7 @@ impl Module {
         &mut self,
         class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
         type_sizes: &mut HashMap<String, u64>,
-        type_names: &mut HashMap<cpp::TypeNameQuery, String>,
+        type_names: &mut cpp::TypeNames,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -496,6 +496,10 @@ impl Module {
                 }));
 
                 if !properties.forward_reference() {
+                    if fields.is_none() {
+                        return Ok(());
+                    }
+                    
                     if !class_table.iter().any(|c| c.borrow().index == type_index) {
                         class_table.push(definition.clone());
                     }
@@ -2049,13 +2053,7 @@ impl fmt::Display for Module {
         let mut prev_item: Option<&ModuleMember> = None;
 
         for item in self.members.iter() {
-            if !matches!(
-                (prev_item, item),
-                (
-                    Some(ModuleMember::Tagged(_, _)),
-                    ModuleMember::Procedure(cpp::Procedure { .. }) | ModuleMember::Tagged(_, _)
-                )
-            ) {
+            {
                 if !matches!(
                     (prev_item, item),
                     (
@@ -2070,6 +2068,10 @@ impl fmt::Display for Module {
                     ) | (
                         Some(ModuleMember::Procedure(cpp::Procedure { body: None, .. })),
                         ModuleMember::Procedure(cpp::Procedure { body: None, .. })
+                    // Keep an `extern` prototype attached to the definition that follows it.
+                    ) | (
+                        Some(ModuleMember::Procedure(cpp::Procedure { is_extern: true, .. })),
+                        ModuleMember::Procedure(cpp::Procedure { .. })
                     ) | (
                         Some(ModuleMember::TypeDefinition(_)),
                         ModuleMember::TypeDefinition(_)
@@ -2087,7 +2089,7 @@ impl fmt::Display for Module {
                     if !skip_empty_line {
                         writeln!(f)?;
                     }
-                    
+
                     if !has_explicit_empty_lines {
                         skip_empty_line = false;
                     }

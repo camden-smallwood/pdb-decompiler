@@ -39,6 +39,11 @@ pub struct Options {
     #[structopt(long)]
     pub verbose_blocks: bool,
 
+    /// Dumps each procedure's unrolled scope tree (variable declarations in nested
+    /// blocks) to a JSON file keyed by mangled function name. (Forces unrolling.)
+    #[structopt(long, parse(from_os_str))]
+    pub export_debug_blocks_json: Option<PathBuf>,
+
     /// The file containing all function pseudocode in a JSON mapping. (Optional)
     #[structopt(long)]
     pub pseudocode_json_path: Option<PathBuf>,

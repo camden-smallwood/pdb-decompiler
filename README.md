@@ -21,12 +21,14 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 | Short | Long | Description |
 |-|-|-|
 | `-c` | `--export-cpp` | Whether to export C++ code. |
+| | `--export-function-types` | Whether to generate IDA script statements that try to set function types. |
 | | `--export-pseudocode-to-files` | Whether to generate IDA script statements that export pseudocode to their appropriate source files. |
 | | `--export-pseudocode-to-json` | Whether to generate IDA script statements that export pseudocode to a JSON mapping file. |
 | | `--force-no-inlines` | Forces a `__declspec(noinline)` attribute for functions that were never inlined but did not have the attribute. |
 | `-h` | `--help` | Prints help information. |
 | `-r` | `--reorganize` | Whether to reorganize generated C++ code to Bungie's coding standards. (Experimental) |
 | `-u` | `--unroll-functions` | Whether to include scope information in decompiled function stubs. (Experimental) |
+| | `--verbose-blocks` | Whether to write extra block level information. |
 | `-V` | `--version` | Prints version information. |
 
 ### Options
@@ -34,6 +36,7 @@ cargo run --release -- --out=/path/to/out/ --pdb=/path/to/file.pdb --base-addres
 | Short | Long | Description |
 |-|-|-|
 | `-b` | `--base-address <base-address>` | The base address to add when resolving an RVA. (Optional) |
+| | `--export-debug-blocks-json <export-debug-blocks-json>` | Dumps each procedure's unrolled scope tree (variable declarations in nested blocks) to a JSON file keyed by mangled function name. (Forces unrolling.) |
 | | `--function-scopes-out <function-scopes-out>` | The output directory to dump all function scopes C++ code to. |
 | | `--function-scopes-pdb <function-scopes-pdb>` | The file path to the MSVC PDB file to decompile for extra function scope information. |
 | `-o` | `--out <out>` | The output directory to dump all C++ code to. |

@@ -87,7 +87,7 @@ impl fmt::Display for Method {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}{}{}{}{};{}",
+            "{}{}{}{}{};{}{}",
 
             match self.field_attributes {
                 Some(field_attributes) => {
@@ -144,6 +144,12 @@ impl fmt::Display for Method {
             } else {
                 ""
             },
+
+            if let Some(vtable_offset) = self.vtable_offset {
+                format!(" /* vtable_offset: {} */", vtable_offset)
+            } else {
+                format!("")
+            },
         )
     }
 }
@@ -162,6 +168,14 @@ pub struct Class {
     pub members: Vec<ClassMember>,
     pub properties: Option<pdb2::TypeProperties>,
     pub field_attributes: Option<pdb2::FieldAttributes>,
+}
+
+/// Whether a type name's final `::` component is an MSVC anonymous placeholder
+/// (`<unnamed-tag>`, `<unnamed-type-*>`) — i.e. the type itself is anonymous.
+/// Splitting on the last `::` avoids matching a placeholder that only appears
+/// inside template arguments (e.g. `hkArray<<unnamed-tag>>`).
+pub fn is_anonymous_type_name(name: &str) -> bool {
+    name.rsplit("::").next().map_or(false, |last| last.starts_with("<unnamed"))
 }
 
 fn find_unnamed_unions_in_struct(fields: &[&Field]) -> Vec<Range<usize>> {
@@ -447,7 +461,7 @@ impl Class {
         &mut self,
         class_table: &mut Vec<Rc<RefCell<Class>>>,
         type_sizes: &mut HashMap<String, u64>,
-        type_names: &mut HashMap<super::TypeNameQuery, String>,
+        type_names: &mut super::TypeNames,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -513,7 +527,7 @@ impl Class {
         &mut self,
         class_table: &mut Vec<Rc<RefCell<Class>>>,
         type_sizes: &mut HashMap<String, u64>,
-        type_names: &mut HashMap<super::TypeNameQuery, String>,
+        type_names: &mut super::TypeNames,
         machine_type: pdb2::MachineType,
         type_info: &pdb2::TypeInformation,
         type_finder: &pdb2::TypeFinder,
@@ -521,45 +535,89 @@ impl Class {
     ) -> pdb2::Result<()> {
         match *field {
             pdb2::TypeData::Member(ref data) => {
-                let bitfield_info = match type_finder.find(data.field_type)?.parse()? {
+                let field_type_data = type_finder.find(data.field_type)?.parse()?;
+
+                let bitfield_info = match &field_type_data {
                     pdb2::TypeData::Bitfield(data) => Some((data.position, data.length)),
                     _ => None,
                 };
-                
+
+                // If the field's type is an anonymous nested type (`<unnamed-tag>` /
+                // `<unnamed-type-*>`), inline its definition as an anonymous struct/union
+                // member (`union { ... } name;`) instead of emitting the invalid name.
+                let anonymous_source = match &field_type_data {
+                    pdb2::TypeData::Class(c)
+                        if is_anonymous_type_name(&c.name.to_string()) && !c.properties.forward_reference() =>
+                    {
+                        c.fields.map(|fields| (Some(c.kind), false, fields, c.size, c.properties))
+                    }
+
+                    pdb2::TypeData::Union(u)
+                        if is_anonymous_type_name(&u.name.to_string()) && !u.properties.forward_reference() =>
+                    {
+                        Some((None, true, u.fields, u.size, u.properties))
+                    }
+
+                    _ => None,
+                };
+
+                let inlined = if let Some((kind, is_union, fields, size, properties)) = anonymous_source {
+                    let mut anonymous = Class {
+                        kind,
+                        is_union,
+                        is_declaration: false,
+                        name: String::new(),
+                        index: data.field_type,
+                        depth: self.depth + 1,
+                        line: 0,
+                        size,
+                        base_classes: vec![],
+                        members: vec![],
+                        properties: Some(properties),
+                        field_attributes: None,
+                    };
+
+                    anonymous.add_members(class_table, type_sizes, type_names, machine_type, type_info, type_finder, fields)?;
+
+                    Some(anonymous.to_string().trim_start().trim_end_matches(';').to_string())
+                } else {
+                    None
+                };
+
+                let (type_name_str, signature) = if let Some(inlined) = inlined {
+                    let signature = format!("{} {}", inlined, data.name.to_string());
+                    (inlined, signature)
+                } else {
+                    (
+                        type_name(
+                            class_table, type_sizes, type_names, machine_type, type_info, type_finder,
+                            TypeNameQuery {
+                                type_index: data.field_type,
+                                modifier: None,
+                                declaration_name: None,
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
+                        )?,
+                        type_name(
+                            class_table, type_sizes, type_names, machine_type, type_info, type_finder,
+                            TypeNameQuery {
+                                type_index: data.field_type,
+                                modifier: None,
+                                declaration_name: Some(data.name.to_string().to_string()),
+                                parameter_names: None,
+                                include_this: None,
+                                force_return_type: false,
+                            },
+                        )?,
+                    )
+                };
+
                 self.members.push(ClassMember::Field(Field {
-                    type_name: type_name(
-                        class_table,
-                        type_sizes,
-                        type_names,
-                        machine_type,
-                        type_info,
-                        type_finder,
-                        TypeNameQuery {
-                            type_index: data.field_type,
-                            modifier: None,
-                            declaration_name: None,
-                            parameter_names: None,
-                            include_this: None,
-                            force_return_type: false,
-                        },
-                    )?,
+                    type_name: type_name_str,
                     name: data.name.to_string().to_string(),
-                    signature: type_name(
-                        class_table,
-                        type_sizes,
-                        type_names,
-                        machine_type,
-                        type_info,
-                        type_finder,
-                        TypeNameQuery {
-                            type_index: data.field_type,
-                            modifier: None,
-                            declaration_name: Some(data.name.to_string().to_string()),
-                            parameter_names: None,
-                            include_this: None,
-                            force_return_type: false,
-                        },
-                    )?,
+                    signature,
                     offset: Some(data.offset),
                     size: type_size(class_table, type_sizes, machine_type, type_info, type_finder, data.field_type)?,
                     bitfield_info,
@@ -689,6 +747,15 @@ impl Class {
                 // TODO: does this need handling?
             }
 
+            // Drop compiler-generated members (implicit ctor/dtor/assignment, and the special
+            // members of anonymous types): they were never written in source. `compgenx` and
+            // `pseudo` mark them; anonymous-type special members additionally carry the
+            // `<unnamed-type-*>` placeholder name.
+            pdb2::TypeData::Method(ref data)
+                if data.attributes.is_pseudo()
+                    || data.attributes.is_compgenx()
+                    || data.name.to_string().contains("<unnamed") => (),
+
             pdb2::TypeData::Method(ref data) => match data.name.to_string().to_string().as_str() {
                 // Ignore compiler-generated functions:
                 "__vecDelDtor" | "__local_vftable_ctor_closure" | "__autoclassinit" => (),
@@ -736,16 +803,22 @@ impl Class {
                 }
             }
 
+            // See the `Method` arm above: skip anonymous-type special members.
+            pdb2::TypeData::OverloadedMethod(ref data) if data.name.to_string().contains("<unnamed") => (),
+
             pdb2::TypeData::OverloadedMethod(ref data) => {
                 match type_finder.find(data.method_list)?.parse() {
                     Ok(pdb2::TypeData::MethodList(method_list)) => {
                         for pdb2::MethodListEntry {
                             attributes,
                             method_type,
-                            ..
+                            vtable_offset
                         } in method_list.methods {
                             match data.name.to_string().to_string().as_str() {
                                 "__vecDelDtor" | "__local_vftable_ctor_closure" | "__autoclassinit" => (),
+
+                                // Drop compiler-generated overloads (see the `Method` arm).
+                                _ if attributes.is_pseudo() || attributes.is_compgenx() => (),
 
                                 _ => {
                                     let method = match type_finder.find(method_type)?.parse() {
@@ -778,7 +851,7 @@ impl Class {
                                                 field_attributes: Some(attributes),
                                                 function_attributes: function_data.attributes,
                                                 modifier,
-                                                vtable_offset: None,
+                                                vtable_offset,
                                             }
                                         }
                             
@@ -804,9 +877,16 @@ impl Class {
             }
 
             pdb2::TypeData::Nested(ref nested_data) => {
+                // Anonymous nested types (`<unnamed-tag>` / `<unnamed-type-*>`) are inlined
+                // at the field that references them, so don't also emit a named nested type
+                // member with the (invalid) placeholder name.
+                if is_anonymous_type_name(&nested_data.name.to_string()) {
+                    return Ok(());
+                }
+
                 let nested_type_item = type_finder.find(nested_data.nested_type)?;
                 let nested_type_data = nested_type_item.parse()?;
-                
+
                 match &nested_type_data {
                     data if matches!(data, pdb2::TypeData::Class(_) | pdb2::TypeData::Union(_)) => {
                         let (name, size, properties, fields, derived_from) = match &data {
@@ -1035,7 +1115,7 @@ impl fmt::Display for Class {
             if self.name.is_empty() {
                 String::new()
             } else {
-                format!(" {}", self.name)
+                format!(" {}", crate::namespaces::render_reference(&self.name))
             },
 
             if self.field_attributes.as_ref().map(|a| a.sealed() || a.noinherit()).unwrap_or(false) {
@@ -1122,8 +1202,24 @@ impl fmt::Display for Class {
             for _ in 0..self.depth {
                 write!(f, "    ")?;
             }
-    
-            writeln!(f, "    {}", member)?;
+
+            // A `Field` signature can be multi-line when its type is an inlined anonymous
+            // struct/union/enum (rendered at depth 0). Indent the continuation lines to this
+            // member's level. Nested `Class`/`Enum` members already indent themselves.
+            match member {
+                ClassMember::Field(_) => {
+                    let rendered = format!("{}", member);
+                    let indent = "    ".repeat(self.depth as usize + 1);
+                    for (i, line) in rendered.split('\n').enumerate() {
+                        if i == 0 {
+                            writeln!(f, "    {}", line)?;
+                        } else {
+                            writeln!(f, "{}{}", indent, line)?;
+                        }
+                    }
+                }
+                _ => writeln!(f, "    {}", member)?,
+            }
         }
 
         for _ in 0..self.depth {
@@ -1137,7 +1233,8 @@ impl fmt::Display for Class {
                 write!(f, "    ")?;
             }
 
-            write!(f, "static_assert(sizeof({}) == {}, \"Invalid {} size\");", self.name, self.size, self.name)?;
+            let sanitized_name = crate::namespaces::render_reference(&self.name);
+            write!(f, "static_assert(sizeof({}) == {}, \"Invalid {} size\");", sanitized_name, self.size, sanitized_name)?;
         } else {
             write!(f, "}};")?;
         }

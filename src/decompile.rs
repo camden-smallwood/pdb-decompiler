@@ -2,7 +2,7 @@ use crate::{cpp, options::Options};
 use pdb2::FallibleIterator;
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     error::Error,
     fs::{File, OpenOptions},
     io::Write,
@@ -14,7 +14,18 @@ pub struct Decompiler {
     pub options: Options,
     pub class_table: Vec<Rc<RefCell<cpp::Class>>>,
     pub type_sizes: HashMap<String, u64>,
-    pub type_names: HashMap<cpp::TypeNameQuery, String>,
+    pub type_names: cpp::TypeNames,
+    /// Fully-qualified names of every known class/union/enum, used to tell
+    /// namespace qualifiers apart from class scopes during namespace reconstruction.
+    pub type_name_set: HashSet<String>,
+    /// Mangled (decorated) public symbol name keyed by resolved address, used to
+    /// recover top-level pointer `const` on parameters that the type record drops.
+    pub mangled_by_address: HashMap<u64, String>,
+    /// For each type name that has multiple full (non-forward-reference) records left
+    /// by incremental refactoring, the single canonical `TypeIndex` IDA/DIA resolve to:
+    /// the TPI hash-adjuster entry if present, else the highest-index (latest) record.
+    /// Names with a single definition are absent.
+    pub canonical_type_index: HashMap<String, pdb2::TypeIndex>,
     pub modules: HashMap<String, Rc<RefCell<cpp::Module>>>,
     pub function_scopes_modules: Option<HashMap<String, Rc<RefCell<cpp::Module>>>>,
     pub script_file: Option<File>,
@@ -40,7 +51,10 @@ impl Decompiler {
             options,
             class_table: vec![],
             type_sizes: HashMap::new(),
-            type_names: HashMap::new(),
+            type_names: cpp::TypeNames::default(),
+            type_name_set: HashSet::new(),
+            mangled_by_address: HashMap::new(),
+            canonical_type_index: HashMap::new(),
             modules: HashMap::new(),
             function_scopes_modules: None,
             script_file: None,
@@ -83,6 +97,99 @@ impl Decompiler {
         
         let type_finder = type_info.finder();
         let id_finder = id_info.finder();
+
+        // Map each public symbol's resolved address to its mangled name, so parameter
+        // `const` lost from the type records can be recovered from the mangled name.
+        {
+            let mut symbols = global_symbols.iter();
+            while let Some(symbol) = symbols.next()? {
+                if let Ok(pdb2::SymbolData::Public(public_symbol)) = symbol.parse()
+                    && let Some(rva) = public_symbol.offset.to_rva(&address_map)
+                {
+                    let address = self.options.base_address.unwrap_or(0) + rva.0 as u64;
+                    self.mangled_by_address
+                        .entry(address)
+                        .or_insert_with(|| public_symbol.name.to_string().to_string());
+                }
+            }
+        }
+
+        // Resolve which record is canonical for each type name that has duplicates. MSVC's
+        // linker never rewrites a type record: when a type is redefined across (incremental)
+        // builds it appends a new record at a higher index and leaves the stale ones behind.
+        // The definition IDA/DIA select is the TPI hash-adjuster entry if one exists, otherwise
+        // the highest-index (latest) non-forward-reference record. We keep only that one when
+        // emitting, dropping the stale duplicates.
+        {
+            let adjusters = pdb.type_adjusters().unwrap_or_default();
+
+            let mut groups: HashMap<String, Vec<pdb2::TypeIndex>> = HashMap::new();
+            // Anonymous type qualified name -> a full-definition index (with a field list). Lets
+            // `type_name` resolve a forward-reference reference to an anonymous type back to its
+            // inlinable definition (references reach the fieldless forward-ref record).
+            let mut anonymous_definitions: HashMap<String, pdb2::TypeIndex> = HashMap::new();
+            let mut iter = type_info.iter();
+            while let Some(item) = iter.next()? {
+                if !matches!(
+                    item.raw_kind(),
+                    pdb2::LF_CLASS
+                        | pdb2::LF_CLASS_ST
+                        | pdb2::LF_STRUCTURE
+                        | pdb2::LF_STRUCTURE_ST
+                        | pdb2::LF_INTERFACE
+                        | pdb2::LF_UNION
+                        | pdb2::LF_UNION_ST
+                        | pdb2::LF_ENUM
+                        | pdb2::LF_ENUM_ST,
+                ) {
+                    continue;
+                }
+
+                let (name, forward_reference, inlinable_anonymous) = match item.parse() {
+                    Ok(pdb2::TypeData::Class(class_type)) => {
+                        let name = class_type.name.to_string().to_string();
+                        let inlinable = class_type.fields.is_some() && cpp::is_anonymous_type_name(&name);
+                        (name, class_type.properties.forward_reference(), inlinable)
+                    }
+                    Ok(pdb2::TypeData::Union(union_type)) => {
+                        let name = union_type.name.to_string().to_string();
+                        let inlinable = cpp::is_anonymous_type_name(&name);
+                        (name, union_type.properties.forward_reference(), inlinable)
+                    }
+                    Ok(pdb2::TypeData::Enumeration(enum_type)) => {
+                        let name = enum_type.name.to_string().to_string();
+                        let inlinable = cpp::is_anonymous_type_name(&name);
+                        (name, enum_type.properties.forward_reference(), inlinable)
+                    }
+                    _ => continue,
+                };
+
+                if forward_reference {
+                    continue;
+                }
+
+                if inlinable_anonymous {
+                    anonymous_definitions.entry(name.clone()).or_insert_with(|| item.index());
+                }
+
+                groups.entry(name).or_default().push(item.index());
+            }
+
+            self.type_names.set_anonymous_definitions(anonymous_definitions);
+
+            for (name, mut indices) in groups {
+                if indices.len() < 2 {
+                    continue;
+                }
+
+                let canonical = adjusters.get(&name).copied().unwrap_or_else(|| {
+                    indices.sort_by_key(|index| index.0);
+                    *indices.last().unwrap()
+                });
+
+                self.canonical_type_index.insert(name, canonical);
+            }
+        }
 
         let out_path = self.options.out.as_ref()
             .ok_or_else(|| "Out path not supplied".to_string())?;
@@ -183,6 +290,17 @@ impl Decompiler {
                 if size != 0 {
                     *self.type_sizes.entry(name).or_default() = size;
                 }
+            }
+
+            // Record every known type's fully-qualified name so namespace
+            // reconstruction can distinguish namespace qualifiers from class scopes.
+            if let Some(type_name) = match &type_data {
+                pdb2::TypeData::Class(class_type) => Some(class_type.name.to_string().to_string()),
+                pdb2::TypeData::Union(union_type) => Some(union_type.name.to_string().to_string()),
+                pdb2::TypeData::Enumeration(enum_type) => Some(enum_type.name.to_string().to_string()),
+                _ => None,
+            } {
+                self.type_name_set.insert(crate::namespaces::normalize_anon(&type_name));
             }
 
             if let Some(forward_reference) = match type_data {
@@ -339,6 +457,10 @@ impl Decompiler {
 
     #[inline(always)]
     fn process_modules<'a, 's>(&mut self, context: &mut DecompileContext<'a, 's>) -> Result<(), Box<dyn Error>> {
+        // Snapshot the canonical index map so the per-module dedup below can read it while
+        // `self.modules` is borrowed mutably.
+        let canonical_type_index = self.canonical_type_index.clone();
+
         let module_global_symbols = self.load_module_global_symbols(context)?;
 
         let mut module_iter = context.debug_info.modules().map_err(|e| format!("does not contain debug module info: {e}"))?;
@@ -665,11 +787,10 @@ impl Decompiler {
                     cpp::ModuleMember::Class(class_data) => {
                         let is_nested_type = {
                             let class_data = class_data.borrow();
-                            if let Some(properties) = class_data.properties.as_ref() {
-                                properties.is_nested_type()
-                            } else {
-                                false
-                            }
+                            // Anonymous types are inlined into their parent field, so drop
+                            // the redundant top-level definition too.
+                            cpp::is_anonymous_type_name(&class_data.name)
+                                || class_data.properties.as_ref().map(|p| p.is_nested_type()).unwrap_or(false)
                         };
 
                         if is_nested_type {
@@ -686,7 +807,7 @@ impl Decompiler {
                     }
                     
                     cpp::ModuleMember::Enum(enum_data) => {
-                        if enum_data.properties.is_nested_type() {
+                        if cpp::is_anonymous_type_name(&enum_data.name) || enum_data.properties.is_nested_type() {
                             // println!("WARNING: Removing unreferenced nested enum in toplevel: \"{}\" in \"{}\"", enum_data.name, module.path.display());
                             module.members.remove(i);
                         }
@@ -694,6 +815,54 @@ impl Decompiler {
 
                     _ => {}
                 }
+            }
+
+            //
+            // Deduplicate types that share a qualified name. Incremental refactoring leaves
+            // several stale records for one type in the PDB; keep only the definition IDA/DIA
+            // resolve to, matched through `canonical_type_index` (the TPI hash-adjuster entry,
+            // else the latest record). When the canonical record didn't reach this module we
+            // fall back to the highest index present, so a type is never dropped entirely.
+            // Types in different namespaces have different qualified names, so distinct types
+            // like `e_map_id` and `halo_interface::e_map_id` are preserved.
+            //
+
+            {
+                let member_identity = |member: &cpp::ModuleMember| -> Option<(String, pdb2::TypeIndex)> {
+                    match member {
+                        cpp::ModuleMember::Class(class_data) => {
+                            let class_data = class_data.borrow();
+                            Some((class_data.name.clone(), class_data.index))
+                        }
+                        cpp::ModuleMember::Enum(enum_data) => Some((enum_data.name.clone(), enum_data.index)),
+                        _ => None,
+                    }
+                };
+
+                let mut present: HashMap<String, Vec<pdb2::TypeIndex>> = HashMap::new();
+                for member in module.members.iter() {
+                    if let Some((name, index)) = member_identity(member) {
+                        present.entry(name).or_default().push(index);
+                    }
+                }
+
+                let mut keep_index: HashMap<String, pdb2::TypeIndex> = HashMap::new();
+                for (name, indices) in present.iter() {
+                    let chosen = match canonical_type_index.get(name) {
+                        Some(canonical) if indices.contains(canonical) => *canonical,
+                        _ => *indices.iter().max_by_key(|index| index.0).unwrap(),
+                    };
+                    keep_index.insert(name.clone(), chosen);
+                }
+
+                let mut kept: HashSet<String> = HashSet::new();
+                module.members.retain(|member| {
+                    let Some((name, index)) = member_identity(member) else {
+                        return true;
+                    };
+
+                    keep_index.get(&name) == Some(&index) && kept.insert(name)
+                });
             }
         }
 
@@ -801,16 +970,21 @@ impl Decompiler {
 
             if self.options.reorganize {
                 crate::reorganize::reorganize_module_members(
-                    &mut self.class_table,
-                    &mut self.type_sizes,
-                    &mut self.type_names,
-                    context.machine_type,
-                    context.type_info,
                     &context.type_finder,
                     &mut module,
                     compound_enums.as_slice(),
                 )?;
             }
+
+            //
+            // Reconstruct namespace blocks from fully-qualified names
+            //
+
+            let grouped = crate::namespaces::group_module_members(
+                std::mem::take(&mut module.members),
+                &self.type_name_set,
+            );
+            module.members = grouped;
 
             //
             // Write the module out to its file
@@ -839,6 +1013,14 @@ impl Decompiler {
                     panic!("Failed to write to file: \"{}\" - {e}", path.display());
                 }
             }
+        }
+
+        //
+        // Dump debug blocks (unrolled scope trees) to JSON if requested
+        //
+
+        if let Some(path) = self.options.export_debug_blocks_json.as_ref() {
+            crate::debug_blocks::export_debug_blocks_json(&self.modules, path)?;
         }
 
         Ok(())
@@ -1197,6 +1379,24 @@ impl Decompiler {
             }
 
             pdb2::SymbolData::UserDefinedType(udt_symbol) => {
+                // Drop self-referential typedefs (`typedef X X;`) that MSVC emits for a
+                // type's own name (common for anonymous-namespace classes).
+                if let Ok(target) = context.type_finder.find(udt_symbol.type_index).and_then(|t| t.parse()) {
+                    let target_name = match target {
+                        pdb2::TypeData::Class(c) => Some(c.name.to_string().to_string()),
+                        pdb2::TypeData::Enumeration(e) => Some(e.name.to_string().to_string()),
+                        pdb2::TypeData::Union(u) => Some(u.name.to_string().to_string()),
+                        _ => None,
+                    };
+
+                    if let Some(target_name) = target_name
+                        && crate::namespaces::normalize_anon(&target_name)
+                            == crate::namespaces::normalize_anon(&udt_symbol.name.to_string())
+                    {
+                        return Ok(());
+                    }
+                }
+
                 let signature = cpp::type_name(
                     &mut self.class_table,
                     &mut self.type_sizes,
@@ -1247,6 +1447,12 @@ impl Decompiler {
 
                 if type_name.starts_with("float const ") {
                     // println!("WARNING: failed to decompile constant float in \"{}\": {symbol_data:#?}", module_file_path.to_string_lossy());
+                    return Ok(());
+                }
+
+                // Drop enumerators of anonymous enums (`const Class::<unnamed-tag> x = ...`) —
+                // the `<unnamed-tag>` type has no valid spelling and the value lives in the class.
+                if type_name.contains("<unnamed") {
                     return Ok(());
                 }
 
@@ -1309,9 +1515,10 @@ impl Decompiler {
 
                 module.borrow_mut().members.push(cpp::ModuleMember::Data {
                     is_static: !data_symbol.global,
+                    is_extern: false,
                     name: data_symbol.name.to_string().to_string(),
                     signature: format!(
-                        "{}; // 0x{address:X}",
+                        "{};",
                         cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
@@ -1404,7 +1611,7 @@ impl Decompiler {
                     is_static: !thread_storage_symbol.global,
                     name: thread_storage_symbol.name.to_string().to_string(),
                     signature: format!(
-                        "thread_local {}; // 0x{address:X}",
+                        "thread_local {};",
                         cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
@@ -1598,6 +1805,16 @@ impl Decompiler {
                     return Ok(());
                 }
 
+                // Build the signature with the namespace prefix stripped from the
+                // function's own qualified name, so an out-of-line definition reads
+                // `void c_foo::bar(...)` inside `namespace blah { }` rather than the
+                // invalid `void blah::c_foo::bar(...)`. Parameter/return references
+                // keep their full qualification (still valid within the block).
+                let declaration_name = crate::namespaces::strip_namespace_prefix(
+                    &procedure_symbol.name.to_string(),
+                    &self.type_name_set,
+                );
+
                 let procedure_signature = cpp::type_name(
                     &mut self.class_table,
                     &mut self.type_sizes,
@@ -1608,14 +1825,34 @@ impl Decompiler {
                     cpp::TypeNameQuery {
                         type_index: procedure_symbol.type_index,
                         modifier: None,
-                        declaration_name: Some(procedure_symbol.name.to_string().to_string()),
+                        declaration_name: Some(declaration_name),
                         parameter_names: Some(parameters.clone()),
                         include_this: None,
                         force_return_type: false,
                     },
                 )?;
 
-                if procedure_signature.starts_with("...") || procedure_signature.contains('$') || procedure_signature.contains('`') {
+                // Recover top-level pointer `const` on parameters. MSVC drops it from
+                // the type records for pointer-to-primitive params, but it survives in
+                // the mangled name; transfer it back by position.
+                let procedure_signature = match self.mangled_by_address.get(&address) {
+                    Some(mangled) => crate::param_const::patch_signature(&procedure_signature, mangled),
+                    None => procedure_signature,
+                };
+
+                // Drop compiler-generated artifacts (EH funclets, dynamic initializers,
+                // local scopes). Real global-scope and namespaced procedures are kept;
+                // namespaced ones get gathered into `namespace { }` blocks before output.
+                // Also drop the out-of-line special members (ctor/dtor/assignment) of an
+                // anonymous type: their mangled name carries the `<unnamed-type-*>` placeholder,
+                // which was never valid C++ — those members never existed in source.
+                if procedure_signature.starts_with("...")
+                    || procedure_symbol.name.to_string().contains("<unnamed")
+                    || matches!(
+                        crate::namespaces::classify(&procedure_symbol.name.to_string(), &self.type_name_set),
+                        crate::namespaces::NameClass::CompilerGenerated,
+                    )
+                {
                     return Ok(());
                 }
 
@@ -1948,6 +2185,7 @@ impl Decompiler {
                     type_index: procedure_symbol.type_index,
                     is_static,
                     is_inline,
+                    is_extern: false,
                     member_method_data,
                     declspecs,
                     name: procedure_symbol.name.to_string().to_string(),
@@ -1957,6 +2195,13 @@ impl Decompiler {
                     return_type,
                     arguments
                 };
+
+                // Drop compiler-generated procedure definitions (implicit ctors/dtors/assignment,
+                // thunks, dynamic initializers): they have no source line and were never written
+                // in source. This matches dropping their declarations in `Class::add_member`.
+                if procedure.line.is_none() {
+                    return Ok(());
+                }
 
                 if let Some(script_file) = self.script_file.as_mut() {
                     if self.options.export_pseudocode_to_files {
@@ -2053,6 +2298,28 @@ impl Decompiler {
         Ok(())
     }
 
+    /// Number of parameters a procedure/member-function type takes (including the
+    /// implicit `this` for member functions). Used to drop leading parameter symbols
+    /// in PDBs that lack `S_LOCAL`.
+    fn procedure_argument_count<'a, 's>(&self, context: &DecompileContext<'a, 's>, type_index: pdb2::TypeIndex) -> usize {
+        fn arglist_len(finder: &pdb2::TypeFinder, arglist: pdb2::TypeIndex) -> usize {
+            match finder.find(arglist).and_then(|t| t.parse()) {
+                Ok(pdb2::TypeData::ArgumentList(d)) => d.arguments.len(),
+                _ => 0,
+            }
+        }
+
+        match context.type_finder.find(type_index).and_then(|t| t.parse()) {
+            Ok(pdb2::TypeData::Procedure(d)) => arglist_len(&context.type_finder, d.argument_list),
+            Ok(pdb2::TypeData::MemberFunction(d)) => {
+                arglist_len(&context.type_finder, d.argument_list)
+                    + if d.this_pointer_type.is_some() { 1 } else { 0 }
+            }
+            Ok(pdb2::TypeData::Modifier(m)) => self.procedure_argument_count(context, m.underlying_type),
+            _ => 0,
+        }
+    }
+
     #[inline(always)]
     fn parse_procedure_symbols<'a, 's>(
         &mut self,
@@ -2063,7 +2330,8 @@ impl Decompiler {
         let register_variable_names = Rc::new(RefCell::new(vec![]));
         let register_relative_names = Rc::new(RefCell::new(vec![]));
         let frame_procedures = Rc::new(RefCell::new(vec![]));
-        
+        let saw_local_symbol = Rc::new(RefCell::new(false));
+
         let mut block = cpp::Block {
             address: None,
             statements: self.parse_statement_symbols(context, symbols, |symbol_data| {
@@ -2071,7 +2339,7 @@ impl Decompiler {
                     pdb2::SymbolData::RegisterVariable(x) => {
                         register_variable_names.borrow_mut().push(x.name.to_string().to_string());
                     }
-        
+
                     pdb2::SymbolData::RegisterRelative(x) => {
                         register_relative_names.borrow_mut().push(x.name.to_string().to_string());
                     }
@@ -2083,13 +2351,28 @@ impl Decompiler {
                     pdb2::SymbolData::FrameProcedure(x) => {
                         frame_procedures.borrow_mut().push(x.clone());
                     }
-        
+
+                    pdb2::SymbolData::Local(_) => {
+                        *saw_local_symbol.borrow_mut() = true;
+                    }
+
                     _ => {}
                 }
-        
+
                 Ok(())
             })?,
         };
+
+        // In PDBs without `S_LOCAL`, parameters and locals are all register/BP-relative
+        // symbols with no flag distinguishing them; by CodeView convention the parameters
+        // lead the scope, so drop that many leading statements. `S_LOCAL` PDBs identify
+        // parameters by the `isparam` flag instead (handled in parse_statement_symbols).
+        if !*saw_local_symbol.borrow() {
+            let argument_count = self.procedure_argument_count(context, procedure_symbol.type_index);
+            for _ in 0..argument_count.min(block.statements.len()) {
+                block.statements.remove(0);
+            }
+        }
 
         let frame_procedures = frame_procedures.borrow().clone();
 
@@ -2132,69 +2415,6 @@ impl Decompiler {
         let register_variable_names = register_variable_names.borrow().to_vec();
         let register_relative_names = register_relative_names.borrow().to_vec();
 
-        // Remove arguments from scope
-        let argument_count = match context.type_finder.find(procedure_symbol.type_index)?.parse()? {
-            pdb2::TypeData::Procedure(procedure_type) => match context.type_finder.find(procedure_type.argument_list)?.parse()? {
-                pdb2::TypeData::ArgumentList(data) => data.arguments.len(),
-
-                data => todo!("{data:?}"),
-            }
-
-            pdb2::TypeData::MemberFunction(member_function_type) => match context.type_finder.find(member_function_type.argument_list)?.parse()? {
-                pdb2::TypeData::ArgumentList(data) => data.arguments.len() + if member_function_type.this_pointer_type.is_some() { 1 } else { 0 },
-
-                data => todo!("{data:?}"),
-            }
-
-            pdb2::TypeData::Primitive(_)
-            | pdb2::TypeData::FieldList(_)
-            | pdb2::TypeData::Pointer(_)
-            | pdb2::TypeData::ArgumentList(_)
-            | pdb2::TypeData::Class(_)
-            | pdb2::TypeData::Union(_)
-            | pdb2::TypeData::Enumeration(_)
-            | pdb2::TypeData::MethodList(_)
-            | pdb2::TypeData::Array(_)
-            | pdb2::TypeData::Bitfield(_)
-            | pdb2::TypeData::VirtualTableShape(_) => 0,
-
-            pdb2::TypeData::Modifier(modifier) => match context.type_finder.find(modifier.underlying_type)?.parse()? {
-                pdb2::TypeData::Procedure(procedure_type) => match context.type_finder.find(procedure_type.argument_list)?.parse()? {
-                    pdb2::TypeData::ArgumentList(data) => data.arguments.len(),
-
-                    data => todo!("{data:?}"),
-                }
-
-                pdb2::TypeData::MemberFunction(member_function_type) => match context.type_finder.find(member_function_type.argument_list)?.parse()? {
-                    pdb2::TypeData::ArgumentList(data) => data.arguments.len() + if member_function_type.this_pointer_type.is_some() { 1 } else { 0 },
-
-                    data => todo!("{data:?}"),
-                }
-
-                pdb2::TypeData::Primitive(_)
-                | pdb2::TypeData::FieldList(_)
-                | pdb2::TypeData::Pointer(_)
-                | pdb2::TypeData::ArgumentList(_)
-                | pdb2::TypeData::Class(_)
-                | pdb2::TypeData::Union(_)
-                | pdb2::TypeData::Enumeration(_)
-                | pdb2::TypeData::MethodList(_)
-                | pdb2::TypeData::Array(_)
-                | pdb2::TypeData::Bitfield(_)
-                | pdb2::TypeData::VirtualTableShape(_) => 0,
-
-                data => todo!("{data:?}"),
-            }
-
-            data => todo!("{data:?}"),
-        };
-
-        if block.statements.len() >= argument_count {
-            (0..argument_count).for_each(|_| {
-                block.statements.remove(0);
-            });
-        }
-        
         Ok((
             register_variable_names,
             register_relative_names,
@@ -2258,6 +2478,15 @@ impl Decompiler {
     ) -> pdb2::Result<Vec<cpp::Statement>> {
         let mut statements = vec![];
 
+        // Per-scope dedup of block variables. Modern PDBs declare a local once as
+        // `S_LOCAL` and again as a register/BP-relative location record; we keep the
+        // `S_LOCAL` one and drop the duplicate location record. Parameters (S_LOCAL
+        // `isparam`) are tracked here so their register/BP records are dropped too —
+        // they already appear in the signature. Functions with no `S_LOCAL` at all
+        // fall through and keep their register/BP locals.
+        let mut parameter_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut emitted_local_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         loop {
             let symbol = match symbols.next() {
                 Ok(symbol) => match symbol {
@@ -2281,6 +2510,13 @@ impl Decompiler {
                 pdb2::SymbolData::ScopeEnd | pdb2::SymbolData::InlineSiteEnd => break,
 
                 pdb2::SymbolData::RegisterVariable(register_variable_symbol) => {
+                    // Drop if this name was already declared via S_LOCAL (a duplicate
+                    // location record) or is a parameter.
+                    let name = register_variable_symbol.name.to_string().to_string();
+                    if parameter_names.contains(&name) || !emitted_local_names.insert(name) {
+                        continue;
+                    }
+
                     statements.push(cpp::Statement::Variable(cpp::Variable {
                         signature: cpp::type_name(
                             &mut self.class_table,
@@ -2304,6 +2540,11 @@ impl Decompiler {
                 }
 
                 pdb2::SymbolData::RegisterRelative(register_relative_symbol) => {
+                    let name = register_relative_symbol.name.to_string().to_string();
+                    if parameter_names.contains(&name) || !emitted_local_names.insert(name) {
+                        continue;
+                    }
+
                     statements.push(cpp::Statement::Variable(cpp::Variable {
                         signature: cpp::type_name(
                             &mut self.class_table,
@@ -2328,6 +2569,11 @@ impl Decompiler {
                 }
 
                 pdb2::SymbolData::BasePointerRelative(base_pointer_relative_symbol) => {
+                    let name = base_pointer_relative_symbol.name.to_string().to_string();
+                    if parameter_names.contains(&name) || !emitted_local_names.insert(name) {
+                        continue;
+                    }
+
                     statements.push(cpp::Statement::Variable(cpp::Variable {
                         signature: cpp::type_name(
                             &mut self.class_table,
@@ -2441,6 +2687,20 @@ impl Decompiler {
                 }
 
                 pdb2::SymbolData::Local(local_symbol) => {
+                    let name = local_symbol.name.to_string().to_string();
+
+                    // Parameters already appear in the signature (record their names so
+                    // the matching register/BP location records are dropped too);
+                    // compiler-generated locals are noise. Emit only true source locals.
+                    if local_symbol.flags.isparam {
+                        parameter_names.insert(name);
+                        continue;
+                    }
+
+                    if local_symbol.flags.compgenx || !emitted_local_names.insert(name) {
+                        continue;
+                    }
+
                     statements.push(cpp::Statement::Variable(cpp::Variable {
                         signature: cpp::type_name(
                             &mut self.class_table,
@@ -2459,7 +2719,7 @@ impl Decompiler {
                             },
                         )?,
                         value: None,
-                        comment: Some("local".into()),
+                        comment: None,
                     }));
                 }
 
@@ -2508,31 +2768,31 @@ impl Decompiler {
                     }));
                 }
 
-                pdb2::SymbolData::CallSiteInfo(call_site_info) => {
-                    let _address = call_site_info.offset
-                        .to_rva(context.address_map)
-                        .map(|rva| self.options.base_address.unwrap_or(0) + rva.0 as u64)
-                        .unwrap();
+                pdb2::SymbolData::CallSiteInfo(_call_site_info) => {
+                    // let _address = call_site_info.offset
+                    //     .to_rva(context.address_map)
+                    //     .map(|rva| self.options.base_address.unwrap_or(0) + rva.0 as u64)
+                    //     .unwrap();
 
-                    let type_name = cpp::type_name(
-                        &mut self.class_table,
-                        &mut self.type_sizes,
-                        &mut self.type_names,
-                        context.machine_type,
-                        &context.type_info,
-                        &context.type_finder,
-                        cpp::TypeNameQuery {
-                            type_index: call_site_info.type_index,
-                            modifier: None,
-                            declaration_name: None,
-                            parameter_names: None,
-                            include_this: None,
-                            force_return_type: false,
-                        },
-                    )?;
+                    // let type_name = cpp::type_name(
+                    //     &mut self.class_table,
+                    //     &mut self.type_sizes,
+                    //     &mut self.type_names,
+                    //     context.machine_type,
+                    //     &context.type_info,
+                    //     &context.type_finder,
+                    //     cpp::TypeNameQuery {
+                    //         type_index: call_site_info.type_index,
+                    //         modifier: None,
+                    //         declaration_name: None,
+                    //         parameter_names: None,
+                    //         include_this: None,
+                    //         force_return_type: false,
+                    //     },
+                    // )?;
 
                     //statements.push(cpp::Statement::Comment(format!("function call @ 0x{:X}: {}", address, type_name)));
-                    statements.push(cpp::Statement::Comment(format!("function call : {}", type_name)));
+                    // statements.push(cpp::Statement::Comment(format!("function call : {}", type_name)));
                 }
 
                 pdb2::SymbolData::Callees(function_list) => {

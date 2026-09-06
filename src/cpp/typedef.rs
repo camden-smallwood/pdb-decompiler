@@ -9,6 +9,6 @@ pub struct TypeDefinition {
 
 impl std::fmt::Display for TypeDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "typedef {};", self.signature)
+        write!(f, "typedef {};", crate::namespaces::render_reference(&self.signature))
     }
 }

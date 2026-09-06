@@ -427,11 +427,6 @@ fn find_enum_or_flags_typedef<'a>(
 
 #[inline(always)]
 pub fn reorganize_module_members(
-    class_table: &mut Vec<Rc<RefCell<cpp::Class>>>,
-    type_sizes: &mut HashMap<String, u64>,
-    type_names: &mut HashMap<cpp::TypeNameQuery, String>,
-    machine_type: pdb2::MachineType,
-    type_info: &pdb2::TypeInformation,
     type_finder: &pdb2::TypeFinder,
     module: &mut cpp::Module,
     compound_enums: &[(cpp::Enum, cpp::TypeDefinition)],
@@ -469,11 +464,11 @@ pub fn reorganize_module_members(
                 method.signature = format!(
                     "{}{}",
                     if is_static && is_inline {
-                        "static _inline "
+                        "static inline "
                     } else if is_static {
                         "static "
                     } else if is_inline {
-                        "_inline "
+                        "inline "
                     } else {
                         ""
                     },
@@ -501,11 +496,11 @@ pub fn reorganize_module_members(
             method.signature = format!(
                 "{}{}",
                 if is_static && is_inline {
-                    "static _inline "
+                    "static inline "
                 } else if is_static {
                     "static "
                 } else if is_inline {
-                    "_inline "
+                    "inline "
                 } else {
                     ""
                 },
@@ -691,14 +686,9 @@ pub fn reorganize_module_members(
             procedure.body = None;
             procedure.address = 0;
 
-            let is_inline = procedure.is_inline;
-            procedure.is_inline = false;
-            
             if !is_member_function {
-                prototype_members.push(cpp::ModuleMember::Tagged(
-                    if is_inline { "extern _inline" } else { "extern" }.into(),
-                    Box::new(cpp::ModuleMember::Procedure(procedure)),
-                ));
+                procedure.is_extern = true;
+                prototype_members.push(cpp::ModuleMember::Procedure(procedure));
             }
         }
     }
@@ -718,15 +708,8 @@ pub fn reorganize_module_members(
 
             procedure.body = None;
             procedure.address = 0;
-            procedure.is_static = false;
 
-            let is_inline = procedure.is_inline;
-            procedure.is_inline = false;
-
-            prototype_members.push(cpp::ModuleMember::Tagged(
-                if is_inline { "_static _inline" } else { "_static" }.into(),
-                Box::new(cpp::ModuleMember::Procedure(procedure)),
-            ));
+            prototype_members.push(cpp::ModuleMember::Procedure(procedure));
         }
     }
 
@@ -739,16 +722,12 @@ pub fn reorganize_module_members(
     }
 
     //--------------------------------------------------------------------------------
-    // public mutable vars
+    // variables — globals and file-local statics mixed, sorted by address
     //--------------------------------------------------------------------------------
 
-    let global_members = module.members.iter().filter(|m| match m {
-        cpp::ModuleMember::Data { is_static: false, signature, .. } => {
-            !signature.starts_with("const ")
-                && !signature.contains("`")
-                && !signature.contains("$")
-        }
-        cpp::ModuleMember::ThreadStorage { signature, .. } => {
+    let mut variable_members = module.members.iter().filter(|m| match m {
+        cpp::ModuleMember::Data { signature, .. }
+        | cpp::ModuleMember::ThreadStorage { signature, .. } => {
             !signature.starts_with("const ")
                 && !signature.contains("`")
                 && !signature.contains("$")
@@ -756,125 +735,54 @@ pub fn reorganize_module_members(
         _ => false,
     }).cloned().collect::<Vec<_>>();
 
-    let mut new_global_members = vec![];
+    // Order the whole chunk by address so externs and statics interleave in memory
+    // order with no separation between them.
+    variable_members.sort_by_key(|m| match m {
+        cpp::ModuleMember::Data { address, .. }
+        | cpp::ModuleMember::ThreadStorage { address, .. } => *address,
+        _ => 0,
+    });
 
-    for mut member in global_members {
-        let mut create_empty_line = false;
+    let mut new_variable_members = vec![];
 
-        // Update thread_local variables
-        if let cpp::ModuleMember::ThreadStorage { name, signature, address, .. } = &mut member {
-            if !matches!(new_global_members.last(), Some(cpp::ModuleMember::EmptyLine)) {
-                new_global_members.push(cpp::ModuleMember::EmptyLine);
+    for mut member in variable_members {
+        match &mut member {
+            // Globals get `extern`; file-local statics keep `static`.
+            cpp::ModuleMember::Data { is_static, is_extern, .. } => {
+                *is_extern = !*is_static;
             }
 
-            new_global_members.push(cpp::ModuleMember::FunctionCall(
-                "static_warning".into(),
-                vec![
-                    format!("\"TODO: fix {name} declaration\""),
-                ],
-            ));
+            cpp::ModuleMember::ThreadStorage { name, signature, address, .. } => {
+                let name = name.clone();
+                let address = *address;
 
-            let Some((declaration, _comment)) = signature.rsplit_once(';') else {
-                panic!("Malformed thread storage signature: \"{}\"", signature);
-            };
-
-            *signature = format!("{declaration} = tls_get<decltype({name})>(0x{address:X});");
-            
-            create_empty_line = true;
-        }
-
-        new_global_members.push(member);
-
-        if create_empty_line {
-            new_global_members.push(cpp::ModuleMember::EmptyLine);
-        }
-    }
-
-    while let Some(cpp::ModuleMember::EmptyLine) = new_global_members.last() {
-        new_global_members.pop();
-    }
-
-    new_members.push(cpp::ModuleMember::Comment("---------- globals".into()));
-    new_members.push(cpp::ModuleMember::EmptyLine);
-
-    if !new_global_members.is_empty() {
-        for member in new_global_members {
-            if let cpp::ModuleMember::Data { name, signature, address, line, .. } = member
-            {
-                new_members.push(cpp::ModuleMember::Tagged(
-                    "extern".into(),
-                    Box::new(cpp::ModuleMember::Data {
-                        is_static: false,
-                        name: name,
-                        signature: signature,
-                        address: address,
-                        line: line
-                    }),
+                new_variable_members.push(cpp::ModuleMember::FunctionCall(
+                    "static_warning".into(),
+                    vec![
+                        format!("\"TODO: fix {name} declaration\""),
+                    ],
                 ));
+
+                let Some((declaration, _comment)) = signature.rsplit_once(';') else {
+                    panic!("Malformed thread storage signature: \"{}\"", signature);
+                };
+
+                *signature = format!("{declaration} = tls_get<decltype({name})>(0x{address:X});");
             }
-            else
-            {
-                new_members.push(member)
-            }
+
+            _ => {}
         }
 
-        while let Some(cpp::ModuleMember::EmptyLine) = new_members.last() {
-            new_members.pop();
-        }
+        new_variable_members.push(member);
+    }
 
+    if !new_variable_members.is_empty() {
+        new_members.push(cpp::ModuleMember::Comment("---------- variables".into()));
         new_members.push(cpp::ModuleMember::EmptyLine);
-    }
-    
-    //--------------------------------------------------------------------------------
-    // private mutable vars
-    //--------------------------------------------------------------------------------
-
-    let private_variable_members = module.members.iter().filter(|m| match m {
-        cpp::ModuleMember::Data { is_static: true, signature, .. } => {
-            !signature.starts_with("const ")
-                && !signature.contains("`")
-                && !signature.contains("$")
-        }
-        _ => false,
-    }).cloned().collect::<Vec<_>>();
-
-    let mut new_private_variable_members = vec![];
-
-    for member in private_variable_members {
-        let cpp::ModuleMember::Data { name, signature, address, line, .. } = member else {
-            unreachable!("{:#?}", member)
-        };
-
-        new_private_variable_members.push(cpp::ModuleMember::Tagged(
-            "extern".into(),
-            Box::new(cpp::ModuleMember::Data {
-                is_static: false,
-                name: name,
-                signature: signature,
-                address: address,
-                line: line
-            }),
-        ));
-    }
-
-    while let Some(cpp::ModuleMember::EmptyLine) = new_private_variable_members.last() {
-        new_private_variable_members.pop();
-    }
-
-    if !new_private_variable_members.is_empty() || !module.is_header() {
-        new_members.push(cpp::ModuleMember::Comment("---------- private variables".into()));
+        new_members.append(&mut new_variable_members);
         new_members.push(cpp::ModuleMember::EmptyLine);
     }
 
-    if !new_private_variable_members.is_empty() {
-        new_members.push(cpp::ModuleMember::Tagged(
-            "_static".into(),
-            Box::new(cpp::ModuleMember::Block {
-                members: new_private_variable_members,
-            }),
-        ));
-    }
-    
     //--------------------------------------------------------------------------------
     // public functions
     //--------------------------------------------------------------------------------
@@ -932,131 +840,33 @@ pub fn reorganize_module_members(
         if let Some((mangled_name, _address)) = module.mangled_symbols.iter()
             .find(|(_, address)| *address == procedure.address)
         {
-            if procedure.body.is_none() {
-                procedure.body = Some(cpp::Block::default());
-            }
-
             procedure.body.as_mut().unwrap().statements.insert(
                 0,
                 cpp::Statement::FunctionCall(
-                    "mangled_assert".into(),
+                    "mangled_x64".into(),
                     vec![
+                        "MANGLED_DEFAULT".into(),
                         format!("\"{}\"", mangled_name),
                     ],
                 ),
             );
+        }
 
-            if procedure.line.is_none() {
-                procedure.body.as_mut().unwrap().statements.push(
-                    cpp::Statement::FunctionCall("compiler_generated".into(), vec![]),
-                );
-            }
-
+        if procedure.line.is_none() {
             procedure.body.as_mut().unwrap().statements.push(
-                cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
+                cpp::Statement::FunctionCall("compiler_generated".into(), vec![]),
             );
         }
 
-        let return_type_str = procedure.return_type.map(|return_type| {
-            cpp::type_name(
-                class_table,
-                type_sizes,
-                type_names,
-                machine_type,
-                type_info,
-                type_finder,
-                cpp::TypeNameQuery {
-                    type_index: return_type,
-                    modifier: None,
-                    declaration_name: None,
-                    parameter_names: None,
-                    include_this: procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                    force_return_type: false,
-                },
-            )
-            .unwrap()
-        }).unwrap_or("void".to_string());
+        // The body is a placeholder stub: `TODO_IMPLEMENT()` expands to `__assume(0)`,
+        // so it is the final statement (the real code is copied in by a separate
+        // process). No `_sub_` trampoline call, return, or extern prototype is emitted.
+        procedure.body.as_mut().unwrap().statements.push(
+            cpp::Statement::FunctionCall("TODO_IMPLEMENT".into(), vec![]),
+        );
 
-        if matches!(return_type_str.as_str(), "void" | "void const") {
-            procedure.body.as_mut().unwrap().statements.push(
-                cpp::Statement::FunctionCall(
-                    format!("_sub_{:X}", procedure.address).into(),
-                    procedure
-                        .arguments
-                        .iter()
-                        .map(|a| a.1.clone().unwrap_or("arg".into()))
-                        .collect(),
-                ),
-            );
-        } else {
-            procedure.body.as_mut().unwrap().statements.push(
-                cpp::Statement::ReturnWithValue(cpp::ReturnWithValue {
-                    signature: return_type_str,
-                    value: Some(Box::new(cpp::Statement::FunctionCall(
-                        format!("_sub_{:X}", procedure.address).into(),
-                        procedure
-                            .arguments
-                            .iter()
-                            .map(|a| a.1.clone().unwrap_or("arg".into()))
-                            .collect(),
-                    ))),
-                }),
-            );
-        }
-
-        let is_inline = procedure.is_inline;
-        procedure.is_inline = false;
-
-        new_public_code_members.push(cpp::ModuleMember::Tagged(
-            "_extern".into(),
-            Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
-                address: 0,
-                line: procedure.line,
-                type_index: procedure.type_index,
-                is_static: false,
-                is_inline: false,
-                member_method_data: procedure.member_method_data.clone(),
-                declspecs: procedure.declspecs.clone(),
-                name: format!("_sub_{:X}", procedure.address).into(),
-                signature: cpp::type_name(
-                    class_table,
-                    type_sizes,
-                    type_names,
-                    machine_type,
-                    type_info,
-                    type_finder,
-                    cpp::TypeNameQuery {
-                        type_index: procedure.type_index,
-                        modifier: None,
-                        declaration_name: Some(format!("_sub_{:X}", procedure.address).into()),
-                        parameter_names: None,
-                        include_this: procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                        force_return_type: false,
-                    },
-                )?
-                .trim_end_matches(" const")
-                .trim_end_matches(" volatile")
-                .into(),
-                ida_signature: None,
-                body: None,
-                return_type: procedure.return_type,
-                arguments: vec![],
-            })),
-        ));
-
-        if !procedure.is_static {
-            if is_inline {
-                new_public_code_members.push(cpp::ModuleMember::Tagged("_inline".into(), Box::new(cpp::ModuleMember::Procedure(procedure))));
-            } else {
-                new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
-            }
-        } else {
-            procedure.is_static = false;
-
-            new_public_code_members.push(cpp::ModuleMember::Tagged(
-                if is_inline { "_static _inline" } else { "_static" }.into(),
-                Box::new(cpp::ModuleMember::Procedure(procedure))));
-        }
+        // The definition keeps its own `static`/`inline` specifiers.
+        new_public_code_members.push(cpp::ModuleMember::Procedure(procedure));
 
         new_public_code_members.push(cpp::ModuleMember::EmptyLine);
     }
@@ -1112,15 +922,20 @@ pub fn reorganize_module_members(
             procedure.body = Some(cpp::Block::default());
         }
 
-        procedure.body.as_mut().unwrap().statements.insert(
-            0,
-            cpp::Statement::FunctionCall(
-                "mangled_assert".into(),
-                vec![
-                    format!("\"{}\"", procedure.name),
-                ],
-            ),
-        );
+        if let Some((mangled_name, _address)) = module.mangled_symbols.iter()
+            .find(|(_, address)| *address == procedure.address)
+        {
+            procedure.body.as_mut().unwrap().statements.insert(
+                0,
+                cpp::Statement::FunctionCall(
+                    "mangled_x64".into(),
+                    vec![
+                        "MANGLED_DEFAULT".into(),
+                        format!("\"{}\"", mangled_name),
+                    ],
+                ),
+            );
+        }
 
         if procedure.line.is_none() {
             procedure.body.as_mut().unwrap().statements.push(
@@ -1128,112 +943,15 @@ pub fn reorganize_module_members(
             );
         }
 
+        // The body is a placeholder stub: `TODO_IMPLEMENT()` expands to `__assume(0)`,
+        // so it is the final statement (the real code is copied in by a separate
+        // process). No `_sub_` trampoline call, return, or extern prototype is emitted.
         procedure.body.as_mut().unwrap().statements.push(
-            cpp::Statement::FunctionCall("todo".into(), vec!["\"implement\"".into()]),
+            cpp::Statement::FunctionCall("TODO_IMPLEMENT".into(), vec![]),
         );
 
-        let return_type_str = procedure.return_type.map(|return_type| {
-            cpp::type_name(
-                class_table,
-                type_sizes,
-                type_names,
-                machine_type,
-                type_info,
-                type_finder,
-                cpp::TypeNameQuery {
-                    type_index: return_type,
-                    modifier: None,
-                    declaration_name: None,
-                    parameter_names: None,
-                    include_this: procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                    force_return_type: false,
-                },
-            )
-            .unwrap()
-        }).unwrap_or("void".to_string());
-
-        if matches!(return_type_str.as_str(), "void" | "void const")
-        {
-            procedure.body.as_mut().unwrap().statements.push(
-                cpp::Statement::FunctionCall(
-                    format!("_sub_{:X}", procedure.address).into(),
-                    procedure
-                        .arguments
-                        .iter()
-                        .map(|a| a.1.clone().unwrap_or("arg".into()))
-                        .collect(),
-                ),
-            );
-        } else {
-            procedure.body.as_mut().unwrap().statements.push(
-                cpp::Statement::ReturnWithValue(cpp::ReturnWithValue {
-                    signature: return_type_str,
-                    value: Some(Box::new(cpp::Statement::FunctionCall(
-                        format!("_sub_{:X}", procedure.address).into(),
-                        procedure
-                            .arguments
-                            .iter()
-                            .map(|a| a.1.clone().unwrap_or("arg".into()))
-                            .collect(),
-                    ))),
-                }),
-            );
-        }
-
-        let is_inline = procedure.is_inline;
-        procedure.is_inline = false;
-
-        new_private_code_members.push(cpp::ModuleMember::Tagged(
-            "_extern".into(),
-            Box::new(cpp::ModuleMember::Procedure(cpp::Procedure {
-                address: 0,
-                line: procedure.line,
-                type_index: procedure.type_index,
-                is_static: false,
-                is_inline: false,
-                member_method_data: procedure.member_method_data.clone(),
-                declspecs: procedure.declspecs.clone(),
-                name: format!("_sub_{:X}", procedure.address).into(),
-                signature: cpp::type_name(
-                    class_table,
-                    type_sizes,
-                    type_names,
-                    machine_type,
-                    type_info,
-                    type_finder,
-                    cpp::TypeNameQuery {
-                        type_index: procedure.type_index,
-                        modifier: None,
-                        declaration_name: Some(format!("_sub_{:X}", procedure.address).into()),
-                        parameter_names: None,
-                        include_this: procedure.member_method_data.as_ref().map(|m| m.declaring_class.clone()).or(Some(String::new())),
-                        force_return_type: false,
-                    },
-                )?
-                .trim_end_matches(" const")
-                .trim_end_matches(" volatile")
-                .into(),
-                ida_signature: None,
-                body: None,
-                return_type: procedure.return_type,
-                arguments: vec![],
-            })),
-        ));
-
-        if !procedure.is_static {
-            if is_inline {
-                new_private_code_members.push(cpp::ModuleMember::Tagged("_inline".into(), Box::new(cpp::ModuleMember::Procedure(procedure))));
-            } else {
-                new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
-            }
-        } else {
-            procedure.is_static = false;
-
-            new_private_code_members.push(cpp::ModuleMember::Tagged(
-                if is_inline { "_static _inline" } else { "_static" }.into(),
-                Box::new(cpp::ModuleMember::Procedure(procedure)),
-            ));
-        }
+        // The definition keeps its own `static`/`inline` specifiers.
+        new_private_code_members.push(cpp::ModuleMember::Procedure(procedure));
 
         new_private_code_members.push(cpp::ModuleMember::EmptyLine);
     }
