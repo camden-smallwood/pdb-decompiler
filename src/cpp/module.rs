@@ -49,6 +49,80 @@ pub enum ModuleMember {
     FunctionCall(String, Vec<String>),
 }
 
+/// Emit a sequence of module members with the spacing rules shared by top-level
+/// output and reconstructed namespace blocks: a blank line separates members of
+/// differing "kinds", but runs of the same kind (consecutive data/constants,
+/// includes, using-directives, prototypes, typedefs, …) stay packed together.
+///
+/// `skip_leading_blank` suppresses a blank line before the first member (and, while
+/// no explicit `EmptyLine` members are present, before the first kind change) — the
+/// caller sets it so nothing separates the members from the `{`/header above them.
+fn write_member_sequence(
+    f: &mut fmt::Formatter<'_>,
+    members: &[ModuleMember],
+    mut skip_empty_line: bool,
+) -> fmt::Result {
+    let has_explicit_empty_lines = members.iter().any(|m| matches!(m, ModuleMember::EmptyLine));
+    let mut prev_item: Option<&ModuleMember> = None;
+
+    for item in members.iter() {
+        // Collapse runs of blank-line members into a single blank line. Runs arise where a
+        // section separator meets members removed after the section was laid out — e.g. a
+        // function-local type pulled into its function body leaves its trailing `EmptyLine`.
+        if matches!(item, ModuleMember::EmptyLine) && matches!(prev_item, Some(ModuleMember::EmptyLine)) {
+            continue;
+        }
+
+        if !matches!(
+            (prev_item, item),
+            (
+                Some(ModuleMember::Preprocessor(_)),
+                ModuleMember::Preprocessor(_)
+            ) | (
+                Some(ModuleMember::Include(_, _)),
+                ModuleMember::Include(_, _)
+            ) | (
+                Some(ModuleMember::UsingNamespace(_)),
+                ModuleMember::UsingNamespace(_)
+            ) | (
+                Some(ModuleMember::Procedure(cpp::Procedure { body: None, .. })),
+                ModuleMember::Procedure(cpp::Procedure { body: None, .. })
+            // Keep an `extern` prototype attached to the definition that follows it.
+            ) | (
+                Some(ModuleMember::Procedure(cpp::Procedure { is_extern: true, .. })),
+                ModuleMember::Procedure(cpp::Procedure { .. })
+            ) | (
+                Some(ModuleMember::TypeDefinition(_)),
+                ModuleMember::TypeDefinition(_)
+            ) | (
+                Some(
+                    ModuleMember::Constant(_)
+                        | ModuleMember::Data { .. }
+                        | ModuleMember::ThreadStorage { .. }
+                ),
+                ModuleMember::Constant(_)
+                    | ModuleMember::Data { .. }
+                    | ModuleMember::ThreadStorage { .. }
+            )
+        ) {
+            if !skip_empty_line {
+                writeln!(f)?;
+            }
+
+            if !has_explicit_empty_lines {
+                skip_empty_line = false;
+            }
+        }
+
+        fmt::Display::fmt(item, f)?;
+        writeln!(f)?;
+
+        prev_item = Some(item);
+    }
+
+    Ok(())
+}
+
 impl fmt::Display for ModuleMember {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -73,14 +147,9 @@ impl fmt::Display for ModuleMember {
 
                 writeln!(f, "{{")?;
 
-                for (i, member) in members.iter().enumerate() {
-                    if i != 0 {
-                        writeln!(f)?;
-                    }
-
-                    member.fmt(f)?;
-                    writeln!(f)?;
-                }
+                // Same spacing rules as top-level output: pack consecutive same-kind
+                // members, blank line between differing kinds; no blank after the `{`.
+                write_member_sequence(f, members, true)?;
 
                 write!(f, "}}")
             },
@@ -2050,60 +2119,7 @@ impl fmt::Display for Module {
             writeln!(f)?;
         }
 
-        let mut prev_item: Option<&ModuleMember> = None;
-
-        for item in self.members.iter() {
-            {
-                if !matches!(
-                    (prev_item, item),
-                    (
-                        Some(ModuleMember::Preprocessor(_)),
-                        ModuleMember::Preprocessor(_)
-                    ) | (
-                        Some(ModuleMember::Include(_, _)),
-                        ModuleMember::Include(_, _)
-                    ) | (
-                        Some(ModuleMember::UsingNamespace(_)),
-                        ModuleMember::UsingNamespace(_)
-                    ) | (
-                        Some(ModuleMember::Procedure(cpp::Procedure { body: None, .. })),
-                        ModuleMember::Procedure(cpp::Procedure { body: None, .. })
-                    // Keep an `extern` prototype attached to the definition that follows it.
-                    ) | (
-                        Some(ModuleMember::Procedure(cpp::Procedure { is_extern: true, .. })),
-                        ModuleMember::Procedure(cpp::Procedure { .. })
-                    ) | (
-                        Some(ModuleMember::TypeDefinition(_)),
-                        ModuleMember::TypeDefinition(_)
-                    ) | (
-                        Some(
-                            ModuleMember::Constant(_)
-                                | ModuleMember::Data { .. }
-                                | ModuleMember::ThreadStorage { .. }
-                        ),
-                        ModuleMember::Constant(_)
-                            | ModuleMember::Data { .. }
-                            | ModuleMember::ThreadStorage { .. }
-                    )
-                ) {
-                    if !skip_empty_line {
-                        writeln!(f)?;
-                    }
-
-                    if !has_explicit_empty_lines {
-                        skip_empty_line = false;
-                    }
-                }
-            }
-            
-
-            item.fmt(f)?;
-            writeln!(f)?;
-
-            prev_item = Some(item);
-        }
-
-        Ok(())
+        write_member_sequence(f, &self.members, skip_empty_line)
     }
 }
 

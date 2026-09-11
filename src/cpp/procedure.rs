@@ -13,6 +13,10 @@ pub enum Statement {
     Return(Return),
     String(String),
     EmptyLine,
+    /// A type declared inside the function body (MSVC records these as
+    /// `func::__lNN::Type`). Rendered indented to the statement's depth.
+    Class(std::rc::Rc<std::cell::RefCell<super::Class>>),
+    Enum(super::Enum),
 }
 
 impl TabbedDisplay for Statement {
@@ -83,6 +87,21 @@ impl TabbedDisplay for Statement {
             Statement::EmptyLine => {
                 write!(f, "")?;
             }
+
+            // The leading indentation for this line was already emitted by the enclosing
+            // block (`"".tabbed_fmt(depth)`); set the type's own `depth` to match so its
+            // `{`, members and closing `};` line up under the first line.
+            Statement::Class(x) => {
+                let mut class = x.borrow().clone();
+                class.depth = depth as u32;
+                write!(f, "{}", class)?;
+            }
+
+            Statement::Enum(x) => {
+                let mut enum_type = x.clone();
+                enum_type.depth = depth as u32;
+                write!(f, "{}", enum_type)?;
+            }
         }
 
         Ok(())
@@ -145,6 +164,12 @@ impl TabbedDisplay for Block {
         writeln!(f)?;
         
         for statement in self.statements.iter() {
+            // A blank separator line carries no indentation (matches top-level spacing).
+            if matches!(statement, Statement::EmptyLine) {
+                writeln!(f)?;
+                continue;
+            }
+
             match statement {
                 Statement::Label(_) => "".tabbed_fmt(depth, f)?,
                 Statement::Commented(x) if matches!(x.as_ref(), Statement::Label(_)) => "".tabbed_fmt(depth, f)?,

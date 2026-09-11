@@ -980,8 +980,11 @@ impl Decompiler {
             // Reconstruct namespace blocks from fully-qualified names
             //
 
-            let grouped = crate::namespaces::group_module_members(
+            let embedded = crate::namespaces::embed_function_local_types(
                 std::mem::take(&mut module.members),
+            );
+            let grouped = crate::namespaces::group_module_members(
+                embedded,
                 &self.type_name_set,
             );
             module.members = grouped;
@@ -1450,9 +1453,22 @@ impl Decompiler {
                     return Ok(());
                 }
 
-                // Drop enumerators of anonymous enums (`const Class::<unnamed-tag> x = ...`) —
-                // the `<unnamed-tag>` type has no valid spelling and the value lives in the class.
-                if type_name.contains("<unnamed") {
+                // Drop enumerators of anonymous enums (`const enum { x = 7 } x = 0x7;`) —
+                // the anonymous type has no valid spelling and the value already lives in
+                // the enum definition. `type_name()` now inlines the anonymous enum body
+                // (so the rendered string no longer carries `<unnamed…>`); inspect the type
+                // record directly instead, peeling any leading modifier.
+                let mut constant_type_index = constant_symbol.type_index;
+                if let Ok(pdb2::TypeData::Modifier(modifier)) = context.type_finder.find(constant_type_index).and_then(|t| t.parse()) {
+                    constant_type_index = modifier.underlying_type;
+                }
+                let is_anonymous_constant = match context.type_finder.find(constant_type_index).and_then(|t| t.parse()) {
+                    Ok(pdb2::TypeData::Enumeration(e)) => cpp::is_anonymous_type_name(&e.name.to_string()),
+                    Ok(pdb2::TypeData::Class(c)) => cpp::is_anonymous_type_name(&c.name.to_string()),
+                    Ok(pdb2::TypeData::Union(u)) => cpp::is_anonymous_type_name(&u.name.to_string()),
+                    _ => false,
+                };
+                if type_name.contains("<unnamed") || is_anonymous_constant {
                     return Ok(());
                 }
 
@@ -1506,6 +1522,20 @@ impl Decompiler {
 
                 let address = self.options.base_address.unwrap_or(0) + rva.0 as u64;
 
+                // Drop compiler-generated artifacts (dynamic-initializer thunks like
+                // `…$initializer$`, EH funclets, local scopes) and out-of-line members of
+                // anonymous types — none were written in source. Mirrors the guard on
+                // procedures below.
+                let data_name = data_symbol.name.to_string().to_string();
+                if data_name.contains("<unnamed")
+                    || matches!(
+                        crate::namespaces::classify(&data_name, &self.type_name_set),
+                        crate::namespaces::NameClass::CompilerGenerated,
+                    )
+                {
+                    return Ok(());
+                }
+
                 if module.borrow().members.iter().any(|member| match member {
                     cpp::ModuleMember::Data { address: a, .. } if *a == address => true,
                     _ => false,
@@ -1513,10 +1543,20 @@ impl Decompiler {
                     return Ok(());
                 }
 
+                // Strip the namespace prefix from the variable's own qualified name so an
+                // out-of-line definition reads `locale::id num_put<…>::id;` inside
+                // `namespace std { }` rather than the redundant `std::num_put<…>::id`. The
+                // `name` field keeps its full qualification so namespace grouping can still
+                // classify it. Parameter/type references stay fully qualified (still valid).
+                let declaration_name = crate::namespaces::strip_namespace_prefix(
+                    &data_name,
+                    &self.type_name_set,
+                );
+
                 module.borrow_mut().members.push(cpp::ModuleMember::Data {
                     is_static: !data_symbol.global,
                     is_extern: false,
-                    name: data_symbol.name.to_string().to_string(),
+                    name: data_name,
                     signature: format!(
                         "{};",
                         cpp::type_name(
@@ -1529,7 +1569,7 @@ impl Decompiler {
                             cpp::TypeNameQuery {
                                 type_index: data_symbol.type_index,
                                 modifier: None,
-                                declaration_name: Some(data_symbol.name.to_string().to_string()),
+                                declaration_name: Some(declaration_name),
                                 parameter_names: None,
                                 include_this: None,
                                 force_return_type: false,
@@ -1577,6 +1617,19 @@ impl Decompiler {
 
                 let address = self.options.base_address.unwrap_or(0) + rva.0 as u64;
 
+                // Check if this is a thread_local variable defined in a class/struct/union.
+                let name = thread_storage_symbol.name.to_string().to_string();
+
+                // Drop compiler-generated artifacts, as with plain data above.
+                if name.contains("<unnamed")
+                    || matches!(
+                        crate::namespaces::classify(&name, &self.type_name_set),
+                        crate::namespaces::NameClass::CompilerGenerated,
+                    )
+                {
+                    return Ok(());
+                }
+
                 if module.borrow().members.iter().any(|member| match member {
                     cpp::ModuleMember::Data { address: a, .. } if *a == address => true,
                     _ => false,
@@ -1584,8 +1637,6 @@ impl Decompiler {
                     return Ok(());
                 }
 
-                // Check if this is a thread_local variable defined in a class/struct/union.
-                let name = thread_storage_symbol.name.to_string().to_string();
                 if name.contains("::") {
                     let (class_name, variable_name) = name.rsplit_once("::").unwrap();
                     
@@ -1607,9 +1658,16 @@ impl Decompiler {
                     }
                 }
 
+                // Strip the namespace prefix from the variable's own qualified name (see
+                // the plain-data path above); the `name` field keeps full qualification.
+                let declaration_name = crate::namespaces::strip_namespace_prefix(
+                    &name,
+                    &self.type_name_set,
+                );
+
                 module.borrow_mut().members.push(cpp::ModuleMember::ThreadStorage {
                     is_static: !thread_storage_symbol.global,
-                    name: thread_storage_symbol.name.to_string().to_string(),
+                    name: name.clone(),
                     signature: format!(
                         "thread_local {};",
                         cpp::type_name(
@@ -1622,7 +1680,7 @@ impl Decompiler {
                             cpp::TypeNameQuery {
                                 type_index: thread_storage_symbol.type_index,
                                 modifier: None,
-                                declaration_name: Some(thread_storage_symbol.name.to_string().to_string()),
+                                declaration_name: Some(declaration_name),
                                 parameter_names: None,
                                 include_this: None,
                                 force_return_type: false,

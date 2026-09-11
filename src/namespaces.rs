@@ -57,6 +57,7 @@ fn replace_anon_hash(name: &str) -> String {
 /// (e.g. the `mangled_x64` string), whose `?A0x…` token is the real linker symbol.
 pub fn render_reference(name: &str) -> String {
     let name = strip_interior_anonymous(name);
+    let name = strip_local_scope_reference(&name);
 
     if !name.contains('`') && !name.contains("?A0x") {
         return name;
@@ -65,6 +66,22 @@ pub fn render_reference(name: &str) -> String {
     normalize_anon(&name)
         .replace("`anonymous-namespace'::", "")
         .replace("`anonymous-namespace'", "")
+}
+
+/// Collapse a reference to a function-local type (`func::__lNN::Type`) down to the name it
+/// is written by *within* the function body — the part after the last lexical-block marker
+/// (`s_gpu_single_state`, or `s_strip::s_aligned_float` for a type nested in a local one).
+/// A local type has no linkage, so it is only ever referenced from inside its own function,
+/// where the bare name is the correct spelling. Leaves names without a marker unchanged.
+fn strip_local_scope_reference(name: &str) -> String {
+    if !name.contains("__l") {
+        return name.to_string();
+    }
+
+    match split_local_scope(name) {
+        Some((_, local)) => local,
+        None => name.to_string(),
+    }
 }
 
 /// Remove *interior* anonymous-type placeholder components from a qualified name, i.e. an
@@ -108,6 +125,129 @@ pub fn strip_interior_anonymous(name: &str) -> String {
 
     result.push_str(rest);
     result
+}
+
+/// Whether a scope component is one of MSVC's lexical-block-scope markers (`__l<NN>`),
+/// which it emits for entities — most often types — declared inside a function body.
+/// `__l` is a reserved-identifier form the implementation owns, so this never matches
+/// real source identifiers.
+fn is_local_scope_marker(component: &str) -> bool {
+    component.len() > 3
+        && component.starts_with("__l")
+        && component[3..].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Split a qualified name that contains a `__l<NN>` lexical-block scope into the enclosing
+/// function's qualified name (everything before the first marker) and the entity's own
+/// name (everything after the last marker — intervening nested-block markers are dropped).
+/// Returns `None` when the name has no such marker.
+fn split_local_scope(name: &str) -> Option<(String, String)> {
+    let components = split_qualified(name);
+    let first = components.iter().position(|c| is_local_scope_marker(c))?;
+    let last = components.iter().rposition(|c| is_local_scope_marker(c)).unwrap();
+    Some((
+        components[..first].join("::"),
+        components[last + 1..].join("::"),
+    ))
+}
+
+/// Move function-local type definitions (recorded by MSVC as `func::__lNN::Type`) out of
+/// the flat member list and into the body of their enclosing function, so they read as the
+/// in-body declarations they were in source rather than as bogus `namespace func { }` blocks
+/// (which are invalid — they collide with the function of the same name). A function that
+/// has local types but no body gains one holding just those types. Lambda and other
+/// anonymous local types have no writable spelling and are dropped. Must run before
+/// [`group_module_members`] so the reconstructed names never reach namespace grouping.
+pub fn embed_function_local_types(members: Vec<cpp::ModuleMember>) -> Vec<cpp::ModuleMember> {
+    // First pass: pull out local-type members, renaming each to its bare in-body name and
+    // grouping by the enclosing function (first-seen order preserved).
+    let mut kept: Vec<cpp::ModuleMember> = vec![];
+    let mut grouped: Vec<(String, Vec<cpp::Statement>)> = vec![];
+
+    for member in members {
+        let name = match &member {
+            cpp::ModuleMember::Class(c) => Some(c.borrow().name.clone()),
+            cpp::ModuleMember::Enum(e) => Some(e.name.clone()),
+            _ => None,
+        };
+
+        let Some((func, local_name)) = name.as_deref().and_then(split_local_scope) else {
+            kept.push(member);
+            continue;
+        };
+
+        // Lambdas / anonymous types have no nameable definition — drop them.
+        if local_name.contains("<unnamed") {
+            continue;
+        }
+
+        let statement = match member {
+            cpp::ModuleMember::Class(c) => {
+                c.borrow_mut().name = local_name;
+                cpp::Statement::Class(c)
+            }
+            cpp::ModuleMember::Enum(mut e) => {
+                e.name = local_name;
+                cpp::Statement::Enum(e)
+            }
+            _ => unreachable!(),
+        };
+
+        match grouped.iter_mut().find(|(f, _)| *f == func) {
+            Some((_, statements)) => statements.push(statement),
+            None => grouped.push((func, vec![statement])),
+        }
+    }
+
+    if grouped.is_empty() {
+        return kept;
+    }
+
+    // Second pass: inject each group at the front of its function's body (creating one when
+    // the function was only a prototype). Groups whose function isn't in this module are
+    // dropped — a local type has no linkage, so nothing else can reference it.
+    for (func, statements) in grouped {
+        // Target the function's *definition*, not a separate prototype/declaration. In
+        // `--reorganize` output a function appears twice — an `extern` prototype
+        // (`body: None`) and the stubbed implementation (`body: Some`) — so prefer the one
+        // that already has a body; otherwise fall back to the sole (prototype) entry, which
+        // is the non-reorganized case where the declaration gains a body.
+        let matches: Vec<usize> = kept.iter().enumerate()
+            .filter(|(_, m)| matches!(m, cpp::ModuleMember::Procedure(p) if p.name == func))
+            .map(|(i, _)| i)
+            .collect();
+
+        let index = matches.iter().copied()
+            .find(|&i| matches!(&kept[i], cpp::ModuleMember::Procedure(p) if p.body.is_some()))
+            .or_else(|| matches.first().copied());
+
+        let Some(index) = index else { continue };
+        let cpp::ModuleMember::Procedure(procedure) = &mut kept[index] else {
+            continue;
+        };
+
+        let body = procedure.body.get_or_insert_with(cpp::Block::default);
+
+        // Separate consecutive type definitions with a blank line — the same spacing
+        // top-level output gives adjacent class/struct/union/enum definitions — and put
+        // a blank line after the block when real body code follows.
+        let mut to_insert: Vec<cpp::Statement> = vec![];
+        for statement in statements {
+            if !to_insert.is_empty() {
+                to_insert.push(cpp::Statement::EmptyLine);
+            }
+            to_insert.push(statement);
+        }
+        if !body.statements.is_empty() {
+            to_insert.push(cpp::Statement::EmptyLine);
+        }
+
+        for (i, statement) in to_insert.into_iter().enumerate() {
+            body.statements.insert(i, statement);
+        }
+    }
+
+    kept
 }
 
 /// One component of a namespace path.
@@ -156,14 +296,27 @@ pub fn split_qualified(name: &str) -> Vec<String> {
 }
 
 /// A single scope component is "clean" (a real namespace/type component, not a
-/// compiler-generated scope) when it is the anonymous-namespace token or contains
-/// none of the synthetic markers MSVC uses (`` ` ``, `$`, `[`).
+/// compiler-generated scope) when it is the anonymous-namespace token or carries none of
+/// the synthetic markers MSVC uses (`` ` ``, `$`, `[`) *at the top level*. Those same
+/// characters occur legitimately inside template arguments — e.g. an array-reference type
+/// argument like `char const (&)[4]`, or a `$` in a decorated argument — so a marker only
+/// counts when it appears outside any `<...>` bracketing.
 fn component_is_clean(component: &str, allow_anon: bool) -> bool {
     if allow_anon && component == ANON_TOKEN {
         return true;
     }
 
-    !(component.contains('`') || component.contains('$') || component.contains('['))
+    let mut depth: i32 = 0;
+    for c in component.chars() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            '`' | '$' | '[' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+
+    true
 }
 
 /// Classify a fully-qualified name into global / namespaced / compiler-generated,
@@ -180,10 +333,13 @@ pub fn classify(full_name: &str, type_names: &HashSet<String>) -> NameClass {
     let scope = &components[..components.len() - 1];
 
     // The namespace path is the leading scope components up to (but not including)
-    // the first prefix that names a known type.
+    // the first prefix that names a known type. A component carrying template
+    // arguments (`<...>`) is always a type — namespaces are never templated — so it
+    // ends the run even when no matching type record was recorded (e.g. a template
+    // specialization with only static members, whose UDT never made it into the TPI).
     let mut namespace_len = scope.len();
     for k in 0..scope.len() {
-        if type_names.contains(&scope[..=k].join("::")) {
+        if scope[k].contains('<') || type_names.contains(&scope[..=k].join("::")) {
             namespace_len = k;
             break;
         }
