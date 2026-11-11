@@ -14,17 +14,17 @@ fn run(command: &mut Command) -> String {
 
 /// Generate a real PowerPC PDB with the licensed SDK instead of redistributing it.
 #[test]
-#[ignore = "requires XDK_9328_ROOT pointing to an installed XDK 9328"]
-fn xdk9328_without_ipi() {
-    let sdk = std::env::var_os("XDK_9328_ROOT").expect("set XDK_9328_ROOT");
+#[ignore = "requires XDK_ROOT pointing to an installed Xbox 360 XDK"]
+fn xdk_without_ipi() {
+    let sdk = std::env::var_os("XDK_ROOT").expect("set XDK_ROOT");
     let bin = Path::new(&sdk).join("XDK/bin/win32");
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let work = root
         .join("target")
-        .join(format!("xdk9328-test-{}", std::process::id()));
+        .join(format!("xdk-test-{}", std::process::id()));
     std::fs::create_dir_all(&work).unwrap();
     std::fs::copy(
-        root.join("tests/fixtures/xdk9328.cpp"),
+        root.join("tests/fixtures/xdk.cpp"),
         work.join("legacy.cpp"),
     )
     .unwrap();

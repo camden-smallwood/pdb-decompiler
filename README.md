@@ -169,8 +169,8 @@ Run unit tests with `cargo test`. A generated fixture test exercises the install
 XDK compiler and linker without redistributing SDK files:
 
 ```powershell
-$env:XDK_9328_ROOT = 'D:\Documents\Reverse Engineering\SDKS\XDK\9328'
-cargo test --test xdk9328 -- --ignored
+$env:XDK_ROOT = 'C:\Path\To\Installed\XDK'
+cargo test --test xdk -- --ignored
 ```
 
 The test deliberately gives the object a different filename from its source and
