@@ -190,6 +190,9 @@ pub struct MemberMethodData {
     pub declaring_class: String,
     pub this_pointer_type: Option<String>,
     pub this_adjustment: u32,
+    /// The name and type of the method's declaration in `class_type`
+    pub method_name: String,
+    pub method_type: pdb2::TypeIndex,
 }
 
 #[derive(Clone, Debug, PartialEq)]

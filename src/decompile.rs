@@ -2,7 +2,7 @@ use crate::{cpp, options::Options};
 use pdb2::FallibleIterator;
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     error::Error,
     fs::{File, OpenOptions},
     io::Write,
@@ -300,6 +300,10 @@ impl Decompiler {
         self.process_id_information(&mut context)?;
         self.process_modules(&mut context)?;
 
+        if let Some(path) = self.options.export_objects_json.as_ref() {
+            crate::objects::export_objects_json(&mut context, self.options.base_address.unwrap_or(0), path)?;
+        }
+
         if let Some(script_file) = self.script_file.as_mut()
             && self.options.export_pseudocode_to_json
         {
@@ -406,12 +410,15 @@ impl Decompiler {
         let mut module = cpp::Module::default();
         module.path = exported_path.clone();
 
+        // Types an SDK's headers define are included from the SDK instead of reconstructed
+        let sdk = crate::sdk::Sdk::scan(&self.options.sdk_includes).map_err(pdb2::Error::IoError)?;
+
         let full_names = exported_type_indices.iter().filter_map(|index| {
             context.type_finder.find(*index).ok()?.parse().ok()?.name().map(|n| n.to_string().into_owned())
         }).collect::<HashSet<_>>();
         for type_index in exported_forward_reference_indices {
             if context.type_finder.find(type_index)?.parse()?.name()
-                .is_some_and(|name| full_names.contains(name.to_string().as_ref())) { continue; }
+                .is_some_and(|name| full_names.contains(name.to_string().as_ref()) || sdk.header(&name.to_string()).is_some()) { continue; }
             if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
                 panic!("{e}");
             }
@@ -429,13 +436,38 @@ impl Decompiler {
         // Without IPI no type records its declaration file; infer one where the evidence allows
         let placements = crate::placement::place_types(context, &canonical_type_indices)?;
         let mut placement_entries = vec![];
+        let mut placed_paths = HashMap::new();
+        let mut sdk_headers = HashMap::new();
+        let mut sdk_layouts = vec![];
 
         for type_index in canonical_type_indices {
+            let type_data = context.type_finder.find(type_index)?.parse()?;
+            let name = type_data.name().map(|n| n.to_string().into_owned()).unwrap_or_default();
+
             // A type whose file is filtered out stays in the shared inventory
             let placed = placements.get(&type_index).and_then(|placement| {
                 let path = PathBuf::from(crate::utils::sanitize_path(&placement.file));
                 Self::rebase_output_path(&self.options.source_paths, &path).map(|_| (path, placement))
             });
+
+            if let Some(header) = sdk.header(&name) {
+                let header = PathBuf::from(header.to_string_lossy().replace('\\', "/"));
+
+                // The PDB's layout of a type the SDK defines directly, to check the SDK against
+                let size = match &type_data {
+                    pdb2::TypeData::Class(class_type) => class_type.size,
+                    pdb2::TypeData::Union(union_type) => union_type.size,
+                    _ => 0,
+                };
+
+                if size != 0 && sdk.defines(&name) {
+                    sdk_layouts.push((name.clone(), size));
+                }
+
+                placement_entries.push((format!("<{}>", header.display()), 0, name, type_index, "sdk", "defined by an SDK header".into()));
+                sdk_headers.insert(type_index, (header, placed.map(|(path, _)| path)));
+                continue;
+            }
 
             let Some((path, placement)) = placed else {
                 if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
@@ -452,14 +484,67 @@ impl Decompiler {
                 panic!("{e}");
             }
 
-            let name = context.type_finder.find(type_index)?.parse()?.name().map(|n| n.to_string().into_owned()).unwrap_or_default();
             placement_entries.push((placement.file.clone(), placement.line, name, type_index, placement.rule, placement.evidence.clone()));
+            placed_paths.insert(type_index, path);
+        }
+
+        // A file includes the files defining what its types derive from or hold by value. SDK
+        // headers are included as such, by the file a type the SDK defines would have been in.
+        let mut includes = BTreeMap::<String, (PathBuf, BTreeMap<String, (PathBuf, bool)>)>::new();
+        let mut include = |path: &PathBuf, header: &PathBuf, is_global: bool| {
+            let key = path.to_string_lossy().to_lowercase();
+            let header_key = header.to_string_lossy().to_lowercase().replace('\\', "/");
+
+            // Not the file itself, nor, for an SDK header, a copy of it in the PDB's source tree
+            if header_key == key.replace('\\', "/") || (is_global && key.replace('\\', "/").ends_with(&format!("/{header_key}"))) {
+                return;
+            }
+
+            includes.entry(key).or_insert_with(|| (path.clone(), BTreeMap::new())).1.entry(header_key).or_insert_with(|| (header.clone(), is_global));
+        };
+
+        for (type_index, path) in placed_paths.iter() {
+            for dependency in placements[type_index].requires.iter() {
+                if let Some(dependency_path) = placed_paths.get(dependency) {
+                    include(path, dependency_path, false);
+                } else if let Some((header, _)) = sdk_headers.get(dependency) {
+                    include(path, header, true);
+                }
+            }
+        }
+
+        let mut exported_sdk_headers = std::collections::BTreeSet::new();
+
+        for (header, placed) in sdk_headers.values() {
+            match placed {
+                Some(path) => include(path, header, true),
+                None => {
+                    exported_sdk_headers.insert(header.clone());
+                }
+            }
+        }
+
+        for (key, (path, headers)) in includes {
+            // A file only SDK types would have been in has no module yet
+            let mut module = self.modules.entry(key)
+                .or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path))))
+                .borrow_mut();
+
+            for (_, (header_path, is_global)) in headers {
+                if !module.headers.iter().any(|(path, _)| path.to_string_lossy().eq_ignore_ascii_case(&header_path.to_string_lossy())) {
+                    module.headers.push((header_path, is_global));
+                }
+            }
+        }
+
+        for header in exported_sdk_headers {
+            module.headers.push((header, true));
         }
 
         placement_entries.sort_by(|a, b| (&a.0, a.1, &a.2).cmp(&(&b.0, b.1, &b.2)));
 
         let placement_index = serde_json::json!({
-            "note": "Inferred declaration files for types in a PDB without IPI, which records none. Types not listed are in exported.h.",
+            "note": "Inferred declaration files for types in a PDB without IPI, which records none. Types the SDK defines have the rule sdk and are included from its header. Types not listed are in exported.h.",
             "types": placement_entries.iter().map(|(file, _, name, type_index, rule, evidence)| serde_json::json!({
                 "type": name,
                 "type_index": format!("0x{:X}", type_index.0),
@@ -473,6 +558,10 @@ impl Decompiler {
         let mut symbols = context.global_symbols.iter();
         while let Some(symbol) = symbols.next()? {
             if let Ok(data @ pdb2::SymbolData::UserDefinedType(_)) = symbol.parse() {
+                if let pdb2::SymbolData::UserDefinedType(udt_symbol) = &data && sdk.defines(&udt_symbol.name.to_string()) {
+                    continue;
+                }
+
                 self.process_module_symbol_data(context, &HashMap::new(), module.clone(), None, &data)?;
             }
         }
@@ -486,6 +575,18 @@ impl Decompiler {
 
         if let Err(e) = write!(file, "{}", cpp::compact_std_templates(&cpp::shorten_std_aliases(&module.borrow().to_string()))) {
             panic!("{e}");
+        }
+
+        // The SDK may not be the version the PDB was built with: check the layouts it records
+        if !sdk_layouts.is_empty() {
+            sdk_layouts.sort();
+            sdk_layouts.dedup();
+
+            writeln!(file, "\n// Layouts this PDB records for types the SDK defines").map_err(pdb2::Error::IoError)?;
+
+            for (name, size) in sdk_layouts {
+                writeln!(file, "static_assert(sizeof({name}) == {size}, \"Invalid {name} size\");").map_err(pdb2::Error::IoError)?;
+            }
         }
 
         let index_file = File::create(exported_path.with_file_name("placements.json")).map_err(pdb2::Error::IoError)?;
@@ -643,7 +744,8 @@ impl Decompiler {
             path_tree.add_path(&module.compiler_path, false);
             path_tree.add_path(&module.pdb_path, false);
 
-            for (header_path, _) in module.headers.iter() {
+            // A global include is already an include path, such as an SDK header's
+            for (header_path, _) in module.headers.iter().filter(|(_, is_global)| !is_global) {
                 path_tree.add_path(&header_path, false);
             }
 
@@ -711,7 +813,7 @@ impl Decompiler {
             module.compiler_path = path_tree.resolve_path(&module.compiler_path, false).unwrap();
             module.pdb_path = path_tree.resolve_path(&module.pdb_path, false).unwrap();
 
-            for (header_path, _) in module.headers.iter_mut() {
+            for (header_path, _) in module.headers.iter_mut().filter(|(_, is_global)| !*is_global) {
                 *header_path = path_tree.resolve_path(&header_path, false).unwrap();
             }
 
@@ -788,6 +890,10 @@ impl Decompiler {
             let mut pch_header_index = None;
 
             for (i, (header_path, is_global)) in module_headers.iter_mut().enumerate() {
+                if *is_global {
+                    continue;
+                }
+
                 let header_module_key = header_path.to_string_lossy().to_lowercase().to_string();
 
                 // Skip the PCH include
@@ -1006,6 +1112,62 @@ impl Decompiler {
                     };
 
                     keep_index.get(&name) == Some(&index) && kept.insert(name)
+                });
+            }
+
+            //
+            // A member function can't be redeclared outside its class. When the class is defined
+            // here, fold a definition without a body into its declaration, keeping the address
+            //
+
+            if !self.options.reorganize {
+                let mut classes = HashMap::new();
+
+                // A function with local types keeps its definition, which they will be embedded in
+                let mut has_local_types = HashSet::new();
+
+                for member in module.members.iter() {
+                    let name = match member {
+                        cpp::ModuleMember::Class(class_data) => {
+                            Self::collect_defined_classes(class_data, None, &mut classes);
+                            class_data.borrow().name.clone()
+                        }
+                        cpp::ModuleMember::Enum(enum_data) => enum_data.name.clone(),
+                        _ => continue,
+                    };
+
+                    if let Some((function, _)) = crate::namespaces::split_local_scope(&name) {
+                        has_local_types.insert(function);
+                    }
+                }
+
+                module.members.retain(|member| {
+                    let cpp::ModuleMember::Procedure(cpp::Procedure { body: None, member_method_data: Some(data), address, name, .. }) = member else {
+                        return true;
+                    };
+
+                    if has_local_types.contains(name) {
+                        return true;
+                    }
+
+                    let Some(class_data) = classes.get(&data.class_type) else {
+                        return true;
+                    };
+
+                    let mut class_data = class_data.borrow_mut();
+
+                    let Some(method) = class_data.members.iter_mut().find_map(|m| match m {
+                        cpp::ClassMember::Method(method) if method.name == data.method_name && method.type_index == data.method_type => Some(method),
+                        _ => None,
+                    }) else {
+                        return true;
+                    };
+
+                    if *address != 0 && !method.addresses.contains(address) {
+                        method.addresses.push(*address);
+                    }
+
+                    false
                 });
             }
         }
@@ -2320,11 +2482,18 @@ impl Decompiler {
 
                             let this_adjustment = member_function.this_adjustment;
 
+                            let (method_name, method_type) = match &class.borrow().members[class_method_index] {
+                                cpp::ClassMember::Method(class_method) => (class_method.name.clone(), class_method.type_index),
+                                _ => unreachable!(),
+                            };
+
                             member_method_data = Some(cpp::MemberMethodData {
                                 class_type,
                                 declaring_class,
                                 this_pointer_type,
                                 this_adjustment,
+                                method_name,
+                                method_type,
                             });
 
                             //
@@ -3223,6 +3392,31 @@ impl Decompiler {
                 _ => panic!("Unhandled symbol data in parse_separated_code_symbols - {symbol_data:#?}"),
             }
         }
+    }
+
+    /// Adds the classes defined in `class_data`, itself included, by qualified name.
+    fn collect_defined_classes(
+        class_data: &Rc<RefCell<cpp::Class>>,
+        scope: Option<&str>,
+        classes: &mut HashMap<String, Rc<RefCell<cpp::Class>>>,
+    ) {
+        if class_data.borrow().is_declaration {
+            return;
+        }
+
+        // A nested class stores its own name only
+        let name = match scope {
+            Some(scope) => format!("{scope}::{}", class_data.borrow().name),
+            None => class_data.borrow().name.clone(),
+        };
+
+        for member in class_data.borrow().members.iter() {
+            if let cpp::ClassMember::Class(nested) = member {
+                Self::collect_defined_classes(nested, Some(&name), classes);
+            }
+        }
+
+        classes.entry(name).or_insert_with(|| class_data.clone());
     }
 
     /// Adds the indices of nested types defined inside `class_data`, at any depth.

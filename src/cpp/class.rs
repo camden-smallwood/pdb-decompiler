@@ -81,6 +81,8 @@ pub struct Method {
     pub function_attributes: pdb2::FunctionAttributes,
     pub modifier: Option<pdb2::ModifierType>,
     pub vtable_offset: Option<u32>,
+    /// Addresses of definitions whose declaration this is, when they have no body to show
+    pub addresses: Vec<u64>,
 }
 
 impl fmt::Display for Method {
@@ -150,7 +152,15 @@ impl fmt::Display for Method {
             } else {
                 format!("")
             },
-        )
+        )?;
+
+        // Like a procedure's, the address comment stays last on the line
+        if !self.addresses.is_empty() {
+            let addresses = self.addresses.iter().map(|a| format!("0x{a:X}")).collect::<Vec<_>>();
+            write!(f, " // {}", addresses.join(", "))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -794,6 +804,7 @@ impl Class {
                                 function_attributes: function_data.attributes,
                                 modifier,
                                 vtable_offset: data.vtable_offset,
+                                addresses: vec![],
                             }
                         }
             
@@ -857,6 +868,7 @@ impl Class {
                                                 function_attributes: function_data.attributes,
                                                 modifier,
                                                 vtable_offset,
+                                                addresses: vec![],
                                             }
                                         }
                             

@@ -2,11 +2,13 @@ mod cpp;
 mod debug_blocks;
 mod decompile;
 mod namespaces;
+mod objects;
 mod legacy;
 mod options;
 mod param_const;
 mod placement;
 mod reorganize;
+mod sdk;
 mod tabbed;
 pub mod utils;
 

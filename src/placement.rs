@@ -25,6 +25,8 @@ pub struct Placement {
     pub line: u32,
     pub rule: &'static str,
     pub evidence: String,
+    /// Placed types it holds by value or derives from, which must be defined before it
+    pub requires: Vec<pdb2::TypeIndex>,
 }
 
 fn is_source(path: &str) -> bool {
@@ -53,6 +55,8 @@ struct Types<'a, 't> {
     finder: &'a pdb2::TypeFinder<'t>,
     names: HashMap<pdb2::TypeIndex, String>,
     by_name: HashMap<String, pdb2::TypeIndex>,
+    /// Definitions of anonymous types, which references may reach through a forward reference
+    anonymous: HashMap<String, pdb2::TypeIndex>,
 }
 
 impl Types<'_, '_> {
@@ -76,25 +80,52 @@ impl Types<'_, '_> {
         None
     }
 
+    /// The anonymous class or union definition a type reference names, through modifiers and arrays.
+    fn anonymous_definition(&self, mut index: pdb2::TypeIndex) -> Option<pdb2::TypeIndex> {
+        for _ in 0..16 {
+            let name = match self.finder.find(index).ok()?.parse().ok()? {
+                pdb2::TypeData::Modifier(m) => { index = m.underlying_type; continue; }
+                pdb2::TypeData::Array(a) => { index = a.element_type; continue; }
+                pdb2::TypeData::Class(c) => c.name.to_string().into_owned(),
+                pdb2::TypeData::Union(u) => u.name.to_string().into_owned(),
+                _ => return None,
+            };
+            return cpp::is_anonymous_type_name(&name).then(|| self.anonymous.get(&name).copied().unwrap_or(index));
+        }
+        None
+    }
+
+    /// Placed types held by value or derived from. An anonymous member is defined inline, so
+    /// what it holds counts as held here.
     fn by_value_dependencies(&self, index: pdb2::TypeIndex) -> Vec<pdb2::TypeIndex> {
-        let mut next = match self.finder.find(index).and_then(|t| t.parse()) {
-            Ok(pdb2::TypeData::Class(c)) => c.fields,
-            Ok(pdb2::TypeData::Union(u)) => Some(u.fields),
-            _ => None,
-        };
         let mut result = vec![];
-        while let Some(fields) = next {
-            let Ok(pdb2::TypeData::FieldList(list)) = self.finder.find(fields).and_then(|t| t.parse()) else { break };
-            for field in &list.fields {
-                let field_type = match field {
-                    pdb2::TypeData::Member(m) => m.field_type,
-                    pdb2::TypeData::BaseClass(b) => b.base_class,
-                    pdb2::TypeData::VirtualBaseClass(v) => v.base_class,
-                    _ => continue,
-                };
-                result.extend(self.resolve(field_type, false));
+        let mut pending = vec![index];
+        let mut seen = HashSet::new();
+        while let Some(index) = pending.pop() {
+            if !seen.insert(index) {
+                continue;
             }
-            next = list.continuation;
+            let mut next = match self.finder.find(index).and_then(|t| t.parse()) {
+                Ok(pdb2::TypeData::Class(c)) => c.fields,
+                Ok(pdb2::TypeData::Union(u)) => Some(u.fields),
+                _ => None,
+            };
+            while let Some(fields) = next {
+                let Ok(pdb2::TypeData::FieldList(list)) = self.finder.find(fields).and_then(|t| t.parse()) else { break };
+                for field in &list.fields {
+                    let field_type = match field {
+                        pdb2::TypeData::Member(m) => m.field_type,
+                        pdb2::TypeData::BaseClass(b) => b.base_class,
+                        pdb2::TypeData::VirtualBaseClass(v) => v.base_class,
+                        _ => continue,
+                    };
+                    match self.resolve(field_type, false) {
+                        Some(dependency) => result.push(dependency),
+                        None => pending.extend(self.anonymous_definition(field_type)),
+                    }
+                }
+                next = list.continuation;
+            }
         }
         result
     }
@@ -117,6 +148,7 @@ impl Types<'_, '_> {
 pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) -> pdb2::Result<HashMap<pdb2::TypeIndex, Placement>> {
     let mut names = HashMap::new();
     let mut by_name = HashMap::new();
+    let mut anonymous = HashMap::new();
     for &index in types {
         let name = match context.type_finder.find(index).and_then(|t| t.parse()) {
             Ok(pdb2::TypeData::Class(c)) => c.name.to_string().into_owned(),
@@ -126,12 +158,13 @@ pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) ->
         };
         // Anonymous types stay in exported.h: one holding only constants is defined nowhere else
         if cpp::is_anonymous_type_name(&name) {
+            anonymous.entry(name).or_insert(index);
             continue;
         }
         by_name.entry(name.clone()).or_insert(index);
         names.insert(index, name);
     }
-    let types = Types { finder: &context.type_finder, names, by_name };
+    let types = Types { finder: &context.type_finder, names, by_name, anonymous };
 
     // Nested types are embedded in their parent, so they go wherever the outermost type goes, and
     // their evidence counts for it. Function-local types go wherever their function goes.
@@ -250,6 +283,7 @@ pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) ->
                 line: line.saturating_sub(1),
                 rule: "member function lines",
                 evidence: format!("{name} is defined at line {line}"),
+                requires: vec![],
             });
         }
     }
@@ -282,17 +316,22 @@ pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) ->
                 line: 0,
                 rule: "header named after source",
                 evidence: format!("{name} is defined in {}", Path::new(&source).file_name().unwrap_or_default().to_string_lossy()),
+                requires: vec![],
             });
         }
     }
 
+    let mut dependencies = HashMap::<pdb2::TypeIndex, Vec<pdb2::TypeIndex>>::new();
     let mut users = HashMap::<pdb2::TypeIndex, HashSet<pdb2::TypeIndex>>::new();
     for &index in types.names.keys() {
-        for dependency in types.by_value_dependencies(index) {
-            if dependency != index {
-                users.entry(dependency).or_default().insert(index);
-            }
+        let mut requires = types.by_value_dependencies(index);
+        requires.retain(|dependency| *dependency != index);
+        requires.sort();
+        requires.dedup();
+        for &dependency in &requires {
+            users.entry(dependency).or_default().insert(index);
         }
+        dependencies.insert(index, requires);
     }
     let mut order = types.names.keys().copied().collect::<Vec<_>>();
     order.sort();
@@ -308,6 +347,7 @@ pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) ->
                 line: *line,
                 rule: "function-local",
                 evidence: format!("local to {function}"),
+                requires: vec![],
             });
         }
     }
@@ -326,10 +366,16 @@ pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) ->
             line: line.saturating_sub(1),
             rule: "only use",
             evidence: "used only by code in this file".into(),
+            requires: vec![],
         });
     }
 
     propagate(&order, &types, &users, &parent, &function_local, &mut placed);
+
+    for (index, placement) in placed.iter_mut() {
+        placement.requires = dependencies.remove(index).unwrap_or_default();
+    }
+
     Ok(placed)
 }
 
@@ -373,6 +419,7 @@ fn propagate(
                 line: first.line.saturating_sub(1),
                 rule: "held by value",
                 evidence: format!("held by value only by types placed here, such as {}", types.names[*holder]),
+                requires: vec![],
             };
             placed.insert(index, placement);
             changed = true;

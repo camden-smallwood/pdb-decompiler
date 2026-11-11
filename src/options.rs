@@ -25,6 +25,12 @@ pub struct Options {
     #[structopt(long = "source-path", parse(from_os_str))]
     pub source_paths: Vec<PathBuf>,
 
+    /// An SDK include directory. For PDBs without IPI, types and typedefs its headers define are
+    /// included from the SDK instead of reconstructed, and exported.h checks their sizes. Can be
+    /// specified multiple times.
+    #[structopt(long = "sdk-include", parse(from_os_str))]
+    pub sdk_includes: Vec<PathBuf>,
+
     /// The base address to add when resolving an RVA. (Optional)
     #[structopt(short, long, parse(try_from_str = parse_base_address))]
     pub base_address: Option<u64>,
@@ -53,6 +59,12 @@ pub struct Options {
     /// blocks) to a JSON file keyed by mangled function name. (Forces unrolling.)
     #[structopt(long, parse(from_os_str))]
     pub export_debug_blocks_json: Option<PathBuf>,
+
+    /// Writes a JSON manifest of the objects the image was linked from, in link order: each
+    /// object's library, source file, compiler and build command, the address ranges it
+    /// contributed, and its functions and data with their addresses and source lines.
+    #[structopt(long, parse(from_os_str))]
+    pub export_objects_json: Option<PathBuf>,
 
     /// The file containing all function pseudocode in a JSON mapping. (Optional)
     #[structopt(long, parse(from_os_str))]
