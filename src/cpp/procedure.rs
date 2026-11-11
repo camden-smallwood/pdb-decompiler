@@ -170,11 +170,7 @@ impl TabbedDisplay for Block {
                 continue;
             }
 
-            match statement {
-                Statement::Label(_) => "".tabbed_fmt(depth, f)?,
-                Statement::Commented(x) if matches!(x.as_ref(), Statement::Label(_)) => "".tabbed_fmt(depth, f)?,
-                _ => "".tabbed_fmt(depth + 1, f)?,
-            }
+            "".tabbed_fmt(depth + 1, f)?;
             statement.tabbed_fmt(depth + 1, f)?;
             writeln!(f)?;
         }
@@ -194,6 +190,9 @@ pub struct MemberMethodData {
     pub declaring_class: String,
     pub this_pointer_type: Option<String>,
     pub this_adjustment: u32,
+    /// The name and type of the method's declaration in `class_type`
+    pub method_name: String,
+    pub method_type: pdb2::TypeIndex,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -237,12 +236,20 @@ impl Display for Procedure {
 
         match self.body.as_ref() {
             Some(body) => {
+                // Project Hades anchors every index on this comment; it must stay
+                // last on the line.
+                if self.address != 0 {
+                    write!(f, " // 0x{:X}", self.address)?;
+                }
                 writeln!(f)?;
                 write!(f, "{}", TabbedDisplayer(0, body))?;
             },
 
             None => {
                 write!(f, ";")?;
+                if self.address != 0 {
+                    write!(f, " // 0x{:X}", self.address)?;
+                }
             }
         }
 

@@ -2,23 +2,46 @@ mod cpp;
 mod debug_blocks;
 mod decompile;
 mod namespaces;
+mod objects;
+mod legacy;
 mod options;
 mod param_const;
+mod placement;
 mod reorganize;
+mod sdk;
 mod tabbed;
 pub mod utils;
 
 use decompile::Decompiler;
 use options::Options;
-use std::{error::Error, path::PathBuf};
+use std::error::Error;
 use structopt::StructOpt;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut options = Options::from_args();
-    
-    if let Some(out) = options.out.as_mut() {
-        if !out.is_dir() {
-            *out = PathBuf::from(format!("{}/", out.to_string_lossy()));
+
+    // The output directory is consumed through `Path::join`, which handles a
+    // missing trailing separator correctly on every platform, so the `--out`
+    // value needs no manual normalization here.
+
+    // If `--pdb` was passed but didn't parse as a flag, the most common cause
+    // is a Windows path quoted with a trailing backslash before the closing
+    // quote (e.g. --out="...\"), which escapes that quote and swallows the
+    // following arguments. Point that out instead of leaving a bare
+    // "PDB path not provided" error.
+    if options.pdb.is_none() {
+        let command_line = std::env::args_os()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if command_line.contains("--pdb") {
+            eprintln!(
+                "NOTE: '--pdb' appears in the command line but was not parsed as a flag. \
+                 If the path is quoted, make sure it does not end with a backslash before \
+                 the closing quote: use --pdb=\"C:\\path\\file.pdb\", not --pdb=\"C:\\path\\folder\\\"."
+            );
         }
     }
 
@@ -59,9 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         options.pseudocode_json = pseudocode_json.unwrap();
     }
 
-    if let Err(error) = Decompiler::new(options).with_function_scopes_modules(function_scopes_modules).decompile() {
-        println!("ERROR: could not decompile PDB because it {error}");
-    }
+    Decompiler::new(options).with_function_scopes_modules(function_scopes_modules).decompile()?;
 
     Ok(())
 }

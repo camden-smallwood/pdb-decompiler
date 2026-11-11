@@ -141,7 +141,7 @@ fn is_local_scope_marker(component: &str) -> bool {
 /// function's qualified name (everything before the first marker) and the entity's own
 /// name (everything after the last marker — intervening nested-block markers are dropped).
 /// Returns `None` when the name has no such marker.
-fn split_local_scope(name: &str) -> Option<(String, String)> {
+pub fn split_local_scope(name: &str) -> Option<(String, String)> {
     let components = split_qualified(name);
     let first = components.iter().position(|c| is_local_scope_marker(c))?;
     let last = components.iter().rposition(|c| is_local_scope_marker(c)).unwrap();
@@ -307,13 +307,20 @@ fn component_is_clean(component: &str, allow_anon: bool) -> bool {
     }
 
     let mut depth: i32 = 0;
+    let mut seen = String::with_capacity(component.len());
     for c in component.chars() {
         match c {
             '<' => depth += 1,
             '>' => depth -= 1,
-            '`' | '$' | '[' if depth == 0 => return false,
+            '`' | '$' if depth == 0 => return false,
+            // A thunk's `[` opens the component (`[thunk]:Class::method`); a
+            // subscript operator's never does, and always follows `operator`.
+            // Without that exception every `operator[]` in the binary - 214 of
+            // them here - classifies as compiler-generated and is dropped.
+            '[' if depth == 0 && !seen.ends_with("operator") => return false,
             _ => {}
         }
+        seen.push(c);
     }
 
     true

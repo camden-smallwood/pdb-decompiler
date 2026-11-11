@@ -2,11 +2,11 @@ use crate::{cpp, options::Options};
 use pdb2::FallibleIterator;
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     error::Error,
     fs::{File, OpenOptions},
     io::Write,
-    path::{Component, PathBuf},
+    path::{Component, Path, PathBuf},
     rc::Rc,
 };
 
@@ -37,8 +37,9 @@ pub struct DecompileContext<'a, 's> {
     pub machine_type: pdb2::MachineType,
     pub address_map: &'a pdb2::AddressMap<'s>,
     pub string_table: Option<&'a pdb2::StringTable<'s>>,
-    pub id_info: &'a pdb2::IdInformation<'s>,
-    pub id_finder: pdb2::IdFinder<'a>,
+    pub id_info: Option<&'a pdb2::IdInformation<'s>>,
+    pub id_finder: Option<pdb2::IdFinder<'a>>,
+    pub source_files: HashMap<u16, Vec<String>>,
     pub type_info: &'a pdb2::TypeInformation<'s>,
     pub type_finder: pdb2::TypeFinder<'a>,
     pub global_symbols: &'a pdb2::SymbolTable<'s>,
@@ -67,6 +68,69 @@ impl Decompiler {
         self
     }
 
+    /// Computes the output path for a module, rebased relative to a matching
+    /// `--source-path` filter. This is used **only** when writing output `.cpp`
+    /// files; the module's own `path` (used for internal references) is left
+    /// untouched.
+    ///
+    /// When no `--source-path` filters are configured, the module path is
+    /// returned unchanged. Otherwise, the module is kept only if its (sanitized)
+    /// path is equal to, or nested under, one of the given paths (case-insensitive,
+    /// tolerating trailing slashes). The returned path is the last folder of the
+    /// matched source path followed by the module's components after that prefix,
+    /// so `.../FolderA/SubFolderA/foo.cpp` becomes `SubFolderA/foo.cpp`. Returns
+    /// `None` when the module does not match any filter.
+    #[inline(always)]
+    fn rebase_output_path(source_paths: &[PathBuf], module_path: &Path) -> Option<PathBuf> {
+        if source_paths.is_empty() {
+            return Some(module_path.to_path_buf());
+        }
+
+        let sanitized = crate::utils::sanitize_path(module_path.to_string_lossy());
+        let components = sanitized
+            .split(['/', '\\'])
+            .filter(|component| !component.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let lowercased = components
+            .iter()
+            .map(|component| component.to_lowercase())
+            .collect::<Vec<_>>();
+
+        for source_path in source_paths {
+            let sp_sanitized = crate::utils::sanitize_path(source_path.to_string_lossy());
+            let sp_components = sp_sanitized
+                .split(['/', '\\'])
+                .filter(|component| !component.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let Some(last_component) = sp_components.last() else {
+                continue;
+            };
+            let sp_lowercased = sp_components
+                .iter()
+                .map(|component| component.to_lowercase())
+                .collect::<Vec<_>>();
+
+            if lowercased.len() < sp_lowercased.len() {
+                continue;
+            }
+
+            if lowercased[..sp_lowercased.len()] != sp_lowercased[..] {
+                continue;
+            }
+
+            let rebased = std::iter::once(last_component.as_str())
+                .chain(components[sp_lowercased.len()..].iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join("/");
+
+            return Some(PathBuf::from(rebased));
+        }
+
+        None
+    }
+
     #[inline(always)]
     pub fn decompile(&mut self) -> Result<(), Box<dyn Error>> {
         let pdb_path = self.options.pdb.clone()
@@ -89,14 +153,25 @@ impl Decompiler {
         let type_info = pdb.type_information()
             .map_err(|e| format!("does not contain type information: {e}"))?;
 
-        let id_info = pdb.id_information()
-            .map_err(|e| format!("does not contain id information: {e}"))?;
+        let info_stream = pdb.raw_stream(pdb2::StreamIndex(1))?
+            .ok_or("PDB information stream missing")?;
+        let id_info = if crate::legacy::has_ipi(info_stream.as_slice())? {
+            Some(pdb.id_information()?)
+        } else {
+            None
+        };
+        let dbi_stream = pdb.raw_stream(pdb2::StreamIndex(3))?
+            .ok_or("DBI stream missing")?;
+        let files = crate::legacy::source_files(dbi_stream.as_slice())?;
+        let source_files = debug_info.modules()?.collect::<Vec<_>>()?.iter()
+            .zip(files).map(|(module, files)| (module.info().stream.0, files))
+            .collect();
 
         let global_symbols = pdb.global_symbols()
             .map_err(|e| format!("does not contain global symbol information: {e}"))?;
         
         let type_finder = type_info.finder();
-        let id_finder = id_info.finder();
+        let id_finder = id_info.as_ref().map(|info| info.finder());
 
         // Map each public symbol's resolved address to its mangled name, so parameter
         // `const` lost from the type records can be recovered from the mangled name.
@@ -213,7 +288,8 @@ impl Decompiler {
             machine_type,
             address_map: &mut address_map,
             string_table: string_table.as_ref(),
-            id_info: &id_info,
+            id_info: id_info.as_ref(),
+            source_files,
             id_finder: id_finder,
             type_info: &type_info,
             type_finder: type_finder,
@@ -223,6 +299,10 @@ impl Decompiler {
         self.process_type_information(&mut context)?;
         self.process_id_information(&mut context)?;
         self.process_modules(&mut context)?;
+
+        if let Some(path) = self.options.export_objects_json.as_ref() {
+            crate::objects::export_objects_json(&mut context, self.options.base_address.unwrap_or(0), path)?;
+        }
 
         if let Some(script_file) = self.script_file.as_mut()
             && self.options.export_pseudocode_to_json
@@ -248,14 +328,14 @@ impl Decompiler {
     fn process_type_information<'a, 's>(&mut self, context: &mut DecompileContext<'a, 's>) -> pdb2::Result<()> {
         // println!("Processing type information...");
 
-        let export_all = context.id_info.is_empty();
+        let export_all = self.options.export_cpp && context.id_info.is_none_or(|info| info.is_empty());
 
         let mut type_iter = context.type_info.iter();
 
         let mut exported_forward_reference_indices = vec![];
         let mut exported_type_indices = vec![];
 
-        while let Ok(Some(type_item)) = type_iter.next() {
+        while let Some(type_item) = type_iter.next()? {
             context.type_finder.update(&type_iter);
             
             // Don't attempt to parse types we don't care about
@@ -321,7 +401,7 @@ impl Decompiler {
             }
         }
 
-        if exported_type_indices.is_empty() && exported_forward_reference_indices.is_empty() {
+        if !export_all {
             return Ok(());
         }
 
@@ -330,39 +410,186 @@ impl Decompiler {
         let mut module = cpp::Module::default();
         module.path = exported_path.clone();
 
+        // Types an SDK's headers define are included from the SDK instead of reconstructed
+        let sdk = crate::sdk::Sdk::scan(&self.options.sdk_includes).map_err(pdb2::Error::IoError)?;
+
+        let full_names = exported_type_indices.iter().filter_map(|index| {
+            context.type_finder.find(*index).ok()?.parse().ok()?.name().map(|n| n.to_string().into_owned())
+        }).collect::<HashSet<_>>();
         for type_index in exported_forward_reference_indices {
+            if context.type_finder.find(type_index)?.parse()?.name()
+                .is_some_and(|name| full_names.contains(name.to_string().as_ref()) || sdk.header(&name.to_string()).is_some()) { continue; }
             if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
                 panic!("{e}");
             }
         }
 
+        let mut canonical_type_indices = vec![];
         for type_index in exported_type_indices {
-            if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
+            if let Some(name) = context.type_finder.find(type_index)?.parse()?.name()
+                && self.canonical_type_index.get(name.to_string().as_ref())
+                    .is_some_and(|canonical| *canonical != type_index) { continue; }
+            canonical_type_indices.push(type_index);
+        }
+
+        // Without IPI no type records its declaration file; infer one where the evidence allows
+        let placements = crate::placement::place_types(context, &canonical_type_indices)?;
+        let mut placement_entries = vec![];
+        let mut placed_paths = HashMap::new();
+        let mut sdk_headers = HashMap::new();
+        let mut sdk_layouts = vec![];
+
+        for type_index in canonical_type_indices {
+            let type_data = context.type_finder.find(type_index)?.parse()?;
+            let name = type_data.name().map(|n| n.to_string().into_owned()).unwrap_or_default();
+
+            // A type whose file is filtered out stays in the shared inventory
+            let placed = placements.get(&type_index).and_then(|placement| {
+                let path = PathBuf::from(crate::utils::sanitize_path(&placement.file));
+                Self::rebase_output_path(&self.options.source_paths, &path).map(|_| (path, placement))
+            });
+
+            if let Some(header) = sdk.header(&name) {
+                let header = PathBuf::from(header.to_string_lossy().replace('\\', "/"));
+
+                // The PDB's layout of a type the SDK defines directly, to check the SDK against
+                let size = match &type_data {
+                    pdb2::TypeData::Class(class_type) => class_type.size,
+                    pdb2::TypeData::Union(union_type) => union_type.size,
+                    _ => 0,
+                };
+
+                if size != 0 && sdk.defines(&name) {
+                    sdk_layouts.push((name.clone(), size));
+                }
+
+                placement_entries.push((format!("<{}>", header.display()), 0, name, type_index, "sdk", "defined by an SDK header".into()));
+                sdk_headers.insert(type_index, (header, placed.map(|(path, _)| path)));
+                continue;
+            }
+
+            let Some((path, placement)) = placed else {
+                if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, context.type_info, &context.type_finder, type_index, 0) {
+                    panic!("{e}");
+                }
+                continue;
+            };
+
+            let target = self.modules.entry(path.to_string_lossy().to_lowercase())
+                .or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path.clone()))))
+                .clone();
+
+            if let Err(e) = target.borrow_mut().add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, context.type_info, &context.type_finder, type_index, placement.line) {
                 panic!("{e}");
+            }
+
+            placement_entries.push((placement.file.clone(), placement.line, name, type_index, placement.rule, placement.evidence.clone()));
+            placed_paths.insert(type_index, path);
+        }
+
+        // A file includes the files defining what its types derive from or hold by value. SDK
+        // headers are included as such, by the file a type the SDK defines would have been in.
+        let mut includes = BTreeMap::<String, (PathBuf, BTreeMap<String, (PathBuf, bool)>)>::new();
+        let mut include = |path: &PathBuf, header: &PathBuf, is_global: bool| {
+            let key = path.to_string_lossy().to_lowercase();
+            let header_key = header.to_string_lossy().to_lowercase().replace('\\', "/");
+
+            // Not the file itself, nor, for an SDK header, a copy of it in the PDB's source tree
+            if header_key == key.replace('\\', "/") || (is_global && key.replace('\\', "/").ends_with(&format!("/{header_key}"))) {
+                return;
+            }
+
+            includes.entry(key).or_insert_with(|| (path.clone(), BTreeMap::new())).1.entry(header_key).or_insert_with(|| (header.clone(), is_global));
+        };
+
+        for (type_index, path) in placed_paths.iter() {
+            for dependency in placements[type_index].requires.iter() {
+                if let Some(dependency_path) = placed_paths.get(dependency) {
+                    include(path, dependency_path, false);
+                } else if let Some((header, _)) = sdk_headers.get(dependency) {
+                    include(path, header, true);
+                }
             }
         }
 
+        let mut exported_sdk_headers = std::collections::BTreeSet::new();
+
+        for (header, placed) in sdk_headers.values() {
+            match placed {
+                Some(path) => include(path, header, true),
+                None => {
+                    exported_sdk_headers.insert(header.clone());
+                }
+            }
+        }
+
+        for (key, (path, headers)) in includes {
+            // A file only SDK types would have been in has no module yet
+            let mut module = self.modules.entry(key)
+                .or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path))))
+                .borrow_mut();
+
+            for (_, (header_path, is_global)) in headers {
+                if !module.headers.iter().any(|(path, _)| path.to_string_lossy().eq_ignore_ascii_case(&header_path.to_string_lossy())) {
+                    module.headers.push((header_path, is_global));
+                }
+            }
+        }
+
+        for header in exported_sdk_headers {
+            module.headers.push((header, true));
+        }
+
+        placement_entries.sort_by(|a, b| (&a.0, a.1, &a.2).cmp(&(&b.0, b.1, &b.2)));
+
+        let placement_index = serde_json::json!({
+            "note": "Inferred declaration files for types in a PDB without IPI, which records none. Types the SDK defines have the rule sdk and are included from its header. Types not listed are in exported.h.",
+            "types": placement_entries.iter().map(|(file, _, name, type_index, rule, evidence)| serde_json::json!({
+                "type": name,
+                "type_index": format!("0x{:X}", type_index.0),
+                "file": file,
+                "rule": rule,
+                "evidence": evidence,
+            })).collect::<Vec<_>>(),
+        });
+
+        let module = Rc::new(RefCell::new(module));
+        let mut symbols = context.global_symbols.iter();
+        while let Some(symbol) = symbols.next()? {
+            if let Ok(data @ pdb2::SymbolData::UserDefinedType(_)) = symbol.parse() {
+                if let pdb2::SymbolData::UserDefinedType(udt_symbol) = &data && sdk.defines(&udt_symbol.name.to_string()) {
+                    continue;
+                }
+
+                self.process_module_symbol_data(context, &HashMap::new(), module.clone(), None, &data)?;
+            }
+        }
         if let Some(parent_path) = exported_path.parent()
             && let Err(e) = std::fs::create_dir_all(parent_path)
         {
             panic!("{e}");
         }
 
-        let mut file = if exported_path.exists() {
-            match OpenOptions::new().write(true).append(true).open(exported_path.clone()) {
-                Ok(x) => x,
-                Err(e) => panic!("{e}: {}", exported_path.to_string_lossy()),
-            }
-        } else {
-            match File::create(exported_path.clone()) {
-                Ok(x) => x,
-                Err(e) => panic!("{e}: {}", exported_path.to_string_lossy()),
-            }
-        };
+        let mut file = File::create(&exported_path).map_err(pdb2::Error::IoError)?;
 
-        if let Err(e) = write!(file, "{module}") {
+        if let Err(e) = write!(file, "{}", cpp::compact_std_templates(&cpp::shorten_std_aliases(&module.borrow().to_string()))) {
             panic!("{e}");
         }
+
+        // The SDK may not be the version the PDB was built with: check the layouts it records
+        if !sdk_layouts.is_empty() {
+            sdk_layouts.sort();
+            sdk_layouts.dedup();
+
+            writeln!(file, "\n// Layouts this PDB records for types the SDK defines").map_err(pdb2::Error::IoError)?;
+
+            for (name, size) in sdk_layouts {
+                writeln!(file, "static_assert(sizeof({name}) == {size}, \"Invalid {name} size\");").map_err(pdb2::Error::IoError)?;
+            }
+        }
+
+        let index_file = File::create(exported_path.with_file_name("placements.json")).map_err(pdb2::Error::IoError)?;
+        serde_json::to_writer_pretty(index_file, &placement_index).map_err(|e| pdb2::Error::IoError(e.into()))?;
 
         Ok(())
     }
@@ -371,10 +598,12 @@ impl Decompiler {
     fn process_id_information<'a, 's>(&mut self, context: &mut DecompileContext<'a, 's>) -> pdb2::Result<()> {
         // println!("Processing id information...");
 
-        let mut id_iter = context.id_info.iter();
+        let Some(id_info) = context.id_info else { return Ok(()); };
+        let id_finder = context.id_finder.as_mut().unwrap();
+        let mut id_iter = id_info.iter();
 
         while let Some(id) = id_iter.next()? {
-            context.id_finder.update(&id_iter);
+            id_finder.update(&id_iter);
 
             let (pdb2::LF_BUILDINFO | pdb2::LF_UDT_SRC_LINE | pdb2::LF_UDT_MOD_SRC_LINE) = id.raw_kind() else {
                 continue;
@@ -391,7 +620,7 @@ impl Decompiler {
             match id_data {
                 pdb2::IdData::BuildInfo(build_info) => {
                     let mut module = cpp::Module::default();
-                    module.add_build_info(&mut context.id_finder, build_info)?;
+                    module.add_build_info(id_finder, build_info)?;
 
                     let Some(Component::Normal(_)) = module.path.components().last() else {
                         continue;
@@ -413,7 +642,7 @@ impl Decompiler {
                 
                 pdb2::IdData::UserDefinedTypeSource(data) => {
                     let module_path = match data.source_file {
-                        pdb2::UserDefinedTypeSourceFileRef::Local(id) => match context.id_finder.find(id) {
+                        pdb2::UserDefinedTypeSourceFileRef::Local(id) => match id_finder.find(id) {
                             Ok(item) => match item.parse() {
                                 Ok(pdb2::IdData::String(source_file)) => crate::utils::sanitize_path(&source_file.name.to_string()),
                                 Ok(data) => panic!("invalid UDT source file id: {:#?}", data),
@@ -424,7 +653,7 @@ impl Decompiler {
                         },
 
                         pdb2::UserDefinedTypeSourceFileRef::Remote(_, source_line_ref) => {
-                            crate::utils::sanitize_path(&source_line_ref.to_string_lossy(context.string_table.unwrap())?)
+                            crate::utils::sanitize_path(&source_line_ref.to_string_lossy(context.string_table.ok_or(pdb2::Error::StreamNameNotFound)?)?)
                         }
                     };
 
@@ -466,7 +695,8 @@ impl Decompiler {
         let mut module_iter = context.debug_info.modules().map_err(|e| format!("does not contain debug module info: {e}"))?;
 
         while let Some(module) = module_iter.next().map_err(|e| format!("failed to get next debug module info: {e}"))? {
-            if let Err(_) = self.process_module(context, &module, &module_global_symbols) {
+            if let Err(error) = self.process_module(context, &module, &module_global_symbols) {
+                println!("WARNING: failed to process module {}: {error}", module.module_name());
                 // println!("WARNING: failed to parse module, skipping: {e} - {module:#?}");
                 continue;
             }
@@ -513,7 +743,8 @@ impl Decompiler {
             path_tree.add_path(&module.compiler_path, false);
             path_tree.add_path(&module.pdb_path, false);
 
-            for (header_path, _) in module.headers.iter() {
+            // A global include is already an include path, such as an SDK header's
+            for (header_path, _) in module.headers.iter().filter(|(_, is_global)| !is_global) {
                 path_tree.add_path(&header_path, false);
             }
 
@@ -581,7 +812,7 @@ impl Decompiler {
             module.compiler_path = path_tree.resolve_path(&module.compiler_path, false).unwrap();
             module.pdb_path = path_tree.resolve_path(&module.pdb_path, false).unwrap();
 
-            for (header_path, _) in module.headers.iter_mut() {
+            for (header_path, _) in module.headers.iter_mut().filter(|(_, is_global)| !*is_global) {
                 *header_path = path_tree.resolve_path(&header_path, false).unwrap();
             }
 
@@ -658,6 +889,10 @@ impl Decompiler {
             let mut pch_header_index = None;
 
             for (i, (header_path, is_global)) in module_headers.iter_mut().enumerate() {
+                if *is_global {
+                    continue;
+                }
+
                 let header_module_key = header_path.to_string_lossy().to_lowercase().to_string();
 
                 // Skip the PCH include
@@ -752,7 +987,7 @@ impl Decompiler {
             for i in 0..module.members.len() {
                 match &module.members[i] {
                     cpp::ModuleMember::Class(class_data) => {
-                        Self::fix_nested_types(module.members.as_slice(), i, class_data.clone(), &mut remove_class_names, &mut remove_enum_names);
+                        Self::fix_nested_types(module.members.as_slice(), i, class_data.clone(), None, &mut remove_class_names, &mut remove_enum_names);
                         new_members.push(cpp::ModuleMember::Class(class_data.clone()));
                     }
 
@@ -782,6 +1017,17 @@ impl Decompiler {
                 }
             }
             
+            // A nested type defined inside its parent here is redundant at the top level. One whose
+            // parent is elsewhere, or that its parent records under another name (a member template
+            // such as `?$rebind@D`), keeps its top-level definition, as it is the only one.
+            let mut nested_definitions = HashSet::new();
+
+            for member in module.members.iter() {
+                if let cpp::ModuleMember::Class(class_data) = member {
+                    Self::collect_nested_definitions(&class_data.borrow(), &mut nested_definitions);
+                }
+            }
+
             for i in (0..module.members.len()).rev() {
                 match &module.members[i] {
                     cpp::ModuleMember::Class(class_data) => {
@@ -790,7 +1036,8 @@ impl Decompiler {
                             // Anonymous types are inlined into their parent field, so drop
                             // the redundant top-level definition too.
                             cpp::is_anonymous_type_name(&class_data.name)
-                                || class_data.properties.as_ref().map(|p| p.is_nested_type()).unwrap_or(false)
+                                || (class_data.properties.as_ref().map(|p| p.is_nested_type()).unwrap_or(false)
+                                    && nested_definitions.contains(&class_data.index))
                         };
 
                         if is_nested_type {
@@ -806,11 +1053,12 @@ impl Decompiler {
                         }
                     }
                     
-                    cpp::ModuleMember::Enum(enum_data) => {
-                        if cpp::is_anonymous_type_name(&enum_data.name) || enum_data.properties.is_nested_type() {
-                            // println!("WARNING: Removing unreferenced nested enum in toplevel: \"{}\" in \"{}\"", enum_data.name, module.path.display());
-                            module.members.remove(i);
-                        }
+                    cpp::ModuleMember::Enum(enum_data)
+                        if cpp::is_anonymous_type_name(&enum_data.name)
+                            || (enum_data.properties.is_nested_type() && nested_definitions.contains(&enum_data.index)) =>
+                    {
+                        // println!("WARNING: Removing unreferenced nested enum in toplevel: \"{}\" in \"{}\"", enum_data.name, module.path.display());
+                        module.members.remove(i);
                     }
 
                     _ => {}
@@ -862,6 +1110,62 @@ impl Decompiler {
                     };
 
                     keep_index.get(&name) == Some(&index) && kept.insert(name)
+                });
+            }
+
+            //
+            // A member function can't be redeclared outside its class. When the class is defined
+            // here, fold a definition without a body into its declaration, keeping the address
+            //
+
+            if !self.options.reorganize {
+                let mut classes = HashMap::new();
+
+                // A function with local types keeps its definition, which they will be embedded in
+                let mut has_local_types = HashSet::new();
+
+                for member in module.members.iter() {
+                    let name = match member {
+                        cpp::ModuleMember::Class(class_data) => {
+                            Self::collect_defined_classes(class_data, None, &mut classes);
+                            class_data.borrow().name.clone()
+                        }
+                        cpp::ModuleMember::Enum(enum_data) => enum_data.name.clone(),
+                        _ => continue,
+                    };
+
+                    if let Some((function, _)) = crate::namespaces::split_local_scope(&name) {
+                        has_local_types.insert(function);
+                    }
+                }
+
+                module.members.retain(|member| {
+                    let cpp::ModuleMember::Procedure(cpp::Procedure { body: None, member_method_data: Some(data), address, name, .. }) = member else {
+                        return true;
+                    };
+
+                    if has_local_types.contains(name) {
+                        return true;
+                    }
+
+                    let Some(class_data) = classes.get(&data.class_type) else {
+                        return true;
+                    };
+
+                    let mut class_data = class_data.borrow_mut();
+
+                    let Some(method) = class_data.members.iter_mut().find_map(|m| match m {
+                        cpp::ClassMember::Method(method) if method.name == data.method_name && method.type_index == data.method_type => Some(method),
+                        _ => None,
+                    }) else {
+                        return true;
+                    };
+
+                    if *address != 0 && !method.addresses.contains(address) {
+                        method.addresses.push(*address);
+                    }
+
+                    false
                 });
             }
         }
@@ -945,8 +1249,28 @@ impl Decompiler {
             _ => None,
         };
 
+        let source_paths = &self.options.source_paths;
+        let mut empty_headers = vec![];
+
         for module in self.modules.values_mut() {
+            // Compute the rebased output path (skip modules that don't match a filter).
+            let rebased_path = {
+                let module_ref = module.borrow();
+                Self::rebase_output_path(source_paths, &module_ref.path)
+            };
+
+            let Some(rebased_path) = rebased_path else {
+                continue;
+            };
+
             let mut module = module.borrow_mut();
+
+            // A header known only from line records may have nothing recoverable. Its path still
+            // records the original source tree, so list it instead of writing it out empty
+            if module.is_header() && module.headers.is_empty() && module.members.iter().all(|m| matches!(m, cpp::ModuleMember::EmptyLine | cpp::ModuleMember::Preprocessor(_))) {
+                empty_headers.push(rebased_path.to_string_lossy().trim_start_matches(['/', '\\']).to_string());
+                continue;
+            }
 
             let mut path = PathBuf::new();
             
@@ -959,7 +1283,7 @@ impl Decompiler {
                 PathBuf::from(crate::utils::sanitize_path(format!(
                     "{}/{}",
                     out_path.display(),
-                    module.path.to_string_lossy().trim_start_matches('/'),
+                    rebased_path.to_string_lossy().trim_start_matches('/'),
                 )))
                     .components(),
             );
@@ -973,6 +1297,7 @@ impl Decompiler {
                     &context.type_finder,
                     &mut module,
                     compound_enums.as_slice(),
+                    self.options.project_name.as_str(),
                 )?;
             }
 
@@ -1012,10 +1337,23 @@ impl Decompiler {
                     }
                 };
 
-                if let Err(e) = write!(file, "{module}") {
+                if let Err(e) = write!(
+                    file, "{}", cpp::compact_std_templates(&cpp::shorten_std_aliases(&module.to_string()))
+                ) {
                     panic!("Failed to write to file: \"{}\" - {e}", path.display());
                 }
             }
+        }
+
+        //
+        // List the headers that were not written, one output-relative path per line
+        //
+
+        if self.options.export_cpp && !empty_headers.is_empty() {
+            empty_headers.sort_by_key(|path| path.to_lowercase());
+            empty_headers.dedup_by_key(|path| path.to_lowercase());
+            std::fs::create_dir_all(out_path)?;
+            std::fs::write(out_path.join("empty_headers.txt"), empty_headers.join("\n") + "\n")?;
         }
 
         //
@@ -1033,7 +1371,7 @@ impl Decompiler {
     fn load_module_global_symbols<'a, 's>(
         &mut self,
         context: &mut DecompileContext<'a, 's>
-    ) -> Result<HashMap<String, Vec<pdb2::SymbolData<'a>>>, Box<dyn Error>> {
+    ) -> Result<HashMap<u16, Vec<pdb2::SymbolData<'a>>>, Box<dyn Error>> {
         // println!("Loading module global symbols...");
 
         let mut section_contributions = vec![];
@@ -1048,6 +1386,7 @@ impl Decompiler {
         let mut global_symbols_iter = context.global_symbols.iter();
         let mut module_global_symbols = HashMap::new();
         let mut prev_module_name = None;
+        let mut unhandled_symbol_kinds = HashSet::new();
 
         loop {
             let symbol = match global_symbols_iter.next() {
@@ -1103,6 +1442,7 @@ impl Decompiler {
             };
 
             match symbol_data {
+                pdb2::SymbolData::UserDefinedType(_) if context.id_info.is_none() => {}
                 pdb2::SymbolData::UserDefinedType(_) if prev_module_name.is_some() => {
                     let module_name = prev_module_name.clone().unwrap();
 
@@ -1117,7 +1457,7 @@ impl Decompiler {
                 pdb2::SymbolData::ProcedureReference(pdb2::ProcedureReferenceSymbol { module: Some(module), .. }) => {
                     let referenced_module = modules.get(module as usize).unwrap();
 
-                    let module_name = referenced_module.module_name().to_string();
+                    let module_name = referenced_module.info().stream.0;
                     prev_module_name = Some(module_name.clone());
 
                     // println!(
@@ -1136,7 +1476,7 @@ impl Decompiler {
                         let contributing_module = modules.get(contribution.module as usize).unwrap();
 
                         if offset >= contribution.offset && offset < contribution.offset + contribution.size {
-                            let module_name = contributing_module.module_name().to_string();
+                            let module_name = contributing_module.info().stream.0;
                             prev_module_name = Some(module_name.clone());
 
                             // println!(
@@ -1150,7 +1490,16 @@ impl Decompiler {
                     }
                 }
 
-                _ => todo!("{:#?}", symbol_data),
+                // A global UDT encountered before any module attribution cannot be
+                // assigned to a module, so there is nowhere to put it. Skip it
+                // rather than aborting the whole run.
+                pdb2::SymbolData::UserDefinedType(_) => {}
+
+                _ => {
+                    if unhandled_symbol_kinds.insert(std::mem::discriminant(&symbol_data)) {
+                        println!("WARNING: unhandled global symbol kind, skipping: {symbol_data:#?}");
+                    }
+                }
             }
         }
 
@@ -1164,7 +1513,7 @@ impl Decompiler {
         &mut self,
         context: &mut DecompileContext<'a, 's>,
         pdb_module: &pdb2::Module,
-        module_global_symbols: &HashMap<String, Vec<pdb2::SymbolData>>,
+        module_global_symbols: &HashMap<u16, Vec<pdb2::SymbolData>>,
     ) -> Result<(), Box<dyn Error>> {
         let module_info = match context.pdb.module_info(pdb_module)? {
             Some(module_info) => module_info,
@@ -1174,14 +1523,18 @@ impl Decompiler {
             }
         };
 
-        let line_program = module_info.line_program()?;
-        let line_offsets = self.get_module_line_program_offsets(&line_program)?;
-        
+        let line_program = module_info.line_program();
+        let line_offsets = crate::legacy::module_source_lines(context.pdb, pdb_module, line_program.as_ref().ok(), context.string_table)?;
+
         let Some(module) = self.get_or_create_cpp_module(
             context,
             pdb_module,
             &module_info,
-            &line_program,
+            line_program.as_ref().ok(),
+            &line_offsets,
+            module_global_symbols.get(&pdb_module.info().stream.0).is_some_and(|symbols|
+                symbols.iter().any(|symbol| matches!(symbol, pdb2::SymbolData::Data(_)
+                    | pdb2::SymbolData::ThreadStorage(_) | pdb2::SymbolData::Procedure(_)))),
         )? else {
             println!(
                 "WARNING: Failed to find source file path for module \"{}\" in \"{}\", skipping...",
@@ -1194,7 +1547,7 @@ impl Decompiler {
         // println!("Processing module: \"{}\"", module.borrow().path.display());
 
         // Process module global symbols
-        if let Some(global_symbols) = module_global_symbols.get(&pdb_module.module_name().to_string()).cloned() {
+        if let Some(global_symbols) = module_global_symbols.get(&pdb_module.info().stream.0).cloned() {
             for symbol_data in global_symbols {
                 self.process_module_symbol_data(
                     context,
@@ -1218,7 +1571,7 @@ impl Decompiler {
                 }
             };
 
-            if let pdb2::SymbolData::UserDefinedType(_) = symbol_data {
+            if context.id_info.is_some() && matches!(symbol_data, pdb2::SymbolData::UserDefinedType(_)) {
                 continue;
             }
             
@@ -1269,29 +1622,14 @@ impl Decompiler {
     }
 
     #[inline(always)]
-    fn get_module_line_program_offsets(
-        &mut self,
-        line_program: &pdb2::LineProgram,
-    ) -> pdb2::Result<HashMap<pdb2::StringRef, HashMap<pdb2::PdbInternalSectionOffset, pdb2::LineInfo>>> {
-        let mut line_offsets = HashMap::new();
-
-        for line in line_program.lines().collect::<Vec<_>>()? {
-            let file = line_program.get_file_info(line.file_index)?;
-            let offsets = line_offsets.entry(file.name).or_insert_with(HashMap::new);
-
-            offsets.entry(line.offset).or_insert(line);
-        }
-
-        Ok(line_offsets)
-    }
-
-    #[inline(always)]
     fn get_or_create_cpp_module<'a, 's>(
         &mut self,
         context: &mut DecompileContext<'a, 's>,
         module: &pdb2::Module,
         module_info: &pdb2::ModuleInfo,
-        line_program: &pdb2::LineProgram,
+        line_program: Option<&pdb2::LineProgram>,
+        source_lines: &crate::legacy::SourceLines,
+        has_global_definitions: bool,
     ) -> pdb2::Result<Option<Rc<RefCell<cpp::Module>>>> {
         let mut module_symbols = module_info.symbols()?;
         let mut module_file_path = None;
@@ -1299,11 +1637,12 @@ impl Decompiler {
         // Try to find build info for the module to get the module's source file path
         while let Some(symbol_item) = module_symbols.next()? {
             let Ok(pdb2::SymbolData::BuildInfo(build_info)) = symbol_item.parse() else { continue };
-            let Ok(id_item) = context.id_finder.find(build_info.id) else { continue };
+            let Some(id_finder) = context.id_finder.as_ref() else { continue };
+            let Ok(id_item) = id_finder.find(build_info.id) else { continue };
             let Ok(pdb2::IdData::BuildInfo(build_info)) = id_item.parse() else { continue };
             
             let mut module = cpp::Module::default();
-            module.add_build_info(&context.id_finder, build_info)?;
+            module.add_build_info(id_finder, build_info)?;
 
             if !module.path.as_os_str().is_empty() {
                 module_file_path = Some(module.path.clone());
@@ -1311,27 +1650,66 @@ impl Decompiler {
             }
         }
 
-        // If we didn't find the module's source file path from build info, try to find it based on the object file path
+        let mut environment = std::collections::BTreeMap::new();
+        let mut symbols = module_info.symbols()?;
+        while let Some(symbol) = symbols.next()? {
+            environment.extend(crate::legacy::build_environment(&symbol)?);
+        }
+        let cwd = environment.get("cwd").cloned().unwrap_or_default();
+        if module_file_path.is_none() {
+            if let Some(source) = environment.get("src").filter(|s| !s.is_empty()) {
+                module_file_path = Some(crate::utils::canonicalize_path(&cwd, source, false));
+            }
+        }
+
+        let mut source_files = context.source_files.get(&module.info().stream.0)
+            .cloned().unwrap_or_default().into_iter()
+            .map(|path| PathBuf::from(crate::utils::sanitize_path(path))).collect::<Vec<_>>();
+        if let (Some(strings), Some(line_program)) = (context.string_table, line_program) {
+            for file in line_program.files().collect::<Vec<_>>()? {
+                let path = PathBuf::from(crate::utils::sanitize_path(file.name.to_string_lossy(strings)?));
+                if !source_files.contains(&path) { source_files.push(path); }
+            }
+        }
+        let mut line_paths = source_lines.keys().collect::<Vec<_>>();
+        line_paths.sort();
+        for name in line_paths {
+            let path = PathBuf::from(crate::utils::sanitize_path(name));
+            if !source_files.contains(&path) { source_files.push(path); }
+        }
+        // DBI file lists are available even when line records or /names are absent.
         if module_file_path.is_none() {
             let obj_path = self.get_module_object_file_path(module)?;
-            
-            for file in line_program.files().collect::<Vec<_>>()? {
-                let path = PathBuf::from(crate::utils::sanitize_path(&file.name.to_string_lossy(context.string_table.unwrap())?));
-
-                if let Some(extension) = path.extension()
-                    && cpp::SOURCE_FILE_EXTS.contains(&extension.to_str().unwrap_or(""))
-                    && path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase())
-                {
-                    module_file_path = Some(path);
-                    break;
-                }
+            let candidates = source_files.iter().filter(|path| path.extension()
+                .is_some_and(|e| cpp::SOURCE_FILE_EXTS.iter().any(|ext| e.eq_ignore_ascii_case(ext))))
+                .collect::<Vec<_>>();
+            module_file_path = candidates.iter().find(|path|
+                path.file_stem().map(|x| x.to_ascii_lowercase()) == obj_path.file_stem().map(|x| x.to_ascii_lowercase()))
+                .map(|path| (*path).clone());
+            if module_file_path.is_none() && candidates.len() == 1 {
+                module_file_path = Some(candidates[0].clone());
             }
         }
 
         // If we couldn't find the module's source file path, we can't decompile it
-        let Some(module_file_path) = module_file_path else {
-            return Ok(None);
-        };
+        // under an original filename. Preserve useful symbols under an explicit fallback.
+        if module_file_path.is_none() && context.id_info.is_none() && has_global_definitions {
+            module_file_path = Some(PathBuf::from(format!("__pdb_modules/module_{}.cpp", module.info().stream.0)));
+            environment.insert("object".into(), module.module_name().into_owned());
+        }
+        if module_file_path.is_none() && context.id_info.is_none() {
+            let mut symbols = module_info.symbols()?;
+            while let Some(symbol) = symbols.next()? {
+                if matches!(symbol.parse(), Ok(pdb2::SymbolData::Procedure(_)
+                    | pdb2::SymbolData::Data(_) | pdb2::SymbolData::ThreadStorage(_)
+                    | pdb2::SymbolData::UserDefinedType(_) | pdb2::SymbolData::Constant(_))) {
+                    module_file_path = Some(PathBuf::from(format!("__pdb_modules/module_{}.cpp", module.info().stream.0)));
+                    environment.insert("object".into(), module.module_name().into_owned());
+                    break;
+                }
+            }
+        }
+        let Some(module_file_path) = module_file_path else { return Ok(None); };
 
         let Some(Component::Normal(_)) = module_file_path.components().last() else {
             return Ok(None);
@@ -1340,15 +1718,32 @@ impl Decompiler {
         let module_key = module_file_path.to_string_lossy().to_lowercase();
         let module = self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(module_file_path.clone()))));
         
-        for file in line_program.files().collect::<Vec<_>>()? {
-            let mut file_path = PathBuf::from(crate::utils::sanitize_path(&file.name.to_string_lossy(context.string_table.unwrap())?));
-
+        if !environment.is_empty() {
+            let mut module = module.borrow_mut();
+            if let Some(compiler) = environment.get("cl") {
+                module.compiler_path = crate::utils::canonicalize_path(&cwd, compiler, false);
+            }
+            if let Some(pdb) = environment.get("pdb") {
+                module.pdb_path = crate::utils::canonicalize_path(&cwd, pdb, false);
+            }
+            // Preserve flags verbatim: Xbox switches are not the desktop MSVC grammar.
+            for (key, value) in &environment {
+                let comment = cpp::ModuleMember::Comment(format!("Build {key}: {value}").replace("*/", "* /"));
+                if !module.members.contains(&comment) { module.members.push(comment); }
+            }
+        }
+        for mut file_path in source_files {
             // Skip the source file of the module
             if file_path.file_name().as_ref().map(|f| f.to_ascii_lowercase()) == module_file_path.file_name().as_ref().map(|f| f.to_ascii_lowercase()) {
                 continue;
             }
 
-            if file_path.file_stem().as_ref().map(|f| f.to_ascii_lowercase()) == module_file_path.file_stem().as_ref().map(|f| f.to_ascii_lowercase()) {
+            // Prefer the module's casing for its own header, which must sit in the same directory
+            let same_directory = file_path.parent().zip(module_file_path.parent()).is_some_and(|(a, b)| {
+                crate::utils::sanitize_path(a.to_string_lossy()).eq_ignore_ascii_case(&crate::utils::sanitize_path(b.to_string_lossy()))
+            });
+
+            if same_directory && file_path.file_stem().as_ref().map(|f| f.to_ascii_lowercase()) == module_file_path.file_stem().as_ref().map(|f| f.to_ascii_lowercase()) {
                 let extension = file_path.extension().as_ref().map(|e| e.to_string_lossy().to_string()).unwrap_or_else(|| String::new());
                 file_path = module_file_path.with_extension(extension);
             }
@@ -1367,7 +1762,7 @@ impl Decompiler {
     fn process_module_symbol_data<'d, 'a, 's>(
         &'d mut self,
         context: &mut DecompileContext<'a, 's>,
-        line_offsets: &HashMap<pdb2::StringRef, HashMap<pdb2::PdbInternalSectionOffset, pdb2::LineInfo>>,
+        line_offsets: &crate::legacy::SourceLines,
         module: Rc<RefCell<cpp::Module>>,
         module_symbols: Option<&mut pdb2::SymbolIter>,
         symbol_data: &pdb2::SymbolData,
@@ -1493,19 +1888,12 @@ impl Decompiler {
             }
 
             pdb2::SymbolData::Data(data_symbol) => {
-                let mut file_name_ref = None;
-                let mut line_info = None;
-
-                for (name_ref, offsets) in line_offsets.iter() {
-                    if let Some(line) = offsets.get(&data_symbol.offset) {
-                        file_name_ref = Some(*name_ref);
-                        line_info = Some(line.clone());
-                        break;
-                    }
-                }
+                let found = crate::legacy::line_at(line_offsets, data_symbol.offset);
+                let file_name_ref = found.map(|(name_ref, _)| name_ref);
+                let line_info = found.map(|(_, line)| line.clone());
 
                 let module = if let Some(file_name_ref) = file_name_ref {
-                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref.to_string_lossy(context.string_table.unwrap())?.to_string()));
+                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref));
                     let module_key = path.to_string_lossy().to_lowercase().to_string();
                     self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path)))).clone()
                 } else {
@@ -1558,7 +1946,7 @@ impl Decompiler {
                     is_extern: false,
                     name: data_name,
                     signature: format!(
-                        "{};",
+                        "{}; // 0x{address:X}",
                         cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
@@ -1588,19 +1976,12 @@ impl Decompiler {
             }
 
             pdb2::SymbolData::ThreadStorage(thread_storage_symbol) => {
-                let mut file_name_ref = None;
-                let mut line_info = None;
-
-                for (name_ref, offsets) in line_offsets.iter() {
-                    if let Some(line) = offsets.get(&thread_storage_symbol.offset) {
-                        file_name_ref = Some(*name_ref);
-                        line_info = Some(line.clone());
-                        break;
-                    }
-                }
+                let found = crate::legacy::line_at(line_offsets, thread_storage_symbol.offset);
+                let file_name_ref = found.map(|(name_ref, _)| name_ref);
+                let line_info = found.map(|(_, line)| line.clone());
 
                 let module = if let Some(file_name_ref) = file_name_ref {
-                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref.to_string_lossy(context.string_table.unwrap())?.to_string()));
+                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref));
                     let module_key = path.to_string_lossy().to_lowercase().to_string();
                     self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path)))).clone()
                 } else {
@@ -1669,7 +2050,7 @@ impl Decompiler {
                     is_static: !thread_storage_symbol.global,
                     name: name.clone(),
                     signature: format!(
-                        "thread_local {};",
+                        "thread_local {}; // 0x{address:X}",
                         cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
@@ -1827,16 +2208,9 @@ impl Decompiler {
                     data => todo!("{data:#?}")
                 };
 
-                let mut file_name_ref = None;
-                let mut line_info = None;
-
-                for (name_ref, offsets) in line_offsets.iter() {
-                    if let Some(line) = offsets.get(&procedure_symbol.offset) {
-                        file_name_ref = Some(*name_ref);
-                        line_info = Some(line.clone());
-                        break;
-                    }
-                }
+                let found = crate::legacy::line_at(line_offsets, procedure_symbol.offset);
+                let file_name_ref = found.map(|(name_ref, _)| name_ref);
+                let line_info = found.map(|(_, line)| line.clone());
 
                 let rva = match procedure_symbol.offset.to_rva(context.address_map) {
                     Some(rva) => rva,
@@ -1849,7 +2223,7 @@ impl Decompiler {
                 let address = self.options.base_address.unwrap_or(0) + rva.0 as u64;
 
                 let module = if let Some(file_name_ref) = file_name_ref {
-                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref.to_string_lossy(context.string_table.unwrap())?.to_string()));
+                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref));
                     let module_key = path.to_string_lossy().to_lowercase().to_string();
                     self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path)))).clone()
                 } else {
@@ -2106,11 +2480,18 @@ impl Decompiler {
 
                             let this_adjustment = member_function.this_adjustment;
 
+                            let (method_name, method_type) = match &class.borrow().members[class_method_index] {
+                                cpp::ClassMember::Method(class_method) => (class_method.name.clone(), class_method.type_index),
+                                _ => unreachable!(),
+                            };
+
                             member_method_data = Some(cpp::MemberMethodData {
                                 class_type,
                                 declaring_class,
                                 this_pointer_type,
                                 this_adjustment,
+                                method_name,
+                                method_type,
                             });
 
                             //
@@ -2257,7 +2638,9 @@ impl Decompiler {
                 // Drop compiler-generated procedure definitions (implicit ctors/dtors/assignment,
                 // thunks, dynamic initializers): they have no source line and were never written
                 // in source. This matches dropping their declarations in `Class::add_member`.
-                if procedure.line.is_none() {
+                // Legacy PDBs also omit lines for handwritten assembly and stripped
+                // objects, so missing line information is not evidence of generation.
+                if !self.options.include_compiler_generated && context.id_info.is_some() && procedure.line.is_none() {
                     return Ok(());
                 }
 
@@ -2305,19 +2688,10 @@ impl Decompiler {
             }
 
             pdb2::SymbolData::Public(public_symbol) => {
-                let mut file_name_ref = None;
-                // let mut line_info = None;
-
-                for (name_ref, offsets) in line_offsets.iter() {
-                    if let Some(_line) = offsets.get(&public_symbol.offset) {
-                        file_name_ref = Some(*name_ref);
-                        // line_info = Some(line.clone());
-                        break;
-                    }
-                }
+                let file_name_ref = crate::legacy::line_at(line_offsets, public_symbol.offset).map(|(name_ref, _)| name_ref);
 
                 let module = if let Some(file_name_ref) = file_name_ref {
-                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref.to_string_lossy(context.string_table.unwrap())?.to_string()));
+                    let path = PathBuf::from(crate::utils::sanitize_path(file_name_ref));
                     let module_key = path.to_string_lossy().to_lowercase().to_string();
                     self.modules.entry(module_key).or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path)))).clone()
                 } else {
@@ -2348,6 +2722,15 @@ impl Decompiler {
             | pdb2::SymbolData::Label(_)
             | pdb2::SymbolData::EnvBlock(_) => {
                 // println!("WARNING: Unused {symbol_data:#?}");
+            }
+
+            pdb2::SymbolData::Section(_) | pdb2::SymbolData::CoffGroup(_)
+            | pdb2::SymbolData::Trampoline(_) => {
+                // Linker modules can own globals even without a source filename.
+                // Keep their section metadata without trying to turn it into C++ declarations.
+                module.borrow_mut().members.push(cpp::ModuleMember::Comment(
+                    format!("PDB linker metadata: {symbol_data:?}").replace("*/", "* /"),
+                ));
             }
 
             ref data => panic!("Unhandled symbol data in process_module_symbol_data - {data:#?}"),
@@ -2505,7 +2888,8 @@ impl Decompiler {
         symbols: &mut pdb2::SymbolIter,
         inline_site: &pdb2::InlineSiteSymbol,
     ) -> pdb2::Result<Vec<cpp::Statement>> {
-        let id_item = context.id_finder.find(inline_site.inlinee)?;
+        let id_finder = context.id_finder.as_ref().ok_or(pdb2::Error::StreamNotFound(4))?;
+        let id_item = id_finder.find(inline_site.inlinee)?;
         let id_data = id_item.parse()?;
         
         let name = match id_data {
@@ -3006,14 +3390,65 @@ impl Decompiler {
         }
     }
 
+    /// Adds the classes defined in `class_data`, itself included, by qualified name.
+    fn collect_defined_classes(
+        class_data: &Rc<RefCell<cpp::Class>>,
+        scope: Option<&str>,
+        classes: &mut HashMap<String, Rc<RefCell<cpp::Class>>>,
+    ) {
+        if class_data.borrow().is_declaration {
+            return;
+        }
+
+        // A nested class stores its own name only
+        let name = match scope {
+            Some(scope) => format!("{scope}::{}", class_data.borrow().name),
+            None => class_data.borrow().name.clone(),
+        };
+
+        for member in class_data.borrow().members.iter() {
+            if let cpp::ClassMember::Class(nested) = member {
+                Self::collect_defined_classes(nested, Some(&name), classes);
+            }
+        }
+
+        classes.entry(name).or_insert_with(|| class_data.clone());
+    }
+
+    /// Adds the indices of nested types defined inside `class_data`, at any depth.
+    fn collect_nested_definitions(class_data: &cpp::Class, indices: &mut HashSet<pdb2::TypeIndex>) {
+        for member in class_data.members.iter() {
+            match member {
+                cpp::ClassMember::Class(nested) => {
+                    let nested = nested.borrow();
+
+                    if !nested.is_declaration && indices.insert(nested.index) {
+                        Self::collect_nested_definitions(&nested, indices);
+                    }
+                }
+
+                cpp::ClassMember::Enum(nested) if !nested.is_declaration => {
+                    indices.insert(nested.index);
+                }
+
+                _ => {}
+            }
+        }
+    }
+
     fn fix_nested_types(
         module_members: &[cpp::ModuleMember],
         module_member_index: usize,
         class_data: Rc<RefCell<cpp::Class>>,
+        scope: Option<&str>,
         remove_class_names: &mut Vec<String>,
         remove_enum_names: &mut Vec<String>,
     ) {
-        let class_name = class_data.borrow().name.clone();
+        // A nested class stores its own name only; qualify it to find its nested types' definitions
+        let class_name = match scope {
+            Some(scope) => format!("{scope}::{}", class_data.borrow().name),
+            None => class_data.borrow().name.clone(),
+        };
         let mut new_members = class_data.borrow_mut().members.clone();
 
         for class_member in new_members.iter_mut() {
@@ -3047,7 +3482,7 @@ impl Decompiler {
                             nested_class.base_classes = other_class.borrow().base_classes.clone();
                             nested_class.members = other_class.borrow().members.clone();
 
-                            let nested_depth = nested_class.depth + 1;
+                            let nested_depth = nested_class.member_indent_level();
 
                             for member in nested_class.members.iter_mut() {
                                 match member {
@@ -3059,7 +3494,7 @@ impl Decompiler {
                         }
                     }
 
-                    Self::fix_nested_types(module_members, module_member_index, nested_class.clone(), remove_class_names, remove_enum_names);
+                    Self::fix_nested_types(module_members, module_member_index, nested_class.clone(), Some(&class_name), remove_class_names, remove_enum_names);
                     
                     if !remove_class_names.contains(&full_name) {
                         remove_class_names.push(full_name);
@@ -3123,7 +3558,7 @@ impl Decompiler {
                                     unreachable!()
                                 };
 
-                                Self::fix_nested_types(module_members, module_member_index, other_class.clone(), remove_class_names, remove_enum_names);
+                                Self::fix_nested_types(module_members, module_member_index, other_class.clone(), None, remove_class_names, remove_enum_names);
 
                                 let mut other_class = other_class.borrow().clone();
                                 other_class.name = String::new();

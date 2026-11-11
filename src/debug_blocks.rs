@@ -19,10 +19,9 @@ pub fn export_debug_blocks_json(
     for module in modules.values() {
         let module = module.borrow();
 
-        for member in module.members.iter() {
-            let cpp::ModuleMember::Procedure(procedure) = member else {
-                continue;
-            };
+        let mut procedures = Vec::new();
+        collect_procedures(&module.members, &mut procedures);
+        for procedure in procedures {
 
             let Some(body) = procedure.body.as_ref() else {
                 continue;
@@ -45,6 +44,17 @@ pub fn export_debug_blocks_json(
     serde_json::to_writer_pretty(file, &serde_json::Value::Object(map))?;
 
     Ok(())
+}
+
+/// Namespace reconstruction runs before export; procedures can be nested arbitrarily.
+fn collect_procedures<'a>(members: &'a [cpp::ModuleMember], out: &mut Vec<&'a cpp::Procedure>) {
+    for member in members {
+        match member {
+            cpp::ModuleMember::Procedure(procedure) => out.push(procedure),
+            cpp::ModuleMember::Namespace { members, .. } => collect_procedures(members, out),
+            _ => {}
+        }
+    }
 }
 
 /// Converts a `cpp::Block` into an ordered array of tagged items mirroring the

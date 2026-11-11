@@ -58,7 +58,7 @@ pub enum ModuleMember {
 /// no explicit `EmptyLine` members are present, before the first kind change) — the
 /// caller sets it so nothing separates the members from the `{`/header above them.
 fn write_member_sequence(
-    f: &mut fmt::Formatter<'_>,
+    f: &mut impl fmt::Write,
     members: &[ModuleMember],
     mut skip_empty_line: bool,
 ) -> fmt::Result {
@@ -114,13 +114,93 @@ fn write_member_sequence(
             }
         }
 
-        fmt::Display::fmt(item, f)?;
+        write!(f, "{}", item)?;
         writeln!(f)?;
 
         prev_item = Some(item);
     }
 
     Ok(())
+}
+
+/// The strings a build info record names, each joined from its substrings: the working
+/// directory, then either the source file, or the compiler, source file, PDB and command line.
+pub fn build_info_arguments(id_finder: &pdb2::IdFinder, build_info: pdb2::BuildInfoId) -> Vec<String> {
+    let mut args = vec![];
+
+    for id_index in build_info.arguments {
+        let id_item = match id_finder.find(id_index) {
+            Ok(id_item) => id_item,
+            Err(_) => {
+                // println!("WARNING: failed to find id {id_index}: {e}");
+                continue;
+            }
+        };
+
+        let id_data = match id_item.parse() {
+            Ok(pdb2::IdData::String(id_data)) => id_data,
+            Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
+            Err(e) => {
+                println!("WARNING: failed to parse id {id_index}: {e}");
+                continue;
+            }
+        };
+
+        let mut arg = String::new();
+
+        if let Some(id_index) = id_data.substrings {
+            let id_item = match id_finder.find(id_index) {
+                Ok(id_item) => id_item,
+                Err(_) => {
+                    // println!("WARNING: failed to find id {id_index}: {e}");
+                    continue;
+                }
+            };
+
+            let id_data = match id_item.parse() {
+                Ok(pdb2::IdData::StringList(id_data)) => id_data,
+
+                Ok(id_data) => panic!("Failed to parse id {id_index}: Expected StringList, got {id_data:?}"),
+
+                Err(e) => {
+                    println!("WARNING: failed to parse id {id_index}: {e}");
+                    continue;
+                }
+            };
+
+            for type_index in id_data.substrings {
+                // TODO: remove this hack when pdb crate fixes type
+                let id_index = pdb2::IdIndex(type_index.0);
+
+                let id_item = match id_finder.find(id_index) {
+                    Ok(id_item) => id_item,
+                    Err(_) => {
+                        // println!("WARNING: failed to find id {id_index}: {e}");
+                        continue;
+                    }
+                };
+
+                match id_item.parse() {
+                    Ok(pdb2::IdData::String(id_data)) => {
+                        arg = format!("{}{}", arg, id_data.name.to_string());
+                    }
+
+                    Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
+                    
+                    Err(e) => {
+                        println!("WARNING: failed to parse id {id_index}: {e}");
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        arg = format!("{}{}", arg, id_data.name.to_string());
+
+        args.push(arg);
+    }
+
+    args
 }
 
 impl fmt::Display for ModuleMember {
@@ -133,9 +213,9 @@ impl fmt::Display for ModuleMember {
                 f,
                 "#include {}",
                 if *global {
-                    format!("<{}>", path.to_string_lossy().trim_start_matches('/'))
+                    format!("<{}>", path.to_string_lossy().trim_start_matches(['/', '\\']))
                 } else {
-                    format!("\"{}\"", path.to_string_lossy().trim_start_matches('/'))
+                    format!("\"{}\"", path.to_string_lossy().trim_start_matches(['/', '\\']))
                 },
             ),
             Self::Comment(c) => write!(f, "/* {c} */"),
@@ -147,9 +227,18 @@ impl fmt::Display for ModuleMember {
 
                 writeln!(f, "{{")?;
 
-                // Same spacing rules as top-level output: pack consecutive same-kind
-                // members, blank line between differing kinds; no blank after the `{`.
-                write_member_sequence(f, members, true)?;
+                // Render the members to a buffer, then indent each line inside the
+                // namespace body by one level.
+                let mut body = String::new();
+                write_member_sequence(&mut body, members, true)?;
+
+                for line in body.lines() {
+                    if line.is_empty() {
+                        writeln!(f)?;
+                    } else {
+                        writeln!(f, "    {line}")?;
+                    }
+                }
 
                 write!(f, "}}")
             },
@@ -552,7 +641,7 @@ impl Module {
                         _ => None
                     },
                     is_union: matches!(data, pdb2::TypeData::Union(_)),
-                    is_declaration: false,
+                    is_declaration: properties.forward_reference(),
                     name: name.to_string().to_string(),
                     index: type_index,
                     depth: 0,
@@ -615,7 +704,7 @@ impl Module {
             Ok(pdb2::TypeData::Enumeration(data)) => {
                 if data.properties.forward_reference() {
                     // println!("WARNING: Skipping forward reference in toplevel: \"{}\" in \"{}\"", data.name, self.path.display());
-                    return Ok(());
+                    // Preserve the declaration when no complete definition is available.
                 }
 
                 let underlying_type_name = match cpp::type_name(
@@ -697,79 +786,7 @@ impl Module {
         id_finder: &pdb2::IdFinder,
         build_info: pdb2::BuildInfoId,
     ) -> pdb2::Result<()> {
-        let mut args = vec![];
-
-        for id_index in build_info.arguments {
-            let id_item = match id_finder.find(id_index) {
-                Ok(id_item) => id_item,
-                Err(_) => {
-                    // println!("WARNING: failed to find id {id_index}: {e}");
-                    continue;
-                }
-            };
-
-            let id_data = match id_item.parse() {
-                Ok(pdb2::IdData::String(id_data)) => id_data,
-                Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
-                Err(e) => {
-                    println!("WARNING: failed to parse id {id_index}: {e}");
-                    continue;
-                }
-            };
-
-            let mut arg = String::new();
-
-            if let Some(id_index) = id_data.substrings {
-                let id_item = match id_finder.find(id_index) {
-                    Ok(id_item) => id_item,
-                    Err(_) => {
-                        // println!("WARNING: failed to find id {id_index}: {e}");
-                        continue;
-                    }
-                };
-
-                let id_data = match id_item.parse() {
-                    Ok(pdb2::IdData::StringList(id_data)) => id_data,
-
-                    Ok(id_data) => panic!("Failed to parse id {id_index}: Expected StringList, got {id_data:?}"),
-
-                    Err(e) => {
-                        println!("WARNING: failed to parse id {id_index}: {e}");
-                        continue;
-                    }
-                };
-
-                for type_index in id_data.substrings {
-                    // TODO: remove this hack when pdb crate fixes type
-                    let id_index = pdb2::IdIndex(type_index.0);
-
-                    let id_item = match id_finder.find(id_index) {
-                        Ok(id_item) => id_item,
-                        Err(_) => {
-                            // println!("WARNING: failed to find id {id_index}: {e}");
-                            continue;
-                        }
-                    };
-
-                    match id_item.parse() {
-                        Ok(pdb2::IdData::String(id_data)) => {
-                            arg = format!("{}{}", arg, id_data.name.to_string());
-                        }
-
-                        Ok(id_data) => panic!("Failed to parse id {id_index}: Expected String, got {id_data:?}"),
-                        
-                        Err(e) => {
-                            println!("WARNING: failed to parse id {id_index}: {e}");
-                            continue;
-                        }
-                    }
-                }
-            }
-            
-            arg = format!("{}{}", arg, id_data.name.to_string());
-
-            args.push(arg);
-        }
+        let args = build_info_arguments(id_finder, build_info);
 
         // println!("Module build info args: [");
         // for arg in args.iter() {
@@ -2109,14 +2126,15 @@ impl fmt::Display for Module {
 
         for (header, is_global) in self.headers.iter() {
             if *is_global {
-                writeln!(f, "#include <{}>", header.to_string_lossy().trim_start_matches('/'))?;
+                writeln!(f, "#include <{}>", header.to_string_lossy().trim_start_matches(['/', '\\']))?;
             } else {
-                writeln!(f, "#include \"{}\"", header.to_string_lossy().trim_start_matches('/'))?;
+                writeln!(f, "#include \"{}\"", header.to_string_lossy().trim_start_matches(['/', '\\']))?;
             }
         }
 
         if !self.headers.is_empty() && !self.members.is_empty() && !matches!(self.members.first(), Some(ModuleMember::Include(_, _))) {
             writeln!(f)?;
+            skip_empty_line = true;
         }
 
         write_member_sequence(f, &self.members, skip_empty_line)

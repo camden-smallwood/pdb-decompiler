@@ -1,4 +1,5 @@
 mod class;
+mod compact;
 mod r#enum;
 mod module;
 mod procedure;
@@ -306,6 +307,57 @@ fn inline_anonymous_definition<'p>(
     result?;
 
     Ok(Some(anonymous.to_string().trim_start().trim_end_matches(';').to_string()))
+}
+
+/// The `std::` names that are spelled out in full in a PDB but have an alias in
+/// the header everyone actually writes.
+///
+/// A PDB records the type, not the spelling: `std::string` is stored as the
+/// `std::basic_string` it is an alias for, so every mention of one comes back
+/// eighty characters long and a struct of four strings becomes unreadable. The
+/// alias is the same type -- same layout, same mangled name, same code -- so
+/// this changes how the output reads and nothing else.
+///
+/// Applied as a substring replacement rather than a whole-name test because
+/// these appear nested: a `std::vector<std::basic_string<...>,
+/// std::allocator<std::basic_string<...> > >` mentions one twice inside
+/// another type's arguments. For the same reason it is applied again to a
+/// finished module: a class's own name does not come through `type_name`, so
+/// without that pass a file can declare `class std::function<...basic_string...>`
+/// and then use `std::string` for the members of it.
+pub use compact::compact_std_templates;
+
+pub fn shorten_std_aliases(name: &str) -> String {
+    const ALIASES: &[(&str, &str)] = &[
+        (
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >",
+            "std::string",
+        ),
+        (
+            "std::basic_string<wchar_t,std::char_traits<wchar_t>,std::allocator<wchar_t> >",
+            "std::wstring",
+        ),
+        (
+            "std::basic_string_view<char,std::char_traits<char> >",
+            "std::string_view",
+        ),
+        (
+            "std::basic_string_view<wchar_t,std::char_traits<wchar_t> >",
+            "std::wstring_view",
+        ),
+    ];
+
+    let mut out = name.to_string();
+    for (long, short) in ALIASES {
+        if out.contains(long) {
+            out = out.replace(long, short);
+            // `std::allocator<std::basic_string<...> >` needed that space to
+            // keep two `>` apart. The alias does not end in one, so the space
+            // is left over from a problem that no longer exists.
+            out = out.replace(&format!("{short} >"), &format!("{short}>"));
+        }
+    }
+    out
 }
 
 pub fn type_name<'p>(
@@ -679,11 +731,17 @@ pub fn type_name<'p>(
         pdb2::TypeData::Procedure(data) => {
             assert!(query.modifier.is_none());
 
+            // A free function is `__cdecl` unless the type record says
+            // otherwise. The keyword goes immediately before the name, which is
+            // also the right place for a function pointer: the parentheses that
+            // already wrap `*name` make it `(__fastcall *name)`.
+            let convention = calling_convention_name(data.attributes.calling_convention(), false);
+
             let mut name = if let Some(declaration_name) = query.declaration_name.as_ref() {
                 if declaration_name.starts_with('*') || declaration_name.starts_with('&') {
-                    format!("({})", declaration_name)
+                    format!("({}{})", convention, declaration_name)
                 } else {
-                    declaration_name.clone()
+                    format!("{}{}", convention, declaration_name)
                 }
             } else {
                 String::new()
@@ -733,8 +791,17 @@ pub fn type_name<'p>(
         }
 
         pdb2::TypeData::MemberFunction(data) => {
+            // A member function with a `this` pointer is `__thiscall` by
+            // default; a static one has none and is `__cdecl`. Comparing a
+            // static member against the `__thiscall` default would print
+            // `__cdecl` on every one of them - 1,552 here - saying nothing.
+            let convention = calling_convention_name(
+                data.attributes.calling_convention(),
+                data.this_pointer_type.is_some(),
+            );
+
             let mut name = if let Some(declaration_name) = query.declaration_name.as_ref() {
-                declaration_name.clone()
+                format!("{}{}", convention, declaration_name)
             } else {
                 String::new()
             };
@@ -886,10 +953,7 @@ pub fn type_name<'p>(
         )
     };
 
-    // TODO: search and replace std:: patterns
-    if name == "std::basic_string<char,std::char_traits<char>,std::allocator<char> >" {
-        name = "std::string".to_string();
-    }
+    name = shorten_std_aliases(&name);
 
     type_names.cache.insert(query, name.clone());
 
@@ -975,7 +1039,8 @@ pub fn type_size<'p>(
         })
         | pdb2::TypeData::Pointer(_)
         | pdb2::TypeData::Procedure(_) => match machine_type {
-            pdb2::MachineType::Unknown | pdb2::MachineType::X86 => Ok(4),
+            pdb2::MachineType::Unknown | pdb2::MachineType::X86
+            | pdb2::MachineType::PowerPC | pdb2::MachineType::PowerPCFP => Ok(4),
             pdb2::MachineType::Amd64 => Ok(8),
             _ => panic!("Unhandled machine type: {machine_type}")
         }
@@ -1164,6 +1229,46 @@ pub fn type_size<'p>(
             "Unhandled type data for type_size at index {}: {:#?}",
             type_index, type_data
         )
+    }
+}
+
+/// The `__declspec`-style keyword for a CV_call_e calling convention, or an
+/// empty string when it is the default for that kind of function and so does
+/// not need writing out.
+///
+/// The PDB records the convention in the function's own type record, and it is
+/// the only place it survives: a file-local function has no decorated name to
+/// read it back from. ElDewrito hooks a member function with a free function
+/// taking `(This &self, void *unused, ...)` under `__fastcall`, so `self`
+/// arrives in ecx and `unused` in edx; written as the `__cdecl` this tool used
+/// to assume, the prologue is wrong and no function body can correct it.
+///
+/// `is_member` picks the default to compare against: a free function is
+/// `__cdecl` and a member function is `__thiscall`, and emitting either where
+/// it was already implied is noise that changes no code.
+pub fn calling_convention_name(convention: u8, is_member: bool) -> &'static str {
+    // CV_call_e, from cvconst.h.
+    const NEAR_C: u8 = 0x00;
+    const NEAR_FAST: u8 = 0x04;
+    const NEAR_STD: u8 = 0x07;
+    const THISCALL: u8 = 0x0b;
+    const NEAR_VECTOR: u8 = 0x12;
+
+    let default = if is_member { THISCALL } else { NEAR_C };
+
+    if convention == default {
+        return "";
+    }
+
+    match convention {
+        NEAR_C => "__cdecl ",
+        NEAR_FAST => "__fastcall ",
+        NEAR_STD => "__stdcall ",
+        THISCALL => "__thiscall ",
+        NEAR_VECTOR => "__vectorcall ",
+        // Anything else is a convention this target does not use; leaving it
+        // unwritten keeps the old behaviour rather than emitting a guess.
+        _ => "",
     }
 }
 
