@@ -181,7 +181,7 @@ pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) ->
 
     // Known files by normalized path, keeping the spelling first seen.
     let mut known = BTreeMap::<String, String>::new();
-    for (_, files) in context.source_files.iter().collect::<BTreeMap<_, _>>() {
+    for files in context.source_files.iter() {
         for file in files {
             known.entry(normalize(file)).or_insert_with(|| file.clone());
         }
@@ -198,7 +198,7 @@ pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) ->
     let mut procedures = HashMap::<String, (String, u32)>::new();
 
     let modules = context.debug_info.modules()?.collect::<Vec<_>>()?;
-    for module in &modules {
+    for (module_index, module) in modules.iter().enumerate() {
         let Ok(Some(module_info)) = context.pdb.module_info(module) else { continue };
         let line_program = module_info.line_program();
         let Ok(lines) = crate::legacy::module_source_lines(context.pdb, module, line_program.as_ref().ok(), context.string_table) else { continue };
@@ -213,7 +213,7 @@ pub fn place_types(context: &mut DecompileContext, types: &[pdb2::TypeIndex]) ->
                 });
             }
         }
-        let module_source = context.source_files.get(&module.info().stream.0)
+        let module_source = context.source_files.get(module_index)
             .and_then(|files| files.iter().find(|f| is_source(f)));
 
         let mut procedure = None::<(&str, u32)>;

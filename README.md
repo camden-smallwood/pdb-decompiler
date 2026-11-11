@@ -63,7 +63,8 @@ pdb-decompiler.exe --out="F:\SINS_TEST\" --pdb="F:\SINS\Sins.pdb" --base-address
 | `-p` | `--pdb <pdb>` | The file path to the MSVC PDB file to decompile. |
 | | `--pseudocode-json-path <pseudocode-json-path>` | The file containing all function pseudocode in a JSON mapping. (Optional) |
 | | `--project-name` | The file and folder name for used to generate the umbrella include header. The emitted include is `{project_name}/{project_name}.h` (e.g. `project/project.h`). |
-| | `--include-compiler-generated` | Includes compiler-generated procedure definitions (implicit ctors/dtors/assignment, thunks, dynamic initializers) in output C++ code |
+| | `--include-compiler-generated` | Includes compiler-generated members and procedure definitions (implicit ctors/dtors/assignment, thunks, dynamic initializers) in output C++ code |
+| | `--address-comments` | Appends a `// 0x...` address comment to every function, global and thread-local in output C++ code |
 | | `--sdk-include <sdk-include>` | An SDK include directory. For PDBs without IPI, types and typedefs its headers define are included from the SDK instead of reconstructed (see [SDK headers](#sdk-headers)). Can be specified multiple times. |
 | | `--source-path <source-path>` | A source file path (or directory) to filter which modules are decompiled. Only modules whose source path is equal to, or nested under, one of these paths are exported. Can be specified multiple times. For a directory path, output is rebased so the last folder becomes the output root (e.g. `--source-path .../FolderA/SubFolderA` writes `.../FolderA/SubFolderA/foo.cpp` to `<out>/SubFolderA/foo.cpp`). |
 
@@ -148,7 +149,7 @@ header location unless the evidence says so.
 A file includes the files that define what its types derive from or hold by value.
 Member functions without a body are folded into their class's declaration when the
 class is defined in the same file, since a member can't be redeclared outside its
-class; the declaration keeps the address as a `// 0x...` comment.
+class; with `--address-comments`, the declaration keeps the address as a `// 0x...` comment.
 
 ### SDK headers
 

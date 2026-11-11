@@ -86,6 +86,13 @@ enum Token<'a> {
     Literal,
 }
 
+/// The length of the escape sequence starting with the `\` at `i`. A line
+/// continuation in a CRLF file is three bytes (`\`, `\r`, `\n`); skipping only
+/// two would leave the `\n` to end the directive or literal early.
+fn escape_len(bytes: &[u8], i: usize) -> usize {
+    if bytes.get(i + 1) == Some(&b'\r') && bytes.get(i + 2) == Some(&b'\n') { 3 } else { 2 }
+}
+
 /// Identifiers, punctuation and literals, without comments or preprocessor directives
 fn tokens(text: &str) -> Vec<Token<'_>> {
     let bytes = text.as_bytes();
@@ -108,7 +115,7 @@ fn tokens(text: &str) -> Vec<Token<'_>> {
                     i = text[i + 2..].find("*/").map_or(bytes.len(), |end| i + 2 + end + 2);
                     continue;
                 }
-                i += if bytes[i] == b'\\' { 2 } else { 1 };
+                i += if bytes[i] == b'\\' { escape_len(bytes, i) } else { 1 };
             }
         } else if c == b'/' && bytes.get(i + 1) == Some(&b'/') {
             i = text[i..].find('\n').map_or(bytes.len(), |end| i + end);
@@ -117,7 +124,7 @@ fn tokens(text: &str) -> Vec<Token<'_>> {
         } else if c == b'"' || c == b'\'' {
             i += 1;
             while i < bytes.len() && bytes[i] != c && bytes[i] != b'\n' {
-                i += if bytes[i] == b'\\' { 2 } else { 1 };
+                i += if bytes[i] == b'\\' { escape_len(bytes, i) } else { 1 };
             }
             i += 1;
             tokens.push(Token::Literal);
@@ -386,6 +393,13 @@ mod tests {
             "D3DZBUFFERTYPE", "DWORD", "IDirect3DDevice9", "PD3DZBUFFERTYPE", "PFN_CALLBACK", "PX",
             "Plain", "XGRAPHICS::VerOpList", "_D3DZBUFFERTYPE", "std::vector",
         ]);
+    }
+
+    #[test]
+    fn crlf_line_continuations_stay_in_the_directive() {
+        let text = "#define DECLARE_INTERFACE_(iface, baseiface) \\\r\n    struct DECLSPEC_NOVTABLE iface : public baseiface\r\n#define BEGIN_BLOCK \\\r\n    {\r\nstruct Real { };\r\n";
+
+        assert_eq!(definitions(text), ["Real"]);
     }
 
     #[test]

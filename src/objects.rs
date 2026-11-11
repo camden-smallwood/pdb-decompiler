@@ -180,7 +180,7 @@ pub fn export_objects_json(context: &mut DecompileContext, base_address: u64, pa
             Some(cwd) if !src.contains(':') && !src.starts_with(['\\', '/']) => format!("{}\\{src}", cwd.trim_end_matches(['\\', '/'])),
             _ => src.clone(),
         }).or_else(|| {
-            let files = context.source_files.get(&module.info().stream.0)?;
+            let files = context.source_files.get(index)?;
             let sources = files.iter().filter(|f| is_source(f)).collect::<Vec<_>>();
             let named = sources.iter().copied().filter(|f| stem(f) == stem(&module_name)).collect::<Vec<_>>();
             match (named.as_slice(), sources.as_slice()) {

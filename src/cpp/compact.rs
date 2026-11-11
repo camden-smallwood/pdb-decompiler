@@ -155,10 +155,6 @@ fn alias_for(name: &str, argument: &str) -> Option<String> {
         return (argument == "rapidjson::UTF8<char>")
             .then(|| format!("rapidjson::{short}"));
     }
-    // `PrettyWriter` is just `Writer` with indentation; write it as `Writer`.
-    if name == "PrettyWriter" {
-        return Some(format!("rapidjson::Writer<{argument}>"));
-    }
     None
 }
 
@@ -224,43 +220,72 @@ fn expected(default: &Default, leading: &[&str]) -> String {
     }
 }
 
-/// Where a known standard- or rapidjson-library template starts at or after
-/// `from`, and its name.
-fn next_template(text: &str, from: usize) -> Option<(usize, usize, &'static str)> {
-    const NAMESPACES: &[&str] = &["std::", "rapidjson::"];
+const NAMESPACES: &[&str] = &["std::", "rapidjson::"];
 
+/// Where the first known template in `namespace` starts at or after `from`:
+/// its start, the index of its `<`, and its name.
+fn next_in_namespace(text: &str, from: usize, namespace: &str) -> Option<(usize, usize, &'static str)> {
     let bytes = text.as_bytes();
-    // A rapidjson template can nest inside a std one (and vice versa), so take
-    // the leftmost match across every namespace rather than stopping at the
-    // first namespace that has any match at all.
-    let mut earliest: Option<(usize, usize, &'static str)> = None;
-    for namespace in NAMESPACES {
-        let mut at = from;
-        while let Some(found) = text[at..].find(namespace) {
-            let start = at + found;
-            // A qualified name reaching further left is not ours to touch.
-            let preceded = start > 0 && {
-                let b = bytes[start - 1];
-                b.is_ascii_alphanumeric() || b == b'_' || b == b':'
-            };
-            let rest = &text[start + namespace.len()..];
-            let end = rest
-                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .unwrap_or(rest.len());
-            if !preceded && rest.as_bytes().get(end) == Some(&b'<') {
-                let name = &rest[..end];
-                if let Some((known, _, _)) = DEFAULTS.iter().find(|(n, _, _)| *n == name) {
-                    let candidate = (start, start + namespace.len() + end, *known);
-                    if earliest.is_none_or(|(e, _, _)| start < e) {
-                        earliest = Some(candidate);
-                    }
-                    break;
-                }
+    let mut at = from;
+    while let Some(found) = text[at..].find(namespace) {
+        let start = at + found;
+        // A qualified name reaching further left is not ours to touch.
+        let preceded = start > 0 && {
+            let b = bytes[start - 1];
+            b.is_ascii_alphanumeric() || b == b'_' || b == b':'
+        };
+        let rest = &text[start + namespace.len()..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        if !preceded && rest.as_bytes().get(end) == Some(&b'<') {
+            let name = &rest[..end];
+            if let Some((known, _, _)) = DEFAULTS.iter().find(|(n, _, _)| *n == name) {
+                return Some((start, start + namespace.len() + end, *known));
             }
-            at = start + namespace.len();
         }
+        at = start + namespace.len();
     }
-    earliest
+    None
+}
+
+/// Finds known standard- and rapidjson-library templates in increasing order.
+///
+/// Each namespace's next match is kept until the cursor passes it, so a
+/// namespace that is absent, or far ahead, is searched once per text rather
+/// than once per template found: a whole output file can hold tens of
+/// thousands of `std::` templates.
+struct TemplateScanner {
+    next: [Option<Option<(usize, usize, &'static str)>>; NAMESPACES.len()],
+}
+
+impl TemplateScanner {
+    fn new() -> Self {
+        Self { next: [None; NAMESPACES.len()] }
+    }
+
+    /// The leftmost known template starting at or after `from`. A rapidjson
+    /// template can nest inside a std one (and vice versa), so this takes the
+    /// leftmost match across every namespace.
+    fn next(&mut self, text: &str, from: usize) -> Option<(usize, usize, &'static str)> {
+        let mut earliest: Option<(usize, usize, &'static str)> = None;
+        for (namespace, cached) in NAMESPACES.iter().zip(self.next.iter_mut()) {
+            let stale = match cached {
+                None => true,
+                Some(Some((start, _, _))) => *start < from,
+                Some(None) => false,
+            };
+            if stale {
+                *cached = Some(next_in_namespace(text, from, namespace));
+            }
+            if let Some(Some(candidate)) = cached
+                && earliest.is_none_or(|(e, _, _)| candidate.0 < e)
+            {
+                earliest = Some(*candidate);
+            }
+        }
+        earliest
+    }
 }
 
 /// Rewrite every standard-library template in `text` without the arguments that
@@ -268,7 +293,8 @@ fn next_template(text: &str, from: usize) -> Option<(usize, usize, &'static str)
 pub fn compact_std_templates(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut at = 0usize;
-    while let Some((start, open_at, name)) = next_template(text, at) {
+    let mut scanner = TemplateScanner::new();
+    while let Some((start, open_at, name)) = scanner.next(text, at) {
         let Some(close) = matching_close(text.as_bytes(), open_at) else {
             out.push_str(&text[at..open_at + 1]);
             at = open_at + 1;
@@ -302,6 +328,11 @@ pub fn compact_std_templates(text: &str) -> String {
         {
             out.push_str(&alias);
             at = close + 1;
+            // `X<std::basic_string<...> >` needed that space to keep two `>`
+            // apart; an alias never ends in `>`, so it is left over.
+            if !alias.ends_with('>') && text[at..].starts_with(" >") {
+                at += 1;
+            }
             continue;
         }
         out.push_str(&text[start..open_at + 1]);
@@ -362,6 +393,14 @@ mod tests {
     }
 
     #[test]
+    fn drops_the_space_an_alias_leaves_behind() {
+        assert_eq!(
+            compact("back_insert_iterator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >"),
+            "back_insert_iterator<std::string>"
+        );
+    }
+
+    #[test]
     fn compacts_rapidjson_types() {
         assert_eq!(
             compact(
@@ -369,7 +408,9 @@ mod tests {
                  rapidjson::CrtAllocator>,rapidjson::UTF8<char>,rapidjson::UTF8<char>,\
                  rapidjson::CrtAllocator,0>"
             ),
-            "rapidjson::Writer<rapidjson::StringBuffer>"
+            // `PrettyWriter` derives from `Writer` but is a different, larger
+            // type, so it keeps its own name.
+            "rapidjson::PrettyWriter<rapidjson::StringBuffer>"
         );
         assert_eq!(
             compact(

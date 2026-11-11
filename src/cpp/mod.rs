@@ -195,6 +195,10 @@ pub struct TypeNames {
     /// Anonymous definitions currently being inlined, to break the recursion when an anonymous
     /// type refers back to itself (e.g. a pointer member to the same anonymous type).
     inlining: HashSet<pdb2::TypeIndex>,
+    /// Keep compiler-generated special members (`pseudo`/`compgenx`) in class
+    /// declarations. Mirrors `--include-compiler-generated`, which also keeps
+    /// their definitions; declarations and definitions must agree.
+    pub include_compiler_generated: bool,
 }
 
 impl TypeNames {
@@ -735,7 +739,7 @@ pub fn type_name<'p>(
             // otherwise. The keyword goes immediately before the name, which is
             // also the right place for a function pointer: the parentheses that
             // already wrap `*name` make it `(__fastcall *name)`.
-            let convention = calling_convention_name(data.attributes.calling_convention(), false);
+            let convention = calling_convention_name(data.attributes.calling_convention(), false, machine_type);
 
             let mut name = if let Some(declaration_name) = query.declaration_name.as_ref() {
                 if declaration_name.starts_with('*') || declaration_name.starts_with('&') {
@@ -764,7 +768,7 @@ pub fn type_name<'p>(
                 ).as_str()
             );
 
-            if data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~") {
+            if data.attributes.is_constructor() || query.declaration_name.as_deref().is_some_and(is_destructor_name) {
                 name
             } else {
                 match data.return_type {
@@ -798,6 +802,7 @@ pub fn type_name<'p>(
             let convention = calling_convention_name(
                 data.attributes.calling_convention(),
                 data.this_pointer_type.is_some(),
+                machine_type,
             );
 
             let mut name = if let Some(declaration_name) = query.declaration_name.as_ref() {
@@ -892,7 +897,7 @@ pub fn type_name<'p>(
                 }
             }
             
-            if !query.force_return_type && (data.attributes.is_constructor() || name.starts_with('~') || name.contains("::~")) {
+            if !query.force_return_type && (data.attributes.is_constructor() || query.declaration_name.as_deref().is_some_and(is_destructor_name)) {
                 name
             } else if query.force_return_type && data.attributes.is_constructor() {
                 let type_item = type_finder.find(data.class_type)?;
@@ -1232,6 +1237,12 @@ pub fn type_size<'p>(
     }
 }
 
+/// Whether a declared function name names a destructor (`~X` or `A::~X`).
+/// Checked on the declared name, before a calling convention is prefixed to it.
+fn is_destructor_name(name: &str) -> bool {
+    name.starts_with('~') || name.contains("::~")
+}
+
 /// The `__declspec`-style keyword for a CV_call_e calling convention, or an
 /// empty string when it is the default for that kind of function and so does
 /// not need writing out.
@@ -1246,13 +1257,23 @@ pub fn type_size<'p>(
 /// `is_member` picks the default to compare against: a free function is
 /// `__cdecl` and a member function is `__thiscall`, and emitting either where
 /// it was already implied is noise that changes no code.
-pub fn calling_convention_name(convention: u8, is_member: bool) -> &'static str {
+///
+/// Only x86 has a choice of conventions. x64 and PowerPC have a single ABI and
+/// record every function, member or not, as `NEAR_C`, so naming it there would
+/// put `__cdecl` on every declaration; the only keyword that still means
+/// something on those targets is `__vectorcall`. `Unknown` is treated as x86,
+/// as `type_size` does.
+pub fn calling_convention_name(convention: u8, is_member: bool, machine_type: pdb2::MachineType) -> &'static str {
     // CV_call_e, from cvconst.h.
     const NEAR_C: u8 = 0x00;
     const NEAR_FAST: u8 = 0x04;
     const NEAR_STD: u8 = 0x07;
     const THISCALL: u8 = 0x0b;
     const NEAR_VECTOR: u8 = 0x12;
+
+    if !matches!(machine_type, pdb2::MachineType::X86 | pdb2::MachineType::Unknown) {
+        return if convention == NEAR_VECTOR { "__vectorcall " } else { "" };
+    }
 
     let default = if is_member { THISCALL } else { NEAR_C };
 

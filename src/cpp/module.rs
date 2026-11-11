@@ -227,18 +227,10 @@ impl fmt::Display for ModuleMember {
 
                 writeln!(f, "{{")?;
 
-                // Render the members to a buffer, then indent each line inside the
-                // namespace body by one level.
-                let mut body = String::new();
-                write_member_sequence(&mut body, members, true)?;
-
-                for line in body.lines() {
-                    if line.is_empty() {
-                        writeln!(f)?;
-                    } else {
-                        writeln!(f, "    {line}")?;
-                    }
-                }
+                // Same spacing rules as top-level output: pack consecutive same-kind
+                // members, blank line between differing kinds; no blank after the `{`.
+                // Namespace contents are not indented.
+                write_member_sequence(f, members, true)?;
 
                 write!(f, "}}")
             },

@@ -170,7 +170,12 @@ impl TabbedDisplay for Block {
                 continue;
             }
 
-            "".tabbed_fmt(depth + 1, f)?;
+            // Labels sit one level out from the statements they mark
+            match statement {
+                Statement::Label(_) => "".tabbed_fmt(depth, f)?,
+                Statement::Commented(x) if matches!(x.as_ref(), Statement::Label(_)) => "".tabbed_fmt(depth, f)?,
+                _ => "".tabbed_fmt(depth + 1, f)?,
+            }
             statement.tabbed_fmt(depth + 1, f)?;
             writeln!(f)?;
         }
@@ -210,7 +215,9 @@ pub struct Procedure {
     pub ida_signature: Option<String>,
     pub body: Option<Block>,
     pub return_type: Option<pdb2::TypeIndex>,
-    pub arguments: Vec<(pdb2::TypeIndex, Option<String>)>
+    pub arguments: Vec<(pdb2::TypeIndex, Option<String>)>,
+    /// Write `address` as a trailing `// 0x...` comment (`--address-comments`).
+    pub address_comment: bool,
 }
 
 impl Display for Procedure {
@@ -236,9 +243,9 @@ impl Display for Procedure {
 
         match self.body.as_ref() {
             Some(body) => {
-                // Project Hades anchors every index on this comment; it must stay
-                // last on the line.
-                if self.address != 0 {
+                // Tools that index the output anchor on this comment; it must
+                // stay last on the line.
+                if self.address_comment && self.address != 0 {
                     write!(f, " // 0x{:X}", self.address)?;
                 }
                 writeln!(f)?;
@@ -247,7 +254,7 @@ impl Display for Procedure {
 
             None => {
                 write!(f, ";")?;
-                if self.address != 0 {
+                if self.address_comment && self.address != 0 {
                     write!(f, " // 0x{:X}", self.address)?;
                 }
             }

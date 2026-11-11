@@ -757,16 +757,16 @@ impl Class {
                 // TODO: does this need handling?
             }
 
-            // Drop only the special members of an ANONYMOUS type: their name carries the
-            // `<unnamed-type-*>` placeholder, which was never valid C++ and cannot be
-            // declared anywhere. Upstream also drops `pseudo`/`compgenx` members here;
-            // Project Hades keeps them, because the definitions are kept (see the
-            // matching note in `decompile.rs`) and a definition needs its declaration.
+            // Drop compiler-generated members (implicit ctor/dtor/assignment): they were
+            // never written in source. `--include-compiler-generated` keeps them, along
+            // with their definitions, except on an anonymous type, whose special members
+            // carry the `<unnamed-type-*>` placeholder and cannot be declared anywhere.
             pdb2::TypeData::Method(ref data)
                 if data.name.to_string().contains("<unnamed")
-                    || ((self.name.is_empty() || self.name.contains("<unnamed"))
-                        && (data.attributes.is_pseudo()
-                            || data.attributes.is_compgenx())) => (),
+                    || ((data.attributes.is_pseudo() || data.attributes.is_compgenx())
+                        && (!type_names.include_compiler_generated
+                            || self.name.is_empty()
+                            || self.name.contains("<unnamed"))) => (),
 
             pdb2::TypeData::Method(ref data) => match data.name.to_string().to_string().as_str() {
                 // Ignore compiler-generated functions:
@@ -830,11 +830,11 @@ impl Class {
                             match data.name.to_string().to_string().as_str() {
                                 "__vecDelDtor" | "__local_vftable_ctor_closure" | "__autoclassinit" => (),
 
-                                // Compiler-generated overloads are KEPT here unless the
-                                // enclosing type is anonymous - see the `Method` arm.
-                                _ if (self.name.is_empty() || self.name.contains("<unnamed"))
-                                    && (attributes.is_pseudo()
-                                        || attributes.is_compgenx()) => (),
+                                // Compiler-generated overloads: see the `Method` arm.
+                                _ if (attributes.is_pseudo() || attributes.is_compgenx())
+                                    && (!type_names.include_compiler_generated
+                                        || self.name.is_empty()
+                                        || self.name.contains("<unnamed")) => (),
 
                                 _ => {
                                     let method = match type_finder.find(method_type)?.parse() {
@@ -958,7 +958,7 @@ impl Class {
                             is_declaration: false,
                             name: nested_data.name.to_string().to_string(),
                             index: nested_data.nested_type,
-                            depth: self.member_indent_level(),
+                            depth: self.depth + 1,
                             line: 0,
                             size: size,
                             base_classes: vec![],
@@ -1007,7 +1007,7 @@ impl Class {
                         let mut definition = Enum {
                             name: nested_data.name.to_string().to_string(),
                             index: nested_data.nested_type,
-                            depth: self.member_indent_level(),
+                            depth: self.depth + 1,
                             line: 0,
                             underlying_type_name: type_name(
                                 class_table,
@@ -1105,17 +1105,6 @@ impl Class {
 
         Ok(())
     }
-
-    /// The indentation level of this class's members. Structs and unions don't emit
-    /// access specifiers, so their members sit one level shallower than a class's,
-    /// whose members are indented under `public:`/`private:`/`protected:`.
-    pub fn member_indent_level(&self) -> u32 {
-        if matches!(self.kind, Some(pdb2::ClassKind::Struct)) || self.is_union {
-            self.depth + 1
-        } else {
-            self.depth + 2
-        }
-    }
 }
 
 impl fmt::Display for Class {
@@ -1156,10 +1145,18 @@ impl fmt::Display for Class {
         if !self.base_classes.is_empty() {
             let last_base_class_index = self.base_classes.len() - 1;
 
-            write!(f, " :")?;
-
             for (i, base) in self.base_classes.iter().enumerate() {
-                write!(f, " {}{}", base.type_name, if i == last_base_class_index { "" } else { "," })?;
+                if i == 0 {
+                    writeln!(f, " :")?;
+                } else {
+                    writeln!(f)?;
+                }
+                        
+                for _ in 0..self.depth {
+                    write!(f, "    ")?;
+                }
+                
+                write!(f, "    {}{}", base.type_name, if i == last_base_class_index { "" } else { "," })?;
             }
         }
 
@@ -1204,7 +1201,7 @@ impl fmt::Display for Class {
             };
 
             if member_access.is_none() && prev_access.is_none() {
-                for _ in 0..=self.depth {
+                for _ in 0..self.depth {
                     write!(f, "    ")?;
                 }
 
@@ -1213,7 +1210,7 @@ impl fmt::Display for Class {
             }
             else if member_access != prev_access {
                 if let Some(member_access) = member_access {
-                    for _ in 0..=self.depth {
+                    for _ in 0..self.depth {
                         write!(f, "    ")?;
                     }
             
@@ -1223,7 +1220,7 @@ impl fmt::Display for Class {
                 prev_access = member_access;
             }
 
-            for _ in 0..(self.member_indent_level() - 1) {
+            for _ in 0..self.depth {
                 write!(f, "    ")?;
             }
 
@@ -1233,7 +1230,7 @@ impl fmt::Display for Class {
             match member {
                 ClassMember::Field(_) => {
                     let rendered = format!("{}", member);
-                    let indent = "    ".repeat(self.member_indent_level() as usize);
+                    let indent = "    ".repeat(self.depth as usize + 1);
                     for (i, line) in rendered.split('\n').enumerate() {
                         if i == 0 {
                             writeln!(f, "    {}", line)?;

@@ -99,6 +99,11 @@ pub struct Options {
     #[structopt(long)]
     pub include_compiler_generated: bool,
 
+    /// Appends a `// 0x...` address comment to every function, global and
+    /// thread-local in output C++ code.
+    #[structopt(long)]
+    pub address_comments: bool,
+
     /// Forces a `__declspec(noinline)` attribute for functions that were never inlined but did not have the attribute.
     #[structopt(long)]
     pub force_no_inlines: bool,

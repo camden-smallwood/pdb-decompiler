@@ -301,6 +301,18 @@ pub fn split_qualified(name: &str) -> Vec<String> {
 /// characters occur legitimately inside template arguments — e.g. an array-reference type
 /// argument like `char const (&)[4]`, or a `$` in a decorated argument — so a marker only
 /// counts when it appears outside any `<...>` bracketing.
+/// Whether a `[` following `seen` belongs to `operator[]`, `operator new[]` or
+/// `operator delete[]`.
+fn is_operator_bracket(seen: &str) -> bool {
+    let seen = seen.trim_end();
+
+    let Some(before) = seen.strip_suffix(" new").or_else(|| seen.strip_suffix(" delete")).map(str::trim_end) else {
+        return seen.ends_with("operator");
+    };
+
+    before.ends_with("operator")
+}
+
 fn component_is_clean(component: &str, allow_anon: bool) -> bool {
     if allow_anon && component == ANON_TOKEN {
         return true;
@@ -314,10 +326,11 @@ fn component_is_clean(component: &str, allow_anon: bool) -> bool {
             '>' => depth -= 1,
             '`' | '$' if depth == 0 => return false,
             // A thunk's `[` opens the component (`[thunk]:Class::method`); a
-            // subscript operator's never does, and always follows `operator`.
-            // Without that exception every `operator[]` in the binary - 214 of
-            // them here - classifies as compiler-generated and is dropped.
-            '[' if depth == 0 && !seen.ends_with("operator") => return false,
+            // subscript or array new/delete operator's never does, and always
+            // follows `operator`, `operator new` or `operator delete`. Without
+            // that exception every such operator classifies as compiler-generated
+            // and is dropped.
+            '[' if depth == 0 && !is_operator_bracket(&seen) => return false,
             _ => {}
         }
         seen.push(c);
@@ -566,4 +579,18 @@ pub fn group_module_members(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operator_brackets_are_clean() {
+        assert!(component_is_clean("operator[]", false));
+        assert!(component_is_clean("operator new[]", false));
+        assert!(component_is_clean("operator delete[]", false));
+        assert!(!component_is_clean("[thunk]:method", false));
+        assert!(!component_is_clean("renew[]", false));
+    }
 }

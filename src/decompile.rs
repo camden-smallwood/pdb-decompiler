@@ -39,7 +39,9 @@ pub struct DecompileContext<'a, 's> {
     pub string_table: Option<&'a pdb2::StringTable<'s>>,
     pub id_info: Option<&'a pdb2::IdInformation<'s>>,
     pub id_finder: Option<pdb2::IdFinder<'a>>,
-    pub source_files: HashMap<u16, Vec<String>>,
+    /// Each module's DBI file list, by module index. Not keyed by stream: every
+    /// module without a symbol stream shares stream 0xFFFF.
+    pub source_files: Vec<Vec<String>>,
     pub type_info: &'a pdb2::TypeInformation<'s>,
     pub type_finder: pdb2::TypeFinder<'a>,
     pub global_symbols: &'a pdb2::SymbolTable<'s>,
@@ -48,11 +50,14 @@ pub struct DecompileContext<'a, 's> {
 impl Decompiler {
     #[inline(always)]
     pub fn new(options: Options) -> Self {
+        let mut type_names = cpp::TypeNames::default();
+        type_names.include_compiler_generated = options.include_compiler_generated;
+
         Self {
             options,
             class_table: vec![],
             type_sizes: HashMap::new(),
-            type_names: cpp::TypeNames::default(),
+            type_names,
             type_name_set: HashSet::new(),
             mangled_by_address: HashMap::new(),
             canonical_type_index: HashMap::new(),
@@ -66,6 +71,91 @@ impl Decompiler {
     pub fn with_function_scopes_modules(mut self, function_scopes_modules: Option<HashMap<String, Rc<RefCell<cpp::Module>>>>) -> Self {
         self.function_scopes_modules = function_scopes_modules;
         self
+    }
+
+    /// The machine type named by the first module's compile record, or `Unknown`.
+    fn machine_type_from_compile_flags(pdb: &mut pdb2::PDB<'_, File>, debug_info: &pdb2::DebugInformation) -> pdb2::Result<pdb2::MachineType> {
+        let mut modules = debug_info.modules()?;
+
+        while let Some(module) = modules.next()? {
+            let Some(module_info) = pdb.module_info(&module)? else { continue };
+            let mut symbols = module_info.symbols()?;
+
+            while let Some(symbol) = symbols.next()? {
+                let Ok(pdb2::SymbolData::CompileFlags(flags)) = symbol.parse() else { continue };
+
+                use pdb2::CPUType::*;
+                return Ok(match flags.cpu_type {
+                    Intel80386 | Intel80486 | Pentium | PentiumPro | Pentium3 => pdb2::MachineType::X86,
+                    PPC601 | PPC603 | PPC604 | PPC620 | PPCBE => pdb2::MachineType::PowerPC,
+                    PPCFP => pdb2::MachineType::PowerPCFP,
+                    X64 => pdb2::MachineType::Amd64,
+                    _ => pdb2::MachineType::Unknown,
+                });
+            }
+        }
+
+        Ok(pdb2::MachineType::Unknown)
+    }
+
+    /// The trailing `// 0x...` comment for a declaration at `address`, when
+    /// `--address-comments` is set.
+    fn address_comment(&self, address: u64) -> String {
+        if self.options.address_comments {
+            format!(" // 0x{address:X}")
+        } else {
+            String::new()
+        }
+    }
+
+    /// A header with nothing recoverable in it: no includes and no members but
+    /// blank lines and its include guard.
+    fn is_empty_header(module: &cpp::Module) -> bool {
+        module.is_header()
+            && module.headers.is_empty()
+            && module.members.iter().all(|m| matches!(m, cpp::ModuleMember::EmptyLine | cpp::ModuleMember::Preprocessor(_)))
+    }
+
+    /// Removes every include of an empty header, which is not written out.
+    ///
+    /// A quoted include holds the header's full path, which is also its module
+    /// key. One rewritten to `<...>` had one of the including module's
+    /// additional include directories stripped from the front (see the finalize
+    /// pass), so prefixing each of those directories recovers the key. Dropping
+    /// includes can leave a header that only included empty ones empty in turn,
+    /// so this repeats until nothing changes.
+    fn drop_empty_header_includes(&self) {
+        let mut empty = HashSet::new();
+
+        loop {
+            let newly_empty = self.modules.iter()
+                .filter(|(key, module)| !empty.contains(*key) && Self::is_empty_header(&module.borrow()))
+                .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>();
+
+            if newly_empty.is_empty() {
+                break;
+            }
+
+            empty.extend(newly_empty);
+
+            for module in self.modules.values() {
+                let mut module = module.borrow_mut();
+                let include_dirs = module.additional_include_dirs.iter()
+                    .map(|dir| dir.to_string_lossy().to_lowercase())
+                    .collect::<Vec<_>>();
+
+                module.headers.retain(|(header, is_global)| {
+                    let header = header.to_string_lossy().to_lowercase();
+
+                    if *is_global {
+                        !include_dirs.iter().any(|dir| empty.contains(&format!("{dir}{header}")))
+                    } else {
+                        !empty.contains(&header)
+                    }
+                });
+            }
+        }
     }
 
     /// Computes the output path for a module, rebased relative to a matching
@@ -141,8 +231,14 @@ impl Decompiler {
         let mut debug_info = pdb.debug_information()
             .map_err(|e| format!("does not contain debug information: {e}"))?;
 
-        let machine_type = debug_info.machine_type()
+        let mut machine_type = debug_info.machine_type()
             .unwrap_or(pdb2::MachineType::Unknown);
+
+        // Legacy PDBs (the Xbox 360 XDK's among them) leave the DBI machine type
+        // unset; every module's `S_COMPILE2`/`S_COMPILE3` still records its CPU.
+        if machine_type == pdb2::MachineType::Unknown {
+            machine_type = Self::machine_type_from_compile_flags(&mut pdb, &debug_info)?;
+        }
         
         let mut address_map = pdb.address_map()
             .map_err(|e| format!("does not contain an address map: {e}"))?;
@@ -163,9 +259,7 @@ impl Decompiler {
         let dbi_stream = pdb.raw_stream(pdb2::StreamIndex(3))?
             .ok_or("DBI stream missing")?;
         let files = crate::legacy::source_files(dbi_stream.as_slice())?;
-        let source_files = debug_info.modules()?.collect::<Vec<_>>()?.iter()
-            .zip(files).map(|(module, files)| (module.info().stream.0, files))
-            .collect();
+        let source_files = files;
 
         let global_symbols = pdb.global_symbols()
             .map_err(|e| format!("does not contain global symbol information: {e}"))?;
@@ -572,7 +666,7 @@ impl Decompiler {
 
         let mut file = File::create(&exported_path).map_err(pdb2::Error::IoError)?;
 
-        if let Err(e) = write!(file, "{}", cpp::compact_std_templates(&cpp::shorten_std_aliases(&module.borrow().to_string()))) {
+        if let Err(e) = write!(file, "{}", cpp::compact_std_templates(&module.borrow().to_string())) {
             panic!("{e}");
         }
 
@@ -694,8 +788,13 @@ impl Decompiler {
 
         let mut module_iter = context.debug_info.modules().map_err(|e| format!("does not contain debug module info: {e}"))?;
 
+        let mut module_index = 0;
+
         while let Some(module) = module_iter.next().map_err(|e| format!("failed to get next debug module info: {e}"))? {
-            if let Err(error) = self.process_module(context, &module, &module_global_symbols) {
+            let index = module_index;
+            module_index += 1;
+
+            if let Err(error) = self.process_module(context, index, &module, &module_global_symbols) {
                 println!("WARNING: failed to process module {}: {error}", module.module_name());
                 // println!("WARNING: failed to parse module, skipping: {e} - {module:#?}");
                 continue;
@@ -1119,6 +1218,7 @@ impl Decompiler {
             //
 
             if !self.options.reorganize {
+                let address_comments = self.options.address_comments;
                 let mut classes = HashMap::new();
 
                 // A function with local types keeps its definition, which they will be embedded in
@@ -1161,7 +1261,7 @@ impl Decompiler {
                         return true;
                     };
 
-                    if *address != 0 && !method.addresses.contains(address) {
+                    if address_comments && *address != 0 && !method.addresses.contains(address) {
                         method.addresses.push(*address);
                     }
 
@@ -1252,6 +1352,10 @@ impl Decompiler {
         let source_paths = &self.options.source_paths;
         let mut empty_headers = vec![];
 
+        // Empty headers are not written (they are listed in `empty_headers.txt`
+        // below), so nothing may include them either.
+        self.drop_empty_header_includes();
+
         for module in self.modules.values_mut() {
             // Compute the rebased output path (skip modules that don't match a filter).
             let rebased_path = {
@@ -1267,7 +1371,7 @@ impl Decompiler {
 
             // A header known only from line records may have nothing recoverable. Its path still
             // records the original source tree, so list it instead of writing it out empty
-            if module.is_header() && module.headers.is_empty() && module.members.iter().all(|m| matches!(m, cpp::ModuleMember::EmptyLine | cpp::ModuleMember::Preprocessor(_))) {
+            if Self::is_empty_header(&module) {
                 empty_headers.push(rebased_path.to_string_lossy().trim_start_matches(['/', '\\']).to_string());
                 continue;
             }
@@ -1338,7 +1442,7 @@ impl Decompiler {
                 };
 
                 if let Err(e) = write!(
-                    file, "{}", cpp::compact_std_templates(&cpp::shorten_std_aliases(&module.to_string()))
+                    file, "{}", cpp::compact_std_templates(&module.to_string())
                 ) {
                     panic!("Failed to write to file: \"{}\" - {e}", path.display());
                 }
@@ -1512,6 +1616,7 @@ impl Decompiler {
     fn process_module<'a, 's>(
         &mut self,
         context: &mut DecompileContext<'a, 's>,
+        module_index: usize,
         pdb_module: &pdb2::Module,
         module_global_symbols: &HashMap<u16, Vec<pdb2::SymbolData>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -1528,6 +1633,7 @@ impl Decompiler {
 
         let Some(module) = self.get_or_create_cpp_module(
             context,
+            module_index,
             pdb_module,
             &module_info,
             line_program.as_ref().ok(),
@@ -1625,6 +1731,7 @@ impl Decompiler {
     fn get_or_create_cpp_module<'a, 's>(
         &mut self,
         context: &mut DecompileContext<'a, 's>,
+        module_index: usize,
         module: &pdb2::Module,
         module_info: &pdb2::ModuleInfo,
         line_program: Option<&pdb2::LineProgram>,
@@ -1650,10 +1757,21 @@ impl Decompiler {
             }
         }
 
+        // `S_COMPILE2`/`S_ENVBLOCK` build records stand in for the IPI stream's
+        // BuildInfo, so only a legacy PDB (no IPI) reads them. A newer PDB can carry
+        // both, and its BuildInfo is authoritative.
+        // The same pass notes whether the module defines anything worth keeping
+        // under a fallback path when its source file can't be identified.
         let mut environment = std::collections::BTreeMap::new();
-        let mut symbols = module_info.symbols()?;
-        while let Some(symbol) = symbols.next()? {
-            environment.extend(crate::legacy::build_environment(&symbol)?);
+        let mut has_definitions = has_global_definitions;
+        if context.id_info.is_none() {
+            let mut symbols = module_info.symbols()?;
+            while let Some(symbol) = symbols.next()? {
+                environment.extend(crate::legacy::build_environment(&symbol)?);
+                has_definitions |= matches!(symbol.parse(), Ok(pdb2::SymbolData::Procedure(_)
+                    | pdb2::SymbolData::Data(_) | pdb2::SymbolData::ThreadStorage(_)
+                    | pdb2::SymbolData::UserDefinedType(_) | pdb2::SymbolData::Constant(_)));
+            }
         }
         let cwd = environment.get("cwd").cloned().unwrap_or_default();
         if module_file_path.is_none() {
@@ -1662,7 +1780,7 @@ impl Decompiler {
             }
         }
 
-        let mut source_files = context.source_files.get(&module.info().stream.0)
+        let mut source_files = context.source_files.get(module_index)
             .cloned().unwrap_or_default().into_iter()
             .map(|path| PathBuf::from(crate::utils::sanitize_path(path))).collect::<Vec<_>>();
         if let (Some(strings), Some(line_program)) = (context.string_table, line_program) {
@@ -1693,21 +1811,9 @@ impl Decompiler {
 
         // If we couldn't find the module's source file path, we can't decompile it
         // under an original filename. Preserve useful symbols under an explicit fallback.
-        if module_file_path.is_none() && context.id_info.is_none() && has_global_definitions {
+        if module_file_path.is_none() && context.id_info.is_none() && has_definitions {
             module_file_path = Some(PathBuf::from(format!("__pdb_modules/module_{}.cpp", module.info().stream.0)));
             environment.insert("object".into(), module.module_name().into_owned());
-        }
-        if module_file_path.is_none() && context.id_info.is_none() {
-            let mut symbols = module_info.symbols()?;
-            while let Some(symbol) = symbols.next()? {
-                if matches!(symbol.parse(), Ok(pdb2::SymbolData::Procedure(_)
-                    | pdb2::SymbolData::Data(_) | pdb2::SymbolData::ThreadStorage(_)
-                    | pdb2::SymbolData::UserDefinedType(_) | pdb2::SymbolData::Constant(_))) {
-                    module_file_path = Some(PathBuf::from(format!("__pdb_modules/module_{}.cpp", module.info().stream.0)));
-                    environment.insert("object".into(), module.module_name().into_owned());
-                    break;
-                }
-            }
         }
         let Some(module_file_path) = module_file_path else { return Ok(None); };
 
@@ -1946,7 +2052,7 @@ impl Decompiler {
                     is_extern: false,
                     name: data_name,
                     signature: format!(
-                        "{}; // 0x{address:X}",
+                        "{};{}",
                         cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
@@ -1963,6 +2069,7 @@ impl Decompiler {
                                 force_return_type: false,
                             },
                         )?,
+                        self.address_comment(address),
                     ),
                     address,
                     line: line_info.map(|x| x.line_start),
@@ -2050,7 +2157,7 @@ impl Decompiler {
                     is_static: !thread_storage_symbol.global,
                     name: name.clone(),
                     signature: format!(
-                        "thread_local {}; // 0x{address:X}",
+                        "thread_local {};{}",
                         cpp::type_name(
                             &mut self.class_table,
                             &mut self.type_sizes,
@@ -2067,6 +2174,7 @@ impl Decompiler {
                                 force_return_type: false,
                             },
                         )?,
+                        self.address_comment(address),
                     ),
                     address,
                     line: line_info.map(|x| x.line_start),
@@ -2632,7 +2740,8 @@ impl Decompiler {
                     ida_signature: Some(ida_procedure_signature),
                     body,
                     return_type,
-                    arguments
+                    arguments,
+                    address_comment: self.options.address_comments,
                 };
 
                 // Drop compiler-generated procedure definitions (implicit ctors/dtors/assignment,
@@ -3482,7 +3591,7 @@ impl Decompiler {
                             nested_class.base_classes = other_class.borrow().base_classes.clone();
                             nested_class.members = other_class.borrow().members.clone();
 
-                            let nested_depth = nested_class.member_indent_level();
+                            let nested_depth = nested_class.depth + 1;
 
                             for member in nested_class.members.iter_mut() {
                                 match member {
