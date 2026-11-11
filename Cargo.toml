@@ -9,7 +9,7 @@ lto = true
 opt-level = "s"
 
 [dependencies]
-pdb2 = { git = "https://github.com/camden-smallwood/pdb.git", rev = "c11353583cf40632d61dfc227c66d8beb39d4d98" }
+pdb2 = { git = "https://github.com/camden-smallwood/pdb.git", branch = "master" }
 msvc-demangler = "0.11"
 serde_json = "1.0"
 structopt = { version = "0.3", default-features = false }
