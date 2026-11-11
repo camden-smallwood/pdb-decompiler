@@ -265,11 +265,8 @@ pub fn has_ipi(bytes: &[u8]) -> pdb2::Result<bool> {
     if features.len() % 4 != 0 {
         return Err(pdb2::Error::UnexpectedEof);
     }
-    Ok(features.chunks_exact(4).any(|x| {
-        matches!(
-            u32::from_le_bytes(x.try_into().unwrap()),
-            20091201 | 20140508
-        )
+    Ok(features.as_chunks::<4>().0.iter().any(|x| {
+        matches!(u32::from_le_bytes(*x), 20091201 | 20140508)
     }))
 }
 

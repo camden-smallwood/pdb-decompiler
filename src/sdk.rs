@@ -233,14 +233,13 @@ fn definitions(text: &str) -> Vec<String> {
         let next = |n: usize| tokens.get(i + n).copied();
 
         match tokens[i] {
-            Token::Identifier("namespace") => match (next(1), next(2)) {
-                (Some(Token::Identifier(name)), Some(Token::Punctuation('{'))) => {
+            Token::Identifier("namespace") => {
+                if let (Some(Token::Identifier(name)), Some(Token::Punctuation('{'))) = (next(1), next(2)) {
                     stack.push(Scope::Namespace(name.to_string()));
                     i += 3;
                     continue;
                 }
-                _ => {}
-            },
+            }
 
             Token::Identifier("_STD_BEGIN") => stack.push(Scope::Namespace("std".into())),
             Token::Identifier("_STDEXT_BEGIN") => stack.push(Scope::Namespace("stdext".into())),

@@ -278,31 +278,31 @@ pub fn compact_std_templates(text: &str) -> String {
         let mut args: Vec<String> =
             split_arguments(&inner).into_iter().map(str::to_string).collect();
 
-        if let Some((keep, defaults)) = defaults_for(name) {
-            if args.len() > keep {
-                // Owned, because the peeling below shortens `args`.
-                let leading: Vec<String> = args[..keep].to_vec();
-                // Peel from the right: an argument only comes off when every
-                // argument after it has come off too.
-                while args.len() > keep && args.len() - keep <= defaults.len() {
-                    let index = args.len() - 1;
-                    let leading: Vec<&str> = leading.iter().map(String::as_str).collect();
-                    let want = without_spaces(&expected(&defaults[index - keep], &leading));
-                    if without_spaces(&args[index]) != want {
-                        break;
-                    }
-                    args.pop();
+        if let Some((keep, defaults)) = defaults_for(name)
+            && args.len() > keep
+        {
+            // Owned, because the peeling below shortens `args`.
+            let leading: Vec<String> = args[..keep].to_vec();
+            // Peel from the right: an argument only comes off when every
+            // argument after it has come off too.
+            while args.len() > keep && args.len() - keep <= defaults.len() {
+                let index = args.len() - 1;
+                let leading: Vec<&str> = leading.iter().map(String::as_str).collect();
+                let want = without_spaces(&expected(&defaults[index - keep], &leading));
+                if without_spaces(&args[index]) != want {
+                    break;
                 }
+                args.pop();
             }
         }
 
         out.push_str(&text[at..start]);
-        if args.len() == 1 {
-            if let Some(alias) = alias_for(name, &args[0]) {
-                out.push_str(&alias);
-                at = close + 1;
-                continue;
-            }
+        if args.len() == 1
+            && let Some(alias) = alias_for(name, &args[0])
+        {
+            out.push_str(&alias);
+            at = close + 1;
+            continue;
         }
         out.push_str(&text[start..open_at + 1]);
         let rendered = args.join(",");

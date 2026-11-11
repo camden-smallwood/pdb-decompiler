@@ -6,7 +6,7 @@ use std::{
     error::Error,
     fs::{File, OpenOptions},
     io::Write,
-    path::{Component, PathBuf},
+    path::{Component, Path, PathBuf},
     rc::Rc,
 };
 
@@ -81,14 +81,14 @@ impl Decompiler {
     /// so `.../FolderA/SubFolderA/foo.cpp` becomes `SubFolderA/foo.cpp`. Returns
     /// `None` when the module does not match any filter.
     #[inline(always)]
-    fn rebase_output_path(source_paths: &[PathBuf], module_path: &PathBuf) -> Option<PathBuf> {
+    fn rebase_output_path(source_paths: &[PathBuf], module_path: &Path) -> Option<PathBuf> {
         if source_paths.is_empty() {
-            return Some(module_path.clone());
+            return Some(module_path.to_path_buf());
         }
 
-        let sanitized = crate::utils::sanitize_path(&module_path.to_string_lossy());
+        let sanitized = crate::utils::sanitize_path(module_path.to_string_lossy());
         let components = sanitized
-            .split(|c| c == '/' || c == '\\')
+            .split(['/', '\\'])
             .filter(|component| !component.is_empty())
             .map(str::to_string)
             .collect::<Vec<_>>();
@@ -98,9 +98,9 @@ impl Decompiler {
             .collect::<Vec<_>>();
 
         for source_path in source_paths {
-            let sp_sanitized = crate::utils::sanitize_path(&source_path.to_string_lossy());
+            let sp_sanitized = crate::utils::sanitize_path(source_path.to_string_lossy());
             let sp_components = sp_sanitized
-                .split(|c| c == '/' || c == '\\')
+                .split(['/', '\\'])
                 .filter(|component| !component.is_empty())
                 .map(str::to_string)
                 .collect::<Vec<_>>();
@@ -426,10 +426,9 @@ impl Decompiler {
 
         let mut canonical_type_indices = vec![];
         for type_index in exported_type_indices {
-            if let Some(name) = context.type_finder.find(type_index)?.parse()?.name() {
-                if self.canonical_type_index.get(name.to_string().as_ref())
+            if let Some(name) = context.type_finder.find(type_index)?.parse()?.name()
+                && self.canonical_type_index.get(name.to_string().as_ref())
                     .is_some_and(|canonical| *canonical != type_index) { continue; }
-            }
             canonical_type_indices.push(type_index);
         }
 
@@ -470,7 +469,7 @@ impl Decompiler {
             }
 
             let Some((path, placement)) = placed else {
-                if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, &context.type_info, &context.type_finder, type_index, 0) {
+                if let Err(e) = module.add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, context.type_info, &context.type_finder, type_index, 0) {
                     panic!("{e}");
                 }
                 continue;
@@ -480,7 +479,7 @@ impl Decompiler {
                 .or_insert_with(|| Rc::new(RefCell::new(cpp::Module::default().with_path(path.clone()))))
                 .clone();
 
-            if let Err(e) = target.borrow_mut().add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, &context.type_info, &context.type_finder, type_index, placement.line) {
+            if let Err(e) = target.borrow_mut().add_type_definition(&mut self.class_table, &mut self.type_sizes, &mut self.type_names, context.machine_type, context.type_info, &context.type_finder, type_index, placement.line) {
                 panic!("{e}");
             }
 
@@ -1054,13 +1053,12 @@ impl Decompiler {
                         }
                     }
                     
-                    cpp::ModuleMember::Enum(enum_data) => {
+                    cpp::ModuleMember::Enum(enum_data)
                         if cpp::is_anonymous_type_name(&enum_data.name)
-                            || (enum_data.properties.is_nested_type() && nested_definitions.contains(&enum_data.index))
-                        {
-                            // println!("WARNING: Removing unreferenced nested enum in toplevel: \"{}\" in \"{}\"", enum_data.name, module.path.display());
-                            module.members.remove(i);
-                        }
+                            || (enum_data.properties.is_nested_type() && nested_definitions.contains(&enum_data.index)) =>
+                    {
+                        // println!("WARNING: Removing unreferenced nested enum in toplevel: \"{}\" in \"{}\"", enum_data.name, module.path.display());
+                        module.members.remove(i);
                     }
 
                     _ => {}
@@ -2642,10 +2640,8 @@ impl Decompiler {
                 // in source. This matches dropping their declarations in `Class::add_member`.
                 // Legacy PDBs also omit lines for handwritten assembly and stripped
                 // objects, so missing line information is not evidence of generation.
-                if !self.options.include_compiler_generated && context.id_info.is_some() {
-                    if procedure.line.is_none() {
-                        return Ok(());
-                    }
+                if !self.options.include_compiler_generated && context.id_info.is_some() && procedure.line.is_none() {
+                    return Ok(());
                 }
 
                 if let Some(script_file) = self.script_file.as_mut() {
